@@ -1,6 +1,6 @@
 {
-  "run_id": "93f78f93-c27c-5670-a6fa-65394bfe485d",
-  "created_at": "2026-03-12T15:27:23.267401+00:00",
+  "run_id": "e604d079-62d0-518b-ba8c-10a6f59420dc",
+  "created_at": "2026-03-12T15:52:42.661000+00:00",
   "source": "live-authoritative",
   "counts": {
     "raw_records": 46,
@@ -339,8 +339,8 @@
       "summary": "8-K",
       "direction": "neutral",
       "event_type": "unknown",
-      "final_score": 51.45,
-      "heat_score": 73.83,
+      "final_score": 51.39,
+      "heat_score": 73.62,
       "importance_score": 50.35,
       "confidence_score": 64.53,
       "markets": [
@@ -936,8 +936,8 @@
       "summary": "8-K",
       "direction": "neutral",
       "event_type": "unknown",
-      "final_score": 51.45,
-      "heat_score": 73.83,
+      "final_score": 51.39,
+      "heat_score": 73.62,
       "importance_score": 50.35,
       "confidence_score": 64.53,
       "markets": [
@@ -1419,13 +1419,57 @@
       ]
     },
     {
+      "cluster_id": "9cd0a256-55c1-569a-8bc1-11bf3239f779",
+      "headline": "T3 Defense Inc. (0001787518) (Filer)",
+      "summary": "8-K",
+      "direction": "neutral",
+      "event_type": "unknown",
+      "final_score": 50.23,
+      "heat_score": 69.58,
+      "importance_score": 50.35,
+      "confidence_score": 64.53,
+      "markets": [
+        "CN-A",
+        "HK",
+        "US"
+      ],
+      "themes": [],
+      "entities": [],
+      "sectors": [],
+      "regions": [
+        "US"
+      ],
+      "rationale": [
+        "No configured rule matched, falling back to neutral market observation."
+      ],
+      "source_ids": [
+        "sec_xbrl_usgaap"
+      ],
+      "doc_count": 1,
+      "first_seen_at": "2026-03-12T15:31:33+00:00",
+      "last_seen_at": "2026-03-12T15:31:33+00:00",
+      "top_instruments": [],
+      "related_documents": [
+        {
+          "doc_id": "cc922357-6559-5fcd-8a3c-2bd005f15e84",
+          "published_at": "2026-03-12T15:31:33+00:00",
+          "source_id": "sec_xbrl_usgaap",
+          "title": "T3 Defense Inc. (0001787518) (Filer)",
+          "summary": "8-K",
+          "themes": [],
+          "entities": [],
+          "url": "https://www.sec.gov/Archives/edgar/data/1787518/000121390026026732/0001213900-26-026732-index.htm"
+        }
+      ]
+    },
+    {
       "cluster_id": "f8403323-cd1d-5e70-ab5b-97b37f4576f4",
       "headline": "Vulcan Materials CO (0001396009) (Filer)",
       "summary": "8-K",
       "direction": "neutral",
       "event_type": "unknown",
-      "final_score": 50.21,
-      "heat_score": 69.51,
+      "final_score": 50.15,
+      "heat_score": 69.3,
       "importance_score": 50.35,
       "confidence_score": 64.53,
       "markets": [
@@ -1459,50 +1503,6 @@
           "themes": [],
           "entities": [],
           "url": "https://www.sec.gov/Archives/edgar/data/1396009/000114036126009178/0001140361-26-009178-index.htm"
-        }
-      ]
-    },
-    {
-      "cluster_id": "c6ec3ab7-daf8-5cc9-b6c1-03f10a0c45c6",
-      "headline": "AMERICAS CARMART INC (0000799850) (Filer)",
-      "summary": "8-K",
-      "direction": "neutral",
-      "event_type": "unknown",
-      "final_score": 50.19,
-      "heat_score": 69.46,
-      "importance_score": 50.35,
-      "confidence_score": 64.53,
-      "markets": [
-        "CN-A",
-        "HK",
-        "US"
-      ],
-      "themes": [],
-      "entities": [],
-      "sectors": [],
-      "regions": [
-        "US"
-      ],
-      "rationale": [
-        "No configured rule matched, falling back to neutral market observation."
-      ],
-      "source_ids": [
-        "sec_xbrl_usgaap"
-      ],
-      "doc_count": 1,
-      "first_seen_at": "2026-03-12T14:51:22+00:00",
-      "last_seen_at": "2026-03-12T14:51:22+00:00",
-      "top_instruments": [],
-      "related_documents": [
-        {
-          "doc_id": "880b551f-12ad-5bed-ba2c-c579e8463193",
-          "published_at": "2026-03-12T14:51:22+00:00",
-          "source_id": "sec_xbrl_usgaap",
-          "title": "AMERICAS CARMART INC (0000799850) (Filer)",
-          "summary": "8-K",
-          "themes": [],
-          "entities": [],
-          "url": "https://www.sec.gov/Archives/edgar/data/799850/000117184326001507/0001171843-26-001507-index.htm"
         }
       ]
     }
@@ -1771,6 +1771,16 @@
       "url": "https://www.cninfo.com.cn/new/disclosure/detail?stockCode=000034&orgId=gssz0000034&announcementId=1225007389&announcementTime=2026-03-13"
     },
     {
+      "doc_id": "cc922357-6559-5fcd-8a3c-2bd005f15e84",
+      "published_at": "2026-03-12T15:31:33+00:00",
+      "source_id": "sec_xbrl_usgaap",
+      "title": "T3 Defense Inc. (0001787518) (Filer)",
+      "summary": "8-K",
+      "themes": [],
+      "entities": [],
+      "url": "https://www.sec.gov/Archives/edgar/data/1787518/000121390026026732/0001213900-26-026732-index.htm"
+    },
+    {
       "doc_id": "489b0a09-e21a-57cb-a966-ccb2b653cee6",
       "published_at": "2026-03-12T14:57:45+00:00",
       "source_id": "sec_xbrl_usgaap",
@@ -1859,16 +1869,6 @@
       "themes": [],
       "entities": [],
       "url": "https://www.sec.gov/Archives/edgar/data/1646188/000121390026026689/0001213900-26-026689-index.htm"
-    },
-    {
-      "doc_id": "23c6e169-126f-5a87-97e7-3bed9107207f",
-      "published_at": "2026-03-12T13:29:17+00:00",
-      "source_id": "sec_xbrl_usgaap",
-      "title": "EQUITY BANCSHARES INC (0001227500) (Filer)",
-      "summary": "DEF 14A",
-      "themes": [],
-      "entities": [],
-      "url": "https://www.sec.gov/Archives/edgar/data/1227500/000119312526103215/0001193125-26-103215-index.htm"
     }
   ]
 }

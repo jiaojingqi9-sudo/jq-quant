@@ -340,6 +340,8 @@ class MarkdownJsonReporter:
         radial-gradient(circle at top right, rgba(190, 123, 29, 0.16), transparent 22%),
         linear-gradient(180deg, #f7f3ea 0%, #eee4d3 100%);
       min-height: 100vh;
+      overflow-x: hidden;
+      overflow-y: auto;
     }
 
     a {
@@ -353,9 +355,10 @@ class MarkdownJsonReporter:
 
     .shell {
       width: min(1440px, calc(100vw - 28px));
-      margin: 18px auto 36px;
+      margin: 18px auto 32px;
       display: grid;
       gap: 18px;
+      grid-template-rows: auto auto auto;
     }
 
     .hero,
@@ -517,13 +520,39 @@ class MarkdownJsonReporter:
 
     .layout {
       display: grid;
-      grid-template-columns: 1.05fr 1.45fr 1.1fr;
-      grid-template-areas:
-        "alerts events detail"
-        "instruments events detail"
-        "feed feed detail";
+      grid-template-columns: minmax(280px, 1fr) minmax(520px, 1.45fr) minmax(360px, 1.08fr);
       gap: 18px;
       align-items: start;
+    }
+
+    .column {
+      display: grid;
+      gap: 18px;
+      align-content: start;
+      min-height: 0;
+    }
+
+    .column-scroll {
+      height: clamp(760px, calc(100vh - 220px), 1200px);
+      overflow-y: scroll;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      padding-right: 8px;
+      margin-right: -6px;
+      scrollbar-gutter: stable;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(17, 32, 45, 0.22) transparent;
+    }
+
+    .column-scroll::-webkit-scrollbar {
+      width: 10px;
+    }
+
+    .column-scroll::-webkit-scrollbar-thumb {
+      background: rgba(17, 32, 45, 0.18);
+      border-radius: 999px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
     }
 
     .panel {
@@ -554,22 +583,16 @@ class MarkdownJsonReporter:
       margin-bottom: 14px;
     }
 
-    .alerts-panel { grid-area: alerts; }
-    .events-panel { grid-area: events; }
-    .detail-panel {
-      grid-area: detail;
-      position: relative;
-      display: block;
-      align-self: start;
-      min-height: 420px;
-      overflow: visible;
+    .left-column .panel,
+    .middle-column .panel,
+    .right-column .panel {
+      width: 100%;
     }
-    .instruments-panel { grid-area: instruments; }
-    .feed-panel { grid-area: feed; }
 
     .stack {
       display: grid;
       gap: 12px;
+      align-content: start;
     }
 
     .alert-card,
@@ -726,22 +749,15 @@ class MarkdownJsonReporter:
       gap: 14px;
     }
 
-    .detail-panel .section-header {
-      flex: 0 0 auto;
-      margin-bottom: 12px;
-    }
-
-    #detailView {
-      overflow: visible;
-      padding-right: 0;
-      margin-right: 0;
-    }
-
     .detail-block {
       padding: 14px 16px;
       border-radius: var(--radius-md);
       border: 1px solid var(--line);
       background: rgba(255, 255, 255, 0.78);
+    }
+
+    #detailView {
+      min-height: 0;
     }
 
     .detail-section-title {
@@ -825,20 +841,20 @@ class MarkdownJsonReporter:
         grid-template-columns: 1fr;
       }
 
-      .layout {
-        grid-template-columns: 1fr;
-        grid-template-areas:
-          "alerts"
-          "detail"
-          "events"
-          "instruments"
-          "feed";
+      .metric-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
-      .detail-panel {
-        position: static;
-        min-height: 0;
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .column-scroll {
+        height: auto;
         overflow: visible;
+        padding-right: 0;
+        margin-right: 0;
+        scrollbar-gutter: auto;
       }
     }
 
@@ -895,58 +911,64 @@ class MarkdownJsonReporter:
     </section>
 
     <section class="layout">
-      <section class="panel alerts-panel">
-        <div class="section-header">
-          <div>
-            <h2>Alert Radar</h2>
-            <div class="panel-subtitle">先看提醒，再点进去看事件链和原文。</div>
+      <section class="column column-scroll left-column">
+        <section class="panel alerts-panel">
+          <div class="section-header">
+            <div>
+              <h2>Alert Radar</h2>
+              <div class="panel-subtitle">先看提醒，再点进去看事件链和原文。</div>
+            </div>
+            <div class="tiny" id="alertCountLabel"></div>
           </div>
-          <div class="tiny" id="alertCountLabel"></div>
-        </div>
-        <div class="stack" id="alertsList"></div>
+          <div class="stack" id="alertsList"></div>
+        </section>
+
+        <section class="panel instruments-panel">
+          <div class="section-header">
+            <div>
+              <h2>Instrument Ladder</h2>
+              <div class="panel-subtitle">按候选标的强度排序，点击会联动右侧详情。</div>
+            </div>
+            <div class="tiny" id="instrumentCountLabel"></div>
+          </div>
+          <div class="stack" id="instrumentList"></div>
+        </section>
+
+        <section class="panel feed-panel">
+          <div class="section-header">
+            <div>
+              <h2>Latest Feed</h2>
+              <div class="panel-subtitle">原始消息流，保留发布时间和原文跳转。</div>
+            </div>
+            <div class="tiny" id="feedCountLabel"></div>
+          </div>
+          <div class="stack" id="feedList"></div>
+        </section>
       </section>
 
-      <section class="panel events-panel">
-        <div class="section-header">
-          <div>
-            <h2>Event Deck</h2>
-            <div class="panel-subtitle">事件卡片支持筛选、搜索和点击展开。</div>
+      <section class="column column-scroll middle-column">
+        <section class="panel events-panel">
+          <div class="section-header">
+            <div>
+              <h2>Event Deck</h2>
+              <div class="panel-subtitle">事件卡片支持筛选、搜索和点击展开。</div>
+            </div>
+            <div class="tiny" id="eventCountLabel"></div>
           </div>
-          <div class="tiny" id="eventCountLabel"></div>
-        </div>
-        <div class="stack" id="eventsGrid"></div>
+          <div class="stack" id="eventsGrid"></div>
+        </section>
       </section>
 
-      <section class="panel detail-panel">
-        <div class="section-header">
-          <div>
-            <h2>Event Detail</h2>
-            <div class="panel-subtitle">这里会聚合理由、标的、相关新闻原文链接。</div>
+      <section class="column column-scroll right-column">
+        <section class="panel detail-panel">
+          <div class="section-header">
+            <div>
+              <h2>Event Detail</h2>
+              <div class="panel-subtitle">这里会聚合理由、标的、相关新闻原文链接。</div>
+            </div>
           </div>
-        </div>
-        <div id="detailView"></div>
-      </section>
-
-      <section class="panel instruments-panel">
-        <div class="section-header">
-          <div>
-            <h2>Instrument Ladder</h2>
-            <div class="panel-subtitle">按候选标的强度排序，点击会联动右侧详情。</div>
-          </div>
-          <div class="tiny" id="instrumentCountLabel"></div>
-        </div>
-        <div class="stack" id="instrumentList"></div>
-      </section>
-
-      <section class="panel feed-panel">
-        <div class="section-header">
-          <div>
-            <h2>Latest Feed</h2>
-            <div class="panel-subtitle">原始消息流，保留发布时间和原文跳转。</div>
-          </div>
-          <div class="tiny" id="feedCountLabel"></div>
-        </div>
-        <div class="stack" id="feedList"></div>
+          <div id="detailView"></div>
+        </section>
       </section>
     </section>
   </div>
@@ -1063,6 +1085,10 @@ class MarkdownJsonReporter:
         state.selectedClusterId = first.cluster_id;
       }
       return first;
+    }
+
+    function rightColumn() {
+      return document.querySelector(".right-column");
     }
 
     function detailView() {
@@ -1189,6 +1215,11 @@ class MarkdownJsonReporter:
       const host = detailView();
       if (!event) {
         host.innerHTML = '<div class="empty">暂无事件可展示。</div>';
+        host.scrollTop = 0;
+        const column = rightColumn();
+        if (column) {
+          column.scrollTop = 0;
+        }
         return;
       }
 
@@ -1262,6 +1293,11 @@ class MarkdownJsonReporter:
         + '<div class="detail-block"><div class="detail-section-title"><strong>候选标的</strong><span>可能受影响的交易对象</span></div><div class="stack">' + instruments + "</div></div>"
         + '<div class="detail-block"><div class="detail-section-title"><strong>相关新闻原文</strong><span>点击可跳转</span></div><ul class="doc-list">' + docs + "</ul></div>"
         + "</div>";
+      host.scrollTop = 0;
+      const column = rightColumn();
+      if (column) {
+        column.scrollTop = 0;
+      }
     }
 
     function renderInstruments() {

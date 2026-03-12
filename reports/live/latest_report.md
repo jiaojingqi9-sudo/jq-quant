@@ -1,6 +1,6 @@
 # Market News Collector Report
 
-- Run ID: `93f78f93-c27c-5670-a6fa-65394bfe485d`
+- Run ID: `e604d079-62d0-518b-ba8c-10a6f59420dc`
 - Source: `live-authoritative`
 - Raw records: `46`
 - Deduplicated documents: `46`
@@ -52,7 +52,7 @@
 
 ## Watchlist
 
-1. `51.45` Federal Home Loan Bank of New York (0001329842) (Filer)
+1. `51.39` Federal Home Loan Bank of New York (0001329842) (Filer)
    direction: neutral | type: unknown
    themes: n/a
    why: No configured rule matched, falling back to neutral market observation.
@@ -99,12 +99,12 @@
    why: No configured rule matched, falling back to neutral market observation.
    summary: 钧崴电子 (301458) official disclosure
    instruments: 301458.SZ(CN-A)
-9. `50.21` Vulcan Materials CO (0001396009) (Filer)
+9. `50.23` T3 Defense Inc. (0001787518) (Filer)
    direction: neutral | type: unknown
    themes: n/a
    why: No configured rule matched, falling back to neutral market observation.
    summary: 8-K
-10. `50.19` AMERICAS CARMART INC (0000799850) (Filer)
+10. `50.15` Vulcan Materials CO (0001396009) (Filer)
    direction: neutral | type: unknown
    themes: n/a
    why: No configured rule matched, falling back to neutral market observation.
@@ -142,33 +142,33 @@
 10. `2026-03-12T16:00:00+00:00` `cninfo_latest` 关于公司部分董事、高级管理人员减持股份的预披露公告
    themes: n/a
    entities: 神州数码, 000034
-11. `2026-03-12T14:57:45+00:00` `sec_xbrl_usgaap` Vulcan Materials CO (0001396009) (Filer)
+11. `2026-03-12T15:31:33+00:00` `sec_xbrl_usgaap` T3 Defense Inc. (0001787518) (Filer)
    themes: n/a
    entities: n/a
-12. `2026-03-12T14:51:22+00:00` `sec_xbrl_usgaap` AMERICAS CARMART INC (0000799850) (Filer)
+12. `2026-03-12T14:57:45+00:00` `sec_xbrl_usgaap` Vulcan Materials CO (0001396009) (Filer)
    themes: n/a
    entities: n/a
-13. `2026-03-12T14:33:50+00:00` `sec_xbrl_usgaap` IMMERSION CORP (0001058811) (Filer)
+13. `2026-03-12T14:51:22+00:00` `sec_xbrl_usgaap` AMERICAS CARMART INC (0000799850) (Filer)
    themes: n/a
    entities: n/a
-14. `2026-03-12T14:31:12+00:00` `sec_xbrl_usgaap` American Resources Corp (0001590715) (Filer)
+14. `2026-03-12T14:33:50+00:00` `sec_xbrl_usgaap` IMMERSION CORP (0001058811) (Filer)
    themes: n/a
    entities: n/a
-15. `2026-03-12T14:00:59+00:00` `sec_xbrl_usgaap` Seres Therapeutics, Inc. (0001609809) (Filer)
+15. `2026-03-12T14:31:12+00:00` `sec_xbrl_usgaap` American Resources Corp (0001590715) (Filer)
    themes: n/a
    entities: n/a
-16. `2026-03-12T14:00:25+00:00` `sec_xbrl_usgaap` ExchangeRight Income Fund (0001771514) (Filer)
+16. `2026-03-12T14:00:59+00:00` `sec_xbrl_usgaap` Seres Therapeutics, Inc. (0001609809) (Filer)
    themes: n/a
    entities: n/a
-17. `2026-03-12T13:46:50+00:00` `sec_xbrl_usgaap` Alaska Silver Corp. (0001893899) (Filer)
+17. `2026-03-12T14:00:25+00:00` `sec_xbrl_usgaap` ExchangeRight Income Fund (0001771514) (Filer)
    themes: n/a
    entities: n/a
-18. `2026-03-12T13:33:54+00:00` `sec_xbrl_usgaap` Federal Home Loan Bank of New York (0001329842) (Filer)
+18. `2026-03-12T13:46:50+00:00` `sec_xbrl_usgaap` Alaska Silver Corp. (0001893899) (Filer)
    themes: n/a
    entities: n/a
-19. `2026-03-12T13:30:52+00:00` `sec_xbrl_usgaap` Ondas Inc. (0001646188) (Filer)
+19. `2026-03-12T13:33:54+00:00` `sec_xbrl_usgaap` Federal Home Loan Bank of New York (0001329842) (Filer)
    themes: n/a
    entities: n/a
-20. `2026-03-12T13:29:17+00:00` `sec_xbrl_usgaap` EQUITY BANCSHARES INC (0001227500) (Filer)
+20. `2026-03-12T13:30:52+00:00` `sec_xbrl_usgaap` Ondas Inc. (0001646188) (Filer)
    themes: n/a
    entities: n/a
