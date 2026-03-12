@@ -1,0 +1,922 @@
+{
+  "run_id": "992610d9-4ca8-54f1-9e5f-d71cbe7ea1fd",
+  "created_at": "2026-03-12T12:29:33.506783+00:00",
+  "source": "local-json",
+  "counts": {
+    "raw_records": 6,
+    "documents": 6,
+    "clusters": 5,
+    "ranked_events": 5,
+    "ranked_instruments": 18
+  },
+  "alerts": [
+    {
+      "cluster_id": "70169504-66b5-5004-8e71-88bb0acf9f6e",
+      "headline": "New EV tariff proposals raise pressure on battery exporters",
+      "level": "high",
+      "direction": "negative",
+      "event_type": "regulation",
+      "is_new": false,
+      "final_score": 75.35,
+      "symbols": [
+        "1211.HK",
+        "300750.SZ",
+        "TSLA"
+      ],
+      "reason": "downside-sensitive, regulation, score=75.35"
+    }
+  ],
+  "alert_counts": {
+    "critical": 0,
+    "high": 1,
+    "medium": 0,
+    "new": 0
+  },
+  "top_events": [
+    {
+      "cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54",
+      "headline": "AI chip demand accelerates as cloud giants expand capex plans",
+      "direction": "positive",
+      "event_type": "industry",
+      "final_score": 83.33,
+      "heat_score": 76.11,
+      "importance_score": 89.95,
+      "confidence_score": 79.17,
+      "markets": [
+        "US",
+        "HK",
+        "CN-A"
+      ],
+      "themes": [
+        "ai",
+        "semiconductors",
+        "cloud"
+      ],
+      "rationale": [
+        "AI Capex Expansion: matched ai, data center, gpu, chip demand, capex. AI capex and chip demand usually lift compute and semiconductor chains."
+      ],
+      "top_instruments": [
+        {
+          "symbol": "NVDA",
+          "market": "US",
+          "name": "NVIDIA",
+          "direction": "positive",
+          "final_score": 91.64,
+          "reasons": [
+            "sector overlap: semiconductors, technology",
+            "theme overlap: ai, chips, data-center",
+            "entity/alias match: nvidia, gpu",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "AMD",
+          "market": "US",
+          "name": "AMD",
+          "direction": "positive",
+          "final_score": 90.89,
+          "reasons": [
+            "sector overlap: semiconductors, technology",
+            "theme overlap: ai, chips, data-center",
+            "entity/alias match: gpu, amd",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "QQQ",
+          "market": "US",
+          "name": "Invesco QQQ Trust",
+          "direction": "positive",
+          "final_score": 85.45,
+          "reasons": [
+            "sector overlap: technology",
+            "theme overlap: growth, ai",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "SOXX",
+          "market": "US",
+          "name": "iShares Semiconductor ETF",
+          "direction": "positive",
+          "final_score": 84.55,
+          "reasons": [
+            "sector overlap: semiconductors",
+            "theme overlap: ai, chips",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "512480.SH",
+          "market": "CN-A",
+          "name": "Semiconductor ETF",
+          "direction": "positive",
+          "final_score": 83.05,
+          "reasons": [
+            "sector overlap: semiconductors",
+            "theme overlap: chips, ai",
+            "preferred market: CN-A"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "d4b8ae3d-c0e7-5d4c-8572-55d792e57367",
+      "headline": "China officials signal broader stimulus for consumption and property stabilization",
+      "direction": "positive",
+      "event_type": "policy",
+      "final_score": 78.97,
+      "heat_score": 64.17,
+      "importance_score": 91.0,
+      "confidence_score": 73.3,
+      "markets": [
+        "CN-A",
+        "HK",
+        "US"
+      ],
+      "themes": [
+        "china-reopening",
+        "brokerage",
+        "property",
+        "consumption"
+      ],
+      "rationale": [
+        "China Stimulus Support: matched china, stimulus, consumption, property, support. Broad China support typically lifts domestic cyclicals, brokers, and China-beta products."
+      ],
+      "top_instruments": [
+        {
+          "symbol": "600030.SH",
+          "market": "CN-A",
+          "name": "CITIC Securities",
+          "direction": "positive",
+          "final_score": 82.88,
+          "reasons": [
+            "sector overlap: brokerage, financials",
+            "theme overlap: china-reopening, brokerage",
+            "preferred market: CN-A"
+          ]
+        },
+        {
+          "symbol": "FXI",
+          "market": "US",
+          "name": "iShares China Large-Cap ETF",
+          "direction": "positive",
+          "final_score": 82.58,
+          "reasons": [
+            "sector overlap: brokerage, property, consumer",
+            "theme overlap: china-reopening, china-beta",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "06066.HK",
+          "market": "HK",
+          "name": "CSC Financial",
+          "direction": "positive",
+          "final_score": 81.38,
+          "reasons": [
+            "sector overlap: brokerage, financials",
+            "theme overlap: china-reopening, brokerage",
+            "preferred market: HK"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "df440c11-c2f9-5793-b84c-6fe31fc2abd4",
+      "headline": "Treasury yields slide as traders price deeper Fed rate cuts",
+      "direction": "positive",
+      "event_type": "macro",
+      "final_score": 76.05,
+      "heat_score": 63.74,
+      "importance_score": 84.05,
+      "confidence_score": 74.72,
+      "markets": [
+        "US",
+        "HK",
+        "CN-A"
+      ],
+      "themes": [
+        "rates",
+        "duration",
+        "growth"
+      ],
+      "rationale": [
+        "Fed Easing Expectations: matched fed, rate cuts, yields, treasury, easing. Lower yields often support duration assets, bonds, and growth-heavy products."
+      ],
+      "top_instruments": [
+        {
+          "symbol": "TLT",
+          "market": "US",
+          "name": "iShares 20+ Year Treasury Bond ETF",
+          "direction": "positive",
+          "final_score": 80.87,
+          "reasons": [
+            "sector overlap: bonds",
+            "theme overlap: rates, duration",
+            "entity/alias match: treasury, tlt",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "QQQ",
+          "market": "US",
+          "name": "Invesco QQQ Trust",
+          "direction": "positive",
+          "final_score": 79.92,
+          "reasons": [
+            "sector overlap: technology",
+            "theme overlap: growth, ai",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "513100.SH",
+          "market": "CN-A",
+          "name": "Nasdaq 100 ETF",
+          "direction": "positive",
+          "final_score": 77.07,
+          "reasons": [
+            "sector overlap: technology",
+            "theme overlap: growth, ai",
+            "preferred market: CN-A"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "70169504-66b5-5004-8e71-88bb0acf9f6e",
+      "headline": "New EV tariff proposals raise pressure on battery exporters",
+      "direction": "negative",
+      "event_type": "regulation",
+      "final_score": 75.35,
+      "heat_score": 62.25,
+      "importance_score": 84.9,
+      "confidence_score": 72.35,
+      "markets": [
+        "HK",
+        "CN-A",
+        "US"
+      ],
+      "themes": [
+        "ev",
+        "battery",
+        "trade-friction"
+      ],
+      "rationale": [
+        "EV Tariff Pressure: matched tariff, ev, battery, trade restrictions, sourcing restrictions. Trade restrictions and tariff pressure can weigh on EV and battery exporters."
+      ],
+      "top_instruments": [
+        {
+          "symbol": "1211.HK",
+          "market": "HK",
+          "name": "BYD",
+          "direction": "negative",
+          "final_score": 84.38,
+          "reasons": [
+            "sector overlap: autos, battery",
+            "theme overlap: ev, battery",
+            "entity/alias match: byd",
+            "preferred market: HK"
+          ]
+        },
+        {
+          "symbol": "300750.SZ",
+          "market": "CN-A",
+          "name": "CATL",
+          "direction": "negative",
+          "final_score": 84.23,
+          "reasons": [
+            "sector overlap: battery, autos",
+            "theme overlap: ev, battery",
+            "entity/alias match: catl",
+            "preferred market: CN-A"
+          ]
+        },
+        {
+          "symbol": "TSLA",
+          "market": "US",
+          "name": "Tesla",
+          "direction": "negative",
+          "final_score": 81.09,
+          "reasons": [
+            "sector overlap: autos, technology",
+            "theme overlap: ev, battery",
+            "preferred market: US"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "1f1939a5-353c-5e86-bb01-338b97c387fb",
+      "headline": "Oil climbs after OPEC+ extends supply cuts into the second half",
+      "direction": "positive",
+      "event_type": "commodity",
+      "final_score": 74.0,
+      "heat_score": 64.3,
+      "importance_score": 79.7,
+      "confidence_score": 74.25,
+      "markets": [
+        "US",
+        "HK",
+        "CN-A"
+      ],
+      "themes": [
+        "energy",
+        "oil"
+      ],
+      "rationale": [
+        "Oil Supply Tightening: matched opec, oil, supply cuts, crude, production. Supply cuts usually support upstream oil names and energy products."
+      ],
+      "top_instruments": [
+        {
+          "symbol": "XOM",
+          "market": "US",
+          "name": "Exxon Mobil",
+          "direction": "positive",
+          "final_score": 78.0,
+          "reasons": [
+            "sector overlap: energy, oil-gas",
+            "theme overlap: oil, energy",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "0883.HK",
+          "market": "HK",
+          "name": "CNOOC",
+          "direction": "positive",
+          "final_score": 76.8,
+          "reasons": [
+            "sector overlap: energy, oil-gas",
+            "theme overlap: oil, energy",
+            "preferred market: HK"
+          ]
+        },
+        {
+          "symbol": "600028.SH",
+          "market": "CN-A",
+          "name": "Sinopec",
+          "direction": "positive",
+          "final_score": 76.35,
+          "reasons": [
+            "sector overlap: energy, oil-gas",
+            "theme overlap: oil, energy",
+            "preferred market: CN-A"
+          ]
+        }
+      ]
+    }
+  ],
+  "positive_catalysts": [
+    {
+      "cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54",
+      "headline": "AI chip demand accelerates as cloud giants expand capex plans",
+      "direction": "positive",
+      "event_type": "industry",
+      "final_score": 83.33,
+      "heat_score": 76.11,
+      "importance_score": 89.95,
+      "confidence_score": 79.17,
+      "markets": [
+        "US",
+        "HK",
+        "CN-A"
+      ],
+      "themes": [
+        "ai",
+        "semiconductors",
+        "cloud"
+      ],
+      "rationale": [
+        "AI Capex Expansion: matched ai, data center, gpu, chip demand, capex. AI capex and chip demand usually lift compute and semiconductor chains."
+      ],
+      "top_instruments": [
+        {
+          "symbol": "NVDA",
+          "market": "US",
+          "name": "NVIDIA",
+          "direction": "positive",
+          "final_score": 91.64,
+          "reasons": [
+            "sector overlap: semiconductors, technology",
+            "theme overlap: ai, chips, data-center",
+            "entity/alias match: nvidia, gpu",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "AMD",
+          "market": "US",
+          "name": "AMD",
+          "direction": "positive",
+          "final_score": 90.89,
+          "reasons": [
+            "sector overlap: semiconductors, technology",
+            "theme overlap: ai, chips, data-center",
+            "entity/alias match: gpu, amd",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "QQQ",
+          "market": "US",
+          "name": "Invesco QQQ Trust",
+          "direction": "positive",
+          "final_score": 85.45,
+          "reasons": [
+            "sector overlap: technology",
+            "theme overlap: growth, ai",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "SOXX",
+          "market": "US",
+          "name": "iShares Semiconductor ETF",
+          "direction": "positive",
+          "final_score": 84.55,
+          "reasons": [
+            "sector overlap: semiconductors",
+            "theme overlap: ai, chips",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "512480.SH",
+          "market": "CN-A",
+          "name": "Semiconductor ETF",
+          "direction": "positive",
+          "final_score": 83.05,
+          "reasons": [
+            "sector overlap: semiconductors",
+            "theme overlap: chips, ai",
+            "preferred market: CN-A"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "d4b8ae3d-c0e7-5d4c-8572-55d792e57367",
+      "headline": "China officials signal broader stimulus for consumption and property stabilization",
+      "direction": "positive",
+      "event_type": "policy",
+      "final_score": 78.97,
+      "heat_score": 64.17,
+      "importance_score": 91.0,
+      "confidence_score": 73.3,
+      "markets": [
+        "CN-A",
+        "HK",
+        "US"
+      ],
+      "themes": [
+        "china-reopening",
+        "brokerage",
+        "property",
+        "consumption"
+      ],
+      "rationale": [
+        "China Stimulus Support: matched china, stimulus, consumption, property, support. Broad China support typically lifts domestic cyclicals, brokers, and China-beta products."
+      ],
+      "top_instruments": [
+        {
+          "symbol": "600030.SH",
+          "market": "CN-A",
+          "name": "CITIC Securities",
+          "direction": "positive",
+          "final_score": 82.88,
+          "reasons": [
+            "sector overlap: brokerage, financials",
+            "theme overlap: china-reopening, brokerage",
+            "preferred market: CN-A"
+          ]
+        },
+        {
+          "symbol": "FXI",
+          "market": "US",
+          "name": "iShares China Large-Cap ETF",
+          "direction": "positive",
+          "final_score": 82.58,
+          "reasons": [
+            "sector overlap: brokerage, property, consumer",
+            "theme overlap: china-reopening, china-beta",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "06066.HK",
+          "market": "HK",
+          "name": "CSC Financial",
+          "direction": "positive",
+          "final_score": 81.38,
+          "reasons": [
+            "sector overlap: brokerage, financials",
+            "theme overlap: china-reopening, brokerage",
+            "preferred market: HK"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "df440c11-c2f9-5793-b84c-6fe31fc2abd4",
+      "headline": "Treasury yields slide as traders price deeper Fed rate cuts",
+      "direction": "positive",
+      "event_type": "macro",
+      "final_score": 76.05,
+      "heat_score": 63.74,
+      "importance_score": 84.05,
+      "confidence_score": 74.72,
+      "markets": [
+        "US",
+        "HK",
+        "CN-A"
+      ],
+      "themes": [
+        "rates",
+        "duration",
+        "growth"
+      ],
+      "rationale": [
+        "Fed Easing Expectations: matched fed, rate cuts, yields, treasury, easing. Lower yields often support duration assets, bonds, and growth-heavy products."
+      ],
+      "top_instruments": [
+        {
+          "symbol": "TLT",
+          "market": "US",
+          "name": "iShares 20+ Year Treasury Bond ETF",
+          "direction": "positive",
+          "final_score": 80.87,
+          "reasons": [
+            "sector overlap: bonds",
+            "theme overlap: rates, duration",
+            "entity/alias match: treasury, tlt",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "QQQ",
+          "market": "US",
+          "name": "Invesco QQQ Trust",
+          "direction": "positive",
+          "final_score": 79.92,
+          "reasons": [
+            "sector overlap: technology",
+            "theme overlap: growth, ai",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "513100.SH",
+          "market": "CN-A",
+          "name": "Nasdaq 100 ETF",
+          "direction": "positive",
+          "final_score": 77.07,
+          "reasons": [
+            "sector overlap: technology",
+            "theme overlap: growth, ai",
+            "preferred market: CN-A"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "1f1939a5-353c-5e86-bb01-338b97c387fb",
+      "headline": "Oil climbs after OPEC+ extends supply cuts into the second half",
+      "direction": "positive",
+      "event_type": "commodity",
+      "final_score": 74.0,
+      "heat_score": 64.3,
+      "importance_score": 79.7,
+      "confidence_score": 74.25,
+      "markets": [
+        "US",
+        "HK",
+        "CN-A"
+      ],
+      "themes": [
+        "energy",
+        "oil"
+      ],
+      "rationale": [
+        "Oil Supply Tightening: matched opec, oil, supply cuts, crude, production. Supply cuts usually support upstream oil names and energy products."
+      ],
+      "top_instruments": [
+        {
+          "symbol": "XOM",
+          "market": "US",
+          "name": "Exxon Mobil",
+          "direction": "positive",
+          "final_score": 78.0,
+          "reasons": [
+            "sector overlap: energy, oil-gas",
+            "theme overlap: oil, energy",
+            "preferred market: US"
+          ]
+        },
+        {
+          "symbol": "0883.HK",
+          "market": "HK",
+          "name": "CNOOC",
+          "direction": "positive",
+          "final_score": 76.8,
+          "reasons": [
+            "sector overlap: energy, oil-gas",
+            "theme overlap: oil, energy",
+            "preferred market: HK"
+          ]
+        },
+        {
+          "symbol": "600028.SH",
+          "market": "CN-A",
+          "name": "Sinopec",
+          "direction": "positive",
+          "final_score": 76.35,
+          "reasons": [
+            "sector overlap: energy, oil-gas",
+            "theme overlap: oil, energy",
+            "preferred market: CN-A"
+          ]
+        }
+      ]
+    }
+  ],
+  "negative_risks": [
+    {
+      "cluster_id": "70169504-66b5-5004-8e71-88bb0acf9f6e",
+      "headline": "New EV tariff proposals raise pressure on battery exporters",
+      "direction": "negative",
+      "event_type": "regulation",
+      "final_score": 75.35,
+      "heat_score": 62.25,
+      "importance_score": 84.9,
+      "confidence_score": 72.35,
+      "markets": [
+        "HK",
+        "CN-A",
+        "US"
+      ],
+      "themes": [
+        "ev",
+        "battery",
+        "trade-friction"
+      ],
+      "rationale": [
+        "EV Tariff Pressure: matched tariff, ev, battery, trade restrictions, sourcing restrictions. Trade restrictions and tariff pressure can weigh on EV and battery exporters."
+      ],
+      "top_instruments": [
+        {
+          "symbol": "1211.HK",
+          "market": "HK",
+          "name": "BYD",
+          "direction": "negative",
+          "final_score": 84.38,
+          "reasons": [
+            "sector overlap: autos, battery",
+            "theme overlap: ev, battery",
+            "entity/alias match: byd",
+            "preferred market: HK"
+          ]
+        },
+        {
+          "symbol": "300750.SZ",
+          "market": "CN-A",
+          "name": "CATL",
+          "direction": "negative",
+          "final_score": 84.23,
+          "reasons": [
+            "sector overlap: battery, autos",
+            "theme overlap: ev, battery",
+            "entity/alias match: catl",
+            "preferred market: CN-A"
+          ]
+        },
+        {
+          "symbol": "TSLA",
+          "market": "US",
+          "name": "Tesla",
+          "direction": "negative",
+          "final_score": 81.09,
+          "reasons": [
+            "sector overlap: autos, technology",
+            "theme overlap: ev, battery",
+            "preferred market: US"
+          ]
+        }
+      ]
+    }
+  ],
+  "watchlist": [],
+  "top_instruments": [
+    {
+      "cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54",
+      "headline": "AI chip demand accelerates as cloud giants expand capex plans",
+      "symbol": "NVDA",
+      "market": "US",
+      "name": "NVIDIA",
+      "direction": "positive",
+      "final_score": 91.64,
+      "reasons": [
+        "sector overlap: semiconductors, technology",
+        "theme overlap: ai, chips, data-center",
+        "entity/alias match: nvidia, gpu",
+        "preferred market: US"
+      ]
+    },
+    {
+      "cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54",
+      "headline": "AI chip demand accelerates as cloud giants expand capex plans",
+      "symbol": "AMD",
+      "market": "US",
+      "name": "AMD",
+      "direction": "positive",
+      "final_score": 90.89,
+      "reasons": [
+        "sector overlap: semiconductors, technology",
+        "theme overlap: ai, chips, data-center",
+        "entity/alias match: gpu, amd",
+        "preferred market: US"
+      ]
+    },
+    {
+      "cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54",
+      "headline": "AI chip demand accelerates as cloud giants expand capex plans",
+      "symbol": "QQQ",
+      "market": "US",
+      "name": "Invesco QQQ Trust",
+      "direction": "positive",
+      "final_score": 85.45,
+      "reasons": [
+        "sector overlap: technology",
+        "theme overlap: growth, ai",
+        "preferred market: US"
+      ]
+    },
+    {
+      "cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54",
+      "headline": "AI chip demand accelerates as cloud giants expand capex plans",
+      "symbol": "SOXX",
+      "market": "US",
+      "name": "iShares Semiconductor ETF",
+      "direction": "positive",
+      "final_score": 84.55,
+      "reasons": [
+        "sector overlap: semiconductors",
+        "theme overlap: ai, chips",
+        "preferred market: US"
+      ]
+    },
+    {
+      "cluster_id": "70169504-66b5-5004-8e71-88bb0acf9f6e",
+      "headline": "New EV tariff proposals raise pressure on battery exporters",
+      "symbol": "1211.HK",
+      "market": "HK",
+      "name": "BYD",
+      "direction": "negative",
+      "final_score": 84.38,
+      "reasons": [
+        "sector overlap: autos, battery",
+        "theme overlap: ev, battery",
+        "entity/alias match: byd",
+        "preferred market: HK"
+      ]
+    },
+    {
+      "cluster_id": "70169504-66b5-5004-8e71-88bb0acf9f6e",
+      "headline": "New EV tariff proposals raise pressure on battery exporters",
+      "symbol": "300750.SZ",
+      "market": "CN-A",
+      "name": "CATL",
+      "direction": "negative",
+      "final_score": 84.23,
+      "reasons": [
+        "sector overlap: battery, autos",
+        "theme overlap: ev, battery",
+        "entity/alias match: catl",
+        "preferred market: CN-A"
+      ]
+    },
+    {
+      "cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54",
+      "headline": "AI chip demand accelerates as cloud giants expand capex plans",
+      "symbol": "512480.SH",
+      "market": "CN-A",
+      "name": "Semiconductor ETF",
+      "direction": "positive",
+      "final_score": 83.05,
+      "reasons": [
+        "sector overlap: semiconductors",
+        "theme overlap: chips, ai",
+        "preferred market: CN-A"
+      ]
+    },
+    {
+      "cluster_id": "d4b8ae3d-c0e7-5d4c-8572-55d792e57367",
+      "headline": "China officials signal broader stimulus for consumption and property stabilization",
+      "symbol": "600030.SH",
+      "market": "CN-A",
+      "name": "CITIC Securities",
+      "direction": "positive",
+      "final_score": 82.88,
+      "reasons": [
+        "sector overlap: brokerage, financials",
+        "theme overlap: china-reopening, brokerage",
+        "preferred market: CN-A"
+      ]
+    }
+  ],
+  "latest_feed": [
+    {
+      "doc_id": "fcf13a56-ff62-543f-b799-6dc8183064d2",
+      "published_at": "2026-03-12T08:05:00+00:00",
+      "source_id": "bloomberg",
+      "title": "AI chip demand accelerates as cloud giants expand capex plans",
+      "themes": [
+        "ai",
+        "semiconductors",
+        "cloud"
+      ],
+      "entities": [
+        "NVIDIA",
+        "AMD"
+      ],
+      "url": "https://example.com/news/ai-002"
+    },
+    {
+      "doc_id": "92a93bb0-6f39-5e5c-8ca1-560d92c3ce72",
+      "published_at": "2026-03-12T07:30:00+00:00",
+      "source_id": "reuters",
+      "title": "Nvidia suppliers rally as hyperscalers raise AI data center spending",
+      "themes": [
+        "ai",
+        "semiconductors",
+        "data-center"
+      ],
+      "entities": [
+        "NVIDIA"
+      ],
+      "url": "https://example.com/news/ai-001"
+    },
+    {
+      "doc_id": "e9ffb7cf-2c19-5069-8cf5-7114766061f8",
+      "published_at": "2026-03-12T06:40:00+00:00",
+      "source_id": "xinhua",
+      "title": "China officials signal broader stimulus for consumption and property stabilization",
+      "themes": [
+        "china-reopening",
+        "brokerage",
+        "property",
+        "consumption"
+      ],
+      "entities": [
+        "China"
+      ],
+      "url": "https://example.com/news/cn-001"
+    },
+    {
+      "doc_id": "8ddb1db3-3f20-55a0-a290-08001bc64ae0",
+      "published_at": "2026-03-12T05:55:00+00:00",
+      "source_id": "wsj",
+      "title": "Oil climbs after OPEC+ extends supply cuts into the second half",
+      "themes": [
+        "oil",
+        "energy"
+      ],
+      "entities": [
+        "OPEC+"
+      ],
+      "url": "https://example.com/news/oil-001"
+    },
+    {
+      "doc_id": "a30dcf2c-6036-5fd9-a63e-5d66d351c5bf",
+      "published_at": "2026-03-12T04:15:00+00:00",
+      "source_id": "ft",
+      "title": "Treasury yields slide as traders price deeper Fed rate cuts",
+      "themes": [
+        "rates",
+        "duration",
+        "growth"
+      ],
+      "entities": [
+        "Federal Reserve"
+      ],
+      "url": "https://example.com/news/rates-001"
+    },
+    {
+      "doc_id": "b11e02bd-3342-526a-92d5-36a57ee29cd8",
+      "published_at": "2026-03-12T03:45:00+00:00",
+      "source_id": "nikkei",
+      "title": "New EV tariff proposals raise pressure on battery exporters",
+      "themes": [
+        "ev",
+        "battery",
+        "trade-friction"
+      ],
+      "entities": [
+        "BYD",
+        "CATL"
+      ],
+      "url": "https://example.com/news/ev-001"
+    }
+  ]
+}

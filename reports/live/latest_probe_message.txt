@@ -1,0 +1,11 @@
+市场新闻系统测试消息
+时间: 2026-03-12T14:53:14.464754+00:00
+模式: probe
+说明: 这是一条人工测试消息，用于验证 OpenClaw -> 手机提醒链路。
+
+最近运行状态:
+- overall_status: ok
+- events: 45 | instruments: 10
+- alerts: critical=0 high=2 medium=0
+
+如果你收到这条消息，说明手机通知链路是通的。

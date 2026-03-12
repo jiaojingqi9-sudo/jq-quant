@@ -1,0 +1,9 @@
+[project]
+name = "market-news-collector"
+version = "0.1.0"
+description = "Abstract, low-coupling market news collector MVP for A-share, Hong Kong, and US instruments."
+requires-python = ">=3.11"
+
+[project.scripts]
+market-news = "market_news.cli:main"
+

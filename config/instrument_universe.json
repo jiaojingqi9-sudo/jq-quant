@@ -1,0 +1,173 @@
+[
+  {
+    "symbol": "NVDA",
+    "market": "US",
+    "asset_type": "stock",
+    "name": "NVIDIA",
+    "sectors": ["semiconductors", "technology"],
+    "themes": ["ai", "chips", "data-center"],
+    "aliases": ["nvidia", "nvda", "gpu"],
+    "liquidity_score": 0.98
+  },
+  {
+    "symbol": "AMD",
+    "market": "US",
+    "asset_type": "stock",
+    "name": "AMD",
+    "sectors": ["semiconductors", "technology"],
+    "themes": ["ai", "chips", "data-center"],
+    "aliases": ["amd", "gpu"],
+    "liquidity_score": 0.93
+  },
+  {
+    "symbol": "SOXX",
+    "market": "US",
+    "asset_type": "etf",
+    "name": "iShares Semiconductor ETF",
+    "sectors": ["semiconductors"],
+    "themes": ["ai", "chips"],
+    "aliases": ["soxx", "semiconductor etf"],
+    "liquidity_score": 0.9
+  },
+  {
+    "symbol": "0981.HK",
+    "market": "HK",
+    "asset_type": "stock",
+    "name": "SMIC",
+    "sectors": ["semiconductors"],
+    "themes": ["chips", "china-tech"],
+    "aliases": ["smic", "0981.hk"],
+    "liquidity_score": 0.82
+  },
+  {
+    "symbol": "512480.SH",
+    "market": "CN-A",
+    "asset_type": "etf",
+    "name": "Semiconductor ETF",
+    "sectors": ["semiconductors"],
+    "themes": ["chips", "ai"],
+    "aliases": ["semiconductor etf", "512480.sh"],
+    "liquidity_score": 0.8
+  },
+  {
+    "symbol": "600030.SH",
+    "market": "CN-A",
+    "asset_type": "stock",
+    "name": "CITIC Securities",
+    "sectors": ["brokerage", "financials"],
+    "themes": ["china-reopening", "brokerage"],
+    "aliases": ["citic securities", "600030.sh"],
+    "liquidity_score": 0.88
+  },
+  {
+    "symbol": "06066.HK",
+    "market": "HK",
+    "asset_type": "stock",
+    "name": "CSC Financial",
+    "sectors": ["brokerage", "financials"],
+    "themes": ["china-reopening", "brokerage"],
+    "aliases": ["csc financial", "06066.hk"],
+    "liquidity_score": 0.78
+  },
+  {
+    "symbol": "FXI",
+    "market": "US",
+    "asset_type": "etf",
+    "name": "iShares China Large-Cap ETF",
+    "sectors": ["brokerage", "property", "consumer"],
+    "themes": ["china-reopening", "china-beta"],
+    "aliases": ["fxi", "china etf"],
+    "liquidity_score": 0.86
+  },
+  {
+    "symbol": "1211.HK",
+    "market": "HK",
+    "asset_type": "stock",
+    "name": "BYD",
+    "sectors": ["autos", "battery"],
+    "themes": ["ev", "battery"],
+    "aliases": ["byd", "1211.hk"],
+    "liquidity_score": 0.9
+  },
+  {
+    "symbol": "300750.SZ",
+    "market": "CN-A",
+    "asset_type": "stock",
+    "name": "CATL",
+    "sectors": ["battery", "autos"],
+    "themes": ["ev", "battery"],
+    "aliases": ["catl", "300750.sz"],
+    "liquidity_score": 0.89
+  },
+  {
+    "symbol": "TSLA",
+    "market": "US",
+    "asset_type": "stock",
+    "name": "Tesla",
+    "sectors": ["autos", "technology"],
+    "themes": ["ev", "battery"],
+    "aliases": ["tesla", "tsla"],
+    "liquidity_score": 0.97
+  },
+  {
+    "symbol": "XOM",
+    "market": "US",
+    "asset_type": "stock",
+    "name": "Exxon Mobil",
+    "sectors": ["energy", "oil-gas"],
+    "themes": ["oil", "energy"],
+    "aliases": ["exxon", "xom"],
+    "liquidity_score": 0.94
+  },
+  {
+    "symbol": "0883.HK",
+    "market": "HK",
+    "asset_type": "stock",
+    "name": "CNOOC",
+    "sectors": ["energy", "oil-gas"],
+    "themes": ["oil", "energy"],
+    "aliases": ["cnooc", "0883.hk"],
+    "liquidity_score": 0.86
+  },
+  {
+    "symbol": "600028.SH",
+    "market": "CN-A",
+    "asset_type": "stock",
+    "name": "Sinopec",
+    "sectors": ["energy", "oil-gas"],
+    "themes": ["oil", "energy"],
+    "aliases": ["sinopec", "600028.sh"],
+    "liquidity_score": 0.83
+  },
+  {
+    "symbol": "TLT",
+    "market": "US",
+    "asset_type": "etf",
+    "name": "iShares 20+ Year Treasury Bond ETF",
+    "sectors": ["bonds"],
+    "themes": ["rates", "duration"],
+    "aliases": ["tlt", "treasury"],
+    "liquidity_score": 0.92
+  },
+  {
+    "symbol": "QQQ",
+    "market": "US",
+    "asset_type": "etf",
+    "name": "Invesco QQQ Trust",
+    "sectors": ["technology"],
+    "themes": ["growth", "ai"],
+    "aliases": ["qqq", "nasdaq"],
+    "liquidity_score": 0.96
+  },
+  {
+    "symbol": "513100.SH",
+    "market": "CN-A",
+    "asset_type": "etf",
+    "name": "Nasdaq 100 ETF",
+    "sectors": ["technology"],
+    "themes": ["growth", "ai"],
+    "aliases": ["nasdaq 100 etf", "513100.sh"],
+    "liquidity_score": 0.77
+  }
+]
+

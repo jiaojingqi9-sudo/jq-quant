@@ -1,0 +1,105 @@
+[
+  {
+    "source_id": "reuters",
+    "external_id": "ai-001",
+    "title": "Nvidia suppliers rally as hyperscalers raise AI data center spending",
+    "summary": "Higher GPU and server orders are expected after major cloud groups lifted 2026 capex targets.",
+    "body": "Semiconductor and data center names moved higher after cloud providers signaled another leg of AI infrastructure investment.",
+    "url": "https://example.com/news/ai-001",
+    "published_at": "2026-03-12T07:30:00Z",
+    "language": "en",
+    "source_trust": 0.92,
+    "entities": ["NVIDIA"],
+    "themes": ["ai", "semiconductors", "data-center"],
+    "regions": ["US"],
+    "metadata": {
+      "sectors": ["semiconductors", "technology"]
+    }
+  },
+  {
+    "source_id": "bloomberg",
+    "external_id": "ai-002",
+    "title": "AI chip demand accelerates as cloud giants expand capex plans",
+    "summary": "Chipmakers and compute suppliers are in focus after another round of spending upgrades by hyperscalers.",
+    "body": "The move reinforces expectations for GPU and advanced packaging demand across the semiconductor value chain.",
+    "url": "https://example.com/news/ai-002",
+    "published_at": "2026-03-12T08:05:00Z",
+    "language": "en",
+    "source_trust": 0.94,
+    "entities": ["NVIDIA", "AMD"],
+    "themes": ["ai", "semiconductors", "cloud"],
+    "regions": ["US"],
+    "metadata": {
+      "sectors": ["semiconductors", "technology"]
+    }
+  },
+  {
+    "source_id": "xinhua",
+    "external_id": "cn-001",
+    "title": "China officials signal broader stimulus for consumption and property stabilization",
+    "summary": "Brokerage, property and consumer names drew attention after authorities discussed additional support measures.",
+    "body": "The policy tone suggested a wider push to stabilize domestic demand and improve risk appetite in mainland and Hong Kong markets.",
+    "url": "https://example.com/news/cn-001",
+    "published_at": "2026-03-12T06:40:00Z",
+    "language": "en",
+    "source_trust": 0.88,
+    "entities": ["China"],
+    "themes": ["china-reopening", "brokerage", "property", "consumption"],
+    "regions": ["CN", "HK"],
+    "metadata": {
+      "sectors": ["brokerage", "property", "consumer"]
+    }
+  },
+  {
+    "source_id": "wsj",
+    "external_id": "oil-001",
+    "title": "Oil climbs after OPEC+ extends supply cuts into the second half",
+    "summary": "Energy stocks gained as traders priced a tighter crude market.",
+    "body": "The production decision fueled expectations of stronger upstream earnings for major oil companies.",
+    "url": "https://example.com/news/oil-001",
+    "published_at": "2026-03-12T05:55:00Z",
+    "language": "en",
+    "source_trust": 0.9,
+    "entities": ["OPEC+"],
+    "themes": ["oil", "energy"],
+    "regions": ["Global"],
+    "metadata": {
+      "sectors": ["energy", "oil-gas"]
+    }
+  },
+  {
+    "source_id": "ft",
+    "external_id": "rates-001",
+    "title": "Treasury yields slide as traders price deeper Fed rate cuts",
+    "summary": "Duration and growth products outperformed after a softer inflation read revived easing expectations.",
+    "body": "Bond prices rose while technology shares also benefited from lower discount-rate assumptions.",
+    "url": "https://example.com/news/rates-001",
+    "published_at": "2026-03-12T04:15:00Z",
+    "language": "en",
+    "source_trust": 0.91,
+    "entities": ["Federal Reserve"],
+    "themes": ["rates", "duration", "growth"],
+    "regions": ["US"],
+    "metadata": {
+      "sectors": ["bonds", "technology"]
+    }
+  },
+  {
+    "source_id": "nikkei",
+    "external_id": "ev-001",
+    "title": "New EV tariff proposals raise pressure on battery exporters",
+    "summary": "Trade restrictions could hit the sentiment around electric vehicle and battery names across Asia.",
+    "body": "Investors reviewed the impact of possible tariff changes and sourcing restrictions on EV supply chains.",
+    "url": "https://example.com/news/ev-001",
+    "published_at": "2026-03-12T03:45:00Z",
+    "language": "en",
+    "source_trust": 0.86,
+    "entities": ["BYD", "CATL"],
+    "themes": ["ev", "battery", "trade-friction"],
+    "regions": ["CN", "HK", "US"],
+    "metadata": {
+      "sectors": ["autos", "battery"]
+    }
+  }
+]
+

@@ -1,0 +1,42 @@
+[
+  {
+    "type": "cninfo_home",
+    "name": "cninfo-latest-announcements",
+    "source_id": "cninfo_latest",
+    "url": "https://www.cninfo.com.cn/",
+    "source_trust": 0.99,
+    "language": "zh",
+    "item_limit": 12
+  },
+  {
+    "type": "rss",
+    "name": "hkex-news-releases",
+    "source_id": "hkex_news",
+    "url": "https://www.hkex.com.hk/Services/RSS-Feeds/News-Releases?sc_lang=en",
+    "source_trust": 0.97,
+    "language": "en",
+    "regions": ["HK"],
+    "item_limit": 12,
+    "exclude_title_patterns": ["^20\\d{2}$"]
+  },
+  {
+    "type": "rss",
+    "name": "sec-press-releases",
+    "source_id": "sec_press",
+    "url": "https://www.sec.gov/news/pressreleases.rss",
+    "source_trust": 0.98,
+    "language": "en",
+    "regions": ["US"],
+    "item_limit": 12
+  },
+  {
+    "type": "rss",
+    "name": "sec-xbrl-usgaap",
+    "source_id": "sec_xbrl_usgaap",
+    "url": "https://www.sec.gov/Archives/edgar/usgaap.rss.xml",
+    "source_trust": 0.99,
+    "language": "en",
+    "regions": ["US"],
+    "item_limit": 12
+  }
+]
