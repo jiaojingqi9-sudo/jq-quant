@@ -558,15 +558,11 @@ class MarkdownJsonReporter:
     .events-panel { grid-area: events; }
     .detail-panel {
       grid-area: detail;
-      position: sticky;
-      top: 18px;
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
+      position: relative;
+      display: block;
       align-self: start;
-      height: calc(100vh - 36px);
-      max-height: calc(100vh - 36px);
       min-height: 420px;
-      overflow: hidden;
+      overflow: visible;
     }
     .instruments-panel { grid-area: instruments; }
     .feed-panel { grid-area: feed; }
@@ -736,26 +732,9 @@ class MarkdownJsonReporter:
     }
 
     #detailView {
-      min-height: 0;
-      height: 100%;
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      -webkit-overflow-scrolling: touch;
-      touch-action: pan-y;
-      padding-right: 8px;
-      padding-bottom: 6px;
-      margin-right: -6px;
-      scrollbar-gutter: stable;
-    }
-
-    #detailView::-webkit-scrollbar {
-      width: 10px;
-    }
-
-    #detailView::-webkit-scrollbar-thumb {
-      background: rgba(17, 32, 45, 0.18);
-      border-radius: 999px;
-      border: 2px solid rgba(255, 255, 255, 0.3);
+      overflow: visible;
+      padding-right: 0;
+      margin-right: 0;
     }
 
     .detail-block {
@@ -858,10 +837,7 @@ class MarkdownJsonReporter:
 
       .detail-panel {
         position: static;
-        height: auto;
-        max-height: none;
         min-height: 0;
-        grid-template-rows: auto auto;
         overflow: visible;
       }
     }
@@ -948,7 +924,7 @@ class MarkdownJsonReporter:
             <div class="panel-subtitle">这里会聚合理由、标的、相关新闻原文链接。</div>
           </div>
         </div>
-        <div id="detailView" tabindex="0"></div>
+        <div id="detailView"></div>
       </section>
 
       <section class="panel instruments-panel">
@@ -1093,59 +1069,6 @@ class MarkdownJsonReporter:
       return document.getElementById("detailView");
     }
 
-    function syncDetailScrollState() {
-      const panel = document.querySelector(".detail-panel");
-      const host = detailView();
-      if (!panel || !host) {
-        return;
-      }
-      const canScroll = host.scrollHeight > host.clientHeight + 2;
-      panel.classList.toggle("is-scrollable", canScroll);
-    }
-
-    function focusDetailView() {
-      const host = detailView();
-      if (!host || typeof host.focus !== "function") {
-        return;
-      }
-      try {
-        host.focus({ preventScroll: true });
-      } catch (error) {
-        host.focus();
-      }
-    }
-
-    function installDetailScrollBridge() {
-      const panel = document.querySelector(".detail-panel");
-      if (!panel) {
-        return;
-      }
-
-      panel.addEventListener("wheel", function (event) {
-        const host = detailView();
-        if (!host) {
-          return;
-        }
-
-        const canScroll = host.scrollHeight > host.clientHeight + 2;
-        if (!canScroll) {
-          return;
-        }
-
-        const atTop = host.scrollTop <= 0;
-        const atBottom = host.scrollTop + host.clientHeight >= host.scrollHeight - 1;
-        const movingDown = event.deltaY > 0;
-        const movingUp = event.deltaY < 0;
-
-        if ((movingDown && atBottom) || (movingUp && atTop)) {
-          return;
-        }
-
-        host.scrollTop += event.deltaY;
-        event.preventDefault();
-      }, { passive: false });
-    }
-
     function renderHero() {
       const counts = report.counts || {};
       document.getElementById("heroMeta").textContent =
@@ -1266,7 +1189,6 @@ class MarkdownJsonReporter:
       const host = detailView();
       if (!event) {
         host.innerHTML = '<div class="empty">暂无事件可展示。</div>';
-        syncDetailScrollState();
         return;
       }
 
@@ -1340,9 +1262,6 @@ class MarkdownJsonReporter:
         + '<div class="detail-block"><div class="detail-section-title"><strong>候选标的</strong><span>可能受影响的交易对象</span></div><div class="stack">' + instruments + "</div></div>"
         + '<div class="detail-block"><div class="detail-section-title"><strong>相关新闻原文</strong><span>点击可跳转</span></div><ul class="doc-list">' + docs + "</ul></div>"
         + "</div>";
-      host.scrollTop = 0;
-      focusDetailView();
-      syncDetailScrollState();
     }
 
     function renderInstruments() {
@@ -1426,7 +1345,6 @@ class MarkdownJsonReporter:
       render();
     });
 
-    installDetailScrollBridge();
     render();
 
     let countdown = 60;

@@ -51,9 +51,9 @@ class PipelineIntegrationTest(unittest.TestCase):
             self.assertTrue((temp_path / "reports" / "latest_report.json").exists())
             self.assertTrue((temp_path / "reports" / "latest_dashboard.html").exists())
             dashboard_html = (temp_path / "reports" / "latest_dashboard.html").read_text()
-            self.assertIn('id="detailView" tabindex="0"', dashboard_html)
-            self.assertIn("grid-template-rows: auto minmax(0, 1fr);", dashboard_html)
-            self.assertIn("installDetailScrollBridge()", dashboard_html)
+            self.assertIn('id="detailView"', dashboard_html)
+            self.assertIn("position: relative;", dashboard_html)
+            self.assertIn("overflow: visible;", dashboard_html)
             self.assertIn("window.location.replace(url.toString())", dashboard_html)
             self.assertEqual(snapshot.ranked_events[0].impact.direction.value, "positive")
             symbols = {instrument.symbol for instrument in snapshot.ranked_instruments}
