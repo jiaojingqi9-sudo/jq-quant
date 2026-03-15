@@ -1,0 +1,139 @@
+CLAUDE-TRADE PROJECT STRUCTURE
+===============================
+
+Project Root: /sessions/dazzling-bold-lovelace/mnt/trade/claude-trade/
+
+Foundation Files Created:
+=========================
+
+1. pyproject.toml
+   - Modern setuptools configuration
+   - Python >=3.11,<3.14
+   - Dependencies: pandas, numpy, python-dotenv, ccxt, futu-api, dash, plotly
+   - Dev dependencies: pytest
+   - Entry point: claude-trade = "claude_trade.cli:main"
+
+2. src/claude_trade/config.py
+   - Frozen dataclass Settings with all configuration options
+   - Helper functions for parsing environment variables:
+     * _parse_symbols: Parse comma-separated symbols
+     * _parse_optional_int: Parse optional integers
+     * _parse_optional_str: Parse optional strings
+     * _parse_bool: Parse boolean values with default
+     * _parse_float: Parse float values with default
+   - load_settings() function using python-dotenv
+   
+   Configuration Sections:
+   - General: initial_capital, risk_per_trade_pct, max_position_pct, target_annual_vol
+   - Futu: host, port, market, environment, account, trading mode, password, buffers
+   - Crypto: exchange, API keys, sandbox mode
+   - Dual Momentum: universe, lookback, rebalance schedule, thresholds
+   - RSI Mean Reversion: universe, RSI period, thresholds, timeframe, filters
+   - Volatility Breakout: universe, K-factor, timeframe
+   - Strategy Weights: DM, RSI, VB weights
+   - Auto Trader: poll interval, timezone
+   - Dashboard: port
+
+3. .env.example
+   - Comprehensive example configuration file
+   - All variables documented in both Chinese and English
+   - Safe default values suitable for small capital accounts (<$10K)
+   - Organized into sections matching config.py structure
+   - Crypto sandbox mode enabled by default for safety
+   - Futu simulation mode enabled by default
+
+4. .gitignore
+   - Standard Python project ignores
+   - __pycache__, *.pyc, build/, dist/, .eggs/
+   - Virtual environment directories
+   - IDE files (.vscode, .idea)
+   - Environment files (.env)
+   - Runtime directories (runtime/, logs/, cache/)
+   - Database files and temporary files
+
+5. src/claude_trade/__init__.py
+   - Package initialization with version info
+
+6. src/claude_trade/cli.py
+   - Basic CLI entry point (placeholder for main implementation)
+
+Package Structure:
+==================
+
+src/claude_trade/
+├── __init__.py
+├── config.py (Configuration management)
+├── cli.py (CLI entry point)
+├── dashboard/ (Dash/Plotly dashboard)
+├── engine/ (Core trading engine)
+├── exchanges/ (Market data and order execution)
+├── risk/ (Risk management)
+└── strategies/ (Trading strategies)
+    ├── adaptive_dual_momentum.py
+    ├── rsi_mean_reversion.py
+    └── volatility_breakout.py
+
+Coding Standards Applied:
+=========================
+
+1. All Python files use: from __future__ import annotations
+2. Frozen dataclasses for immutable configuration
+3. Type hints throughout
+4. Helper functions for environment variable parsing
+5. python-dotenv for configuration management
+6. Consistent with existing taa_futu project style
+
+Strategy Support:
+=================
+
+1. Adaptive Dual Momentum (DM)
+   - Multi-market momentum across stocks + crypto
+   - Monthly rebalancing
+   - Absolute vs relative momentum thresholds
+   - Risk-free asset incorporation
+
+2. RSI Mean Reversion (RSI)
+   - Crypto-focused mean reversion strategy
+   - Configurable RSI thresholds (default: oversold 30, overbought 70)
+   - Volume and trend filters
+   - Multiple timeframes supported
+
+3. Volatility Breakout (VB)
+   - Crypto volatility-based breakout strategy
+   - K-factor for volatility scaling
+   - Daily or intraday timeframes
+
+Market Support:
+===============
+
+1. US Stocks
+   - Via Futu OpenD API
+   - Support for ETFs and individual stocks
+   - Simulation and real trading modes
+   - Post-market trading support
+
+2. Crypto
+   - Via CCXT library (multi-exchange support)
+   - Primary: Binance, OKX
+   - Sandbox mode for testing
+   - USDT pairs support
+
+Risk Management:
+================
+
+- Small capital focus (<$10K)
+- Risk per trade: configurable (default 2%)
+- Max position size: configurable (default 30%)
+- Target annual volatility: configurable (default 10%)
+- Price buffers and spread controls
+
+Next Steps:
+===========
+
+1. Implement strategies in src/claude_trade/strategies/
+2. Implement Futu connector in src/claude_trade/exchanges/
+3. Implement CCXT crypto connector
+4. Implement core engine for position management
+5. Implement risk management module
+6. Implement dashboard with Dash
+7. Add comprehensive test suite

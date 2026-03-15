@@ -1,0 +1,13 @@
+.env
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.egg-info/
+outputs/
+runtime/
+*.log
+*.pid
+.DS_Store
+Futu_OpenD_10.0.6018_Mac/
+Trading Control Panel.app/

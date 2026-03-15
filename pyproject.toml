@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taa-futu"
+version = "0.1.0"
+description = "Reproduce a practical tactical asset allocation paper and route signals into Futu simulated trading."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "futu-api==10.0.6008",
+  "numpy>=2.0.0",
+  "pandas>=2.2.0",
+  "plotly>=5.24.0",
+  "python-dotenv>=1.0.0",
+  "streamlit>=1.43.0",
+  "tabulate>=0.9.0",
+  "yfinance>=0.2.54",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[project.scripts]
+taa-futu = "taa_futu.cli:main"
+taa-futu-panel = "taa_futu.control_panel:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
