@@ -27,7 +27,6 @@ STOP_WORDS = {
     "after",
     "amid",
     "over",
-    "into",
     "more",
     "new",
     "latest",

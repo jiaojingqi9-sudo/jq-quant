@@ -1,0 +1,505 @@
+{
+  "theme_labels": {
+    "ai-compute": "AI算力",
+    "data-center": "数据中心",
+    "server-chain": "服务器链",
+    "optical-interconnect": "光模块/高速互联",
+    "advanced-process": "先进制程",
+    "advanced-packaging": "先进封装",
+    "chip-manufacturing": "晶圆制造",
+    "semicap-equipment": "半导体设备",
+    "chip-design": "芯片设计",
+    "domestic-substitution": "国产替代",
+    "model-applications": "大模型应用",
+    "cloud-software": "云软件",
+    "robotics": "机器人",
+    "autonomous-driving": "自动驾驶",
+    "ai-hardware": "AI硬件",
+    "order-momentum": "订单催化",
+    "earnings-momentum": "业绩动量",
+    "capital-support": "资本运作支撑",
+    "supply-overhang": "减持压制",
+    "compliance-risk": "监管风险",
+    "advanced-manufacturing": "精密制造/零部件",
+    "ai-energy": "AI能耗/电力",
+    "new-materials": "新材料/碳纤维",
+    "aerospace-defense": "航空航天/军工",
+    "energy-storage": "储能/新能源",
+    "xinchuang": "信创/国产软件生态",
+    "cybersecurity": "网络安全",
+    "nuclear-power": "核电/小型堆",
+    "industrial-ai": "工业AI/数字孪生",
+    "ar-vr": "AR/VR/空间计算",
+    "quantum-computing": "量子计算",
+    "ai-healthcare": "AI医疗"
+  },
+  "theme_aliases": {
+    "ai-compute": ["ai", "gpu", "算力", "capex", "data-center", "data center", "大模型训练"],
+    "data-center": ["数据中心", "data-center", "data center", "液冷", "机柜"],
+    "server-chain": ["server", "服务器", "机柜", "液冷"],
+    "optical-interconnect": ["光模块", "cpo", "800g", "1.6t", "硅光", "optical"],
+    "advanced-process": ["先进制程", "leading node", "n3", "n2", "先进工艺"],
+    "advanced-packaging": ["先进封装", "chiplet", "cpo"],
+    "chip-manufacturing": ["foundry", "晶圆", "制造"],
+    "semicap-equipment": ["半导体设备", "刻蚀", "薄膜", "equipment"],
+    "chip-design": ["芯片设计", "soc", "mcu", "gpu"],
+    "domestic-substitution": ["国产替代", "自主可控", "local substitution"],
+    "model-applications": ["llm", "大模型", "模型应用", "foundation model"],
+    "cloud-software": ["saas", "cloud", "云", "办公软件"],
+    "robotics": ["机器人", "人形机器人", "humanoid"],
+    "autonomous-driving": ["自动驾驶", "adas", "智驾"],
+    "ai-hardware": ["ai phone", "ai pc", "ai hardware", "端侧ai"],
+    "advanced-manufacturing": ["减速机", "伺服", "传感器", "精密零部件"],
+    "ai-energy": ["液冷", "UPS", "数据中心电力", "功耗"],
+    "new-materials": ["碳纤维", "碳化硅", "sic", "芳纶", "复合材料", "钛合金", "新材料"],
+    "aerospace-defense": ["航空航天", "军工", "航天", "卫星", "无人机", "导弹", "国防"],
+    "energy-storage": ["储能", "固态电池", "钠离子电池", "磷酸铁锂", "超级电容", "电化学储能"],
+    "xinchuang": ["信创", "国产软件", "党政信创", "金融信创"],
+    "cybersecurity": ["网络安全", "数据安全", "零信任", "等保"],
+    "nuclear-power": ["核电", "小型堆", "SMR", "核能"],
+    "industrial-ai": ["工业AI", "数字孪生", "工业大模型", "智能制造"],
+    "ar-vr": ["ar眼镜", "vr头显", "空间计算", "光波导"],
+    "quantum-computing": ["量子计算", "量子通信", "量子比特"],
+    "ai-healthcare": ["AI医疗", "手术机器人", "医疗大模型"]
+  },
+  "priority_themes": {
+    "ai-compute": 1.0,
+    "optical-interconnect": 0.94,
+    "advanced-process": 0.92,
+    "advanced-packaging": 0.88,
+    "domestic-substitution": 0.84,
+    "server-chain": 0.82,
+    "model-applications": 0.76,
+    "cloud-software": 0.65,
+    "robotics": 0.62,
+    "autonomous-driving": 0.6,
+    "advanced-manufacturing": 0.7,
+    "ai-energy": 0.68,
+    "compliance-risk": 0.88,
+    "supply-overhang": 0.82,
+    "new-materials": 0.72,
+    "aerospace-defense": 0.70,
+    "energy-storage": 0.68,
+    "xinchuang": 0.80,
+    "cybersecurity": 0.76,
+    "nuclear-power": 0.78,
+    "industrial-ai": 0.72,
+    "ar-vr": 0.70,
+    "quantum-computing": 0.68,
+    "ai-healthcare": 0.72
+  },
+  "edges": [
+    {
+      "source": "ai-compute",
+      "target": "server-chain",
+      "weight": 0.78,
+      "relation": "demand-chain",
+      "rationale": "算力扩张会先传导到服务器链。"
+    },
+    {
+      "source": "ai-compute",
+      "target": "advanced-packaging",
+      "weight": 0.56,
+      "relation": "supply-chain",
+      "rationale": "AI芯片升级会带动先进封装链。"
+    },
+    {
+      "source": "advanced-process",
+      "target": "chip-manufacturing",
+      "weight": 0.86,
+      "relation": "core-capability",
+      "rationale": "先进制程直接强化晶圆制造主线。"
+    },
+    {
+      "source": "advanced-process",
+      "target": "semicap-equipment",
+      "weight": 0.72,
+      "relation": "upstream",
+      "rationale": "先进制程升级通常传导到设备投资。"
+    },
+    {
+      "source": "advanced-packaging",
+      "target": "optical-interconnect",
+      "weight": 0.42,
+      "relation": "adjacent-theme",
+      "rationale": "先进封装热点容易外溢到高速互联。"
+    },
+    {
+      "source": "domestic-substitution",
+      "target": "chip-design",
+      "weight": 0.52,
+      "relation": "policy-spillover",
+      "rationale": "国产替代会强化芯片设计与本土链逻辑。"
+    },
+    {
+      "source": "domestic-substitution",
+      "target": "cloud-software",
+      "weight": 0.44,
+      "relation": "policy-spillover",
+      "rationale": "信创与自主可控会外溢到软件环节。"
+    },
+    {
+      "source": "model-applications",
+      "target": "ai-compute",
+      "weight": 0.82,
+      "relation": "demand-driver",
+      "rationale": "推理调用量推高算力需求，应用侧爆发会反向强化算力需求。"
+    },
+    {
+      "source": "order-momentum",
+      "target": "optical-interconnect",
+      "weight": 0.24,
+      "relation": "trading-overlay",
+      "rationale": "订单催化最容易在高弹性科技链放大。"
+    },
+    {
+      "source": "earnings-momentum",
+      "target": "model-applications",
+      "weight": 0.18,
+      "relation": "trading-overlay",
+      "rationale": "业绩催化容易强化应用侧交易预期。"
+    },
+    {
+      "source": "supply-overhang",
+      "target": "compliance-risk",
+      "weight": 0.22,
+      "relation": "risk-overlay",
+      "rationale": "减持与监管风险经常一同压制情绪。"
+    },
+    {
+      "source": "ai-compute",
+      "target": "optical-interconnect",
+      "weight": 0.76,
+      "relation": "demand-chain",
+      "rationale": "数据中心扩容拉动高速互联。"
+    },
+    {
+      "source": "ai-compute",
+      "target": "data-center",
+      "weight": 0.8,
+      "relation": "demand-chain",
+      "rationale": "AI服务器消耗更多机柜+散热",
+      "hop": 1
+    },
+    {
+      "source": "compliance-risk",
+      "target": "domestic-substitution",
+      "weight": 0.88,
+      "relation": "substitution-catalyst",
+      "rationale": "美国制裁加速国内替代进程",
+      "hop": 1
+    },
+    {
+      "source": "domestic-substitution",
+      "target": "semicap-equipment",
+      "weight": 0.78,
+      "relation": "demand-chain",
+      "rationale": "国产替代路径必经半导体设备本土化",
+      "hop": 1
+    },
+    {
+      "source": "domestic-substitution",
+      "target": "chip-manufacturing",
+      "weight": 0.74,
+      "relation": "demand-chain",
+      "rationale": "国内晶圆产能扩张",
+      "hop": 1
+    },
+    {
+      "source": "robotics",
+      "target": "chip-design",
+      "weight": 0.72,
+      "relation": "demand-chain",
+      "rationale": "人形机器人需要端侧AI芯片",
+      "hop": 1
+    },
+    {
+      "source": "robotics",
+      "target": "advanced-manufacturing",
+      "weight": 0.8,
+      "relation": "demand-chain",
+      "rationale": "减速机/伺服/传感器需求",
+      "hop": 1
+    },
+    {
+      "source": "autonomous-driving",
+      "target": "chip-design",
+      "weight": 0.78,
+      "relation": "demand-chain",
+      "rationale": "智驾SoC国产化",
+      "hop": 1
+    },
+    {
+      "source": "autonomous-driving",
+      "target": "ai-hardware",
+      "weight": 0.7,
+      "relation": "demand-chain",
+      "rationale": "算力盒子/域控制器",
+      "hop": 1
+    },
+    {
+      "source": "supply-overhang",
+      "target": "earnings-momentum",
+      "weight": -0.55,
+      "relation": "sentiment-drag",
+      "rationale": "减持压制股价即使业绩好",
+      "hop": 1
+    },
+    {
+      "source": "compliance-risk",
+      "target": "earnings-momentum",
+      "weight": -0.6,
+      "relation": "earnings-risk",
+      "rationale": "监管处罚可能直接影响营收",
+      "hop": 1
+    },
+    {
+      "source": "order-momentum",
+      "target": "earnings-momentum",
+      "weight": 0.84,
+      "relation": "earnings-driver",
+      "rationale": "大订单直接催化业绩预期",
+      "hop": 1
+    },
+    {
+      "source": "capital-support",
+      "target": "order-momentum",
+      "weight": 0.62,
+      "relation": "sentiment-boost",
+      "rationale": "产业基金背书带来订单信心",
+      "hop": 1
+    },
+    {
+      "source": "new-materials",
+      "target": "robotics",
+      "weight": 0.72,
+      "relation": "supply-chain",
+      "rationale": "碳纤维/铝合金是人形机器人骨架和关节的核心材料，机器人产量提升直接拉动新材料需求",
+      "hop": 1
+    },
+    {
+      "source": "new-materials",
+      "target": "aerospace-defense",
+      "weight": 0.80,
+      "relation": "supply-chain",
+      "rationale": "碳纤维是航空机体、导弹壳体、无人机机翼的主材，军工/航天订单是最大需求端",
+      "hop": 1
+    },
+    {
+      "source": "new-materials",
+      "target": "advanced-manufacturing",
+      "weight": 0.55,
+      "relation": "adjacent-theme",
+      "rationale": "高端碳化硅(SiC)基板加工需要精密切割设备，新材料与精密制造高度重叠",
+      "hop": 1
+    },
+    {
+      "source": "aerospace-defense",
+      "target": "chip-design",
+      "weight": 0.60,
+      "relation": "demand-chain",
+      "rationale": "航空电子、导弹制导、卫星载荷均需要高可靠性定制芯片，带动国产芯片设计需求",
+      "hop": 1
+    },
+    {
+      "source": "aerospace-defense",
+      "target": "new-materials",
+      "weight": 0.76,
+      "relation": "demand-chain",
+      "rationale": "航天/军工订单是碳纤维和高温合金的主要需求驱动",
+      "hop": 1
+    },
+    {
+      "source": "aerospace-defense",
+      "target": "domestic-substitution",
+      "weight": 0.84,
+      "relation": "policy-spillover",
+      "rationale": "军工领域供应链安全要求最高，进口替代政策执行力度最强",
+      "hop": 1
+    },
+    {
+      "source": "aerospace-defense",
+      "target": "advanced-manufacturing",
+      "weight": 0.72,
+      "relation": "demand-chain",
+      "rationale": "航天结构件、导弹舱体、卫星零部件均需要高精度加工，是精密制造的核心需求端",
+      "hop": 1
+    },
+    {
+      "source": "energy-storage",
+      "target": "ai-energy",
+      "weight": 0.58,
+      "relation": "demand-chain",
+      "rationale": "数据中心配套UPS和削峰填谷储能是AI电力稳定性的重要环节",
+      "hop": 1
+    },
+    {
+      "source": "energy-storage",
+      "target": "advanced-manufacturing",
+      "weight": 0.46,
+      "relation": "supply-chain",
+      "rationale": "固态电池电芯需要精密涂覆和卷绕设备，传导至精密制造链",
+      "hop": 1
+    },
+    {
+      "source": "domestic-substitution",
+      "target": "new-materials",
+      "weight": 0.62,
+      "relation": "policy-spillover",
+      "rationale": "碳纤维、SiC等长期依赖进口，国产替代政策直接刺激本土新材料企业",
+      "hop": 1
+    },
+    {
+      "source": "xinchuang",
+      "target": "domestic-substitution",
+      "weight": 0.88,
+      "relation": "policy-spillover",
+      "rationale": "信创的本质就是国产替代，是其最直接的执行路径",
+      "hop": 1
+    },
+    {
+      "source": "xinchuang",
+      "target": "cloud-software",
+      "weight": 0.76,
+      "relation": "demand-chain",
+      "rationale": "信创推动国产操作系统、数据库、中间件订单增长",
+      "hop": 1
+    },
+    {
+      "source": "xinchuang",
+      "target": "chip-design",
+      "weight": 0.58,
+      "relation": "supply-chain",
+      "rationale": "信创服务器需要飞腾/鲲鹏/海光等国产CPU，间接带动芯片设计",
+      "hop": 1
+    },
+    {
+      "source": "cybersecurity",
+      "target": "xinchuang",
+      "weight": 0.64,
+      "relation": "policy-spillover",
+      "rationale": "网络安全是信创配套需求，政策要求使用国产安全产品",
+      "hop": 1
+    },
+    {
+      "source": "xinchuang",
+      "target": "cybersecurity",
+      "weight": 0.60,
+      "relation": "demand-chain",
+      "rationale": "信创采购中安全软件是必配模块，两个主题高度协同",
+      "hop": 1
+    },
+    {
+      "source": "nuclear-power",
+      "target": "ai-energy",
+      "weight": 0.72,
+      "relation": "demand-chain",
+      "rationale": "核电与小型堆为数据中心提供稳定基荷电源，直接强化AI电力主线",
+      "hop": 1
+    },
+    {
+      "source": "ai-energy",
+      "target": "order-momentum",
+      "weight": 0.70,
+      "relation": "demand-chain",
+      "rationale": "数据中心电力需求带动核电/储能设备订单",
+      "hop": 1
+    },
+    {
+      "source": "cybersecurity",
+      "target": "cloud-software",
+      "weight": 0.70,
+      "relation": "demand-chain",
+      "rationale": "安全产品以SaaS/订阅交付为主，与云软件板块高度重叠",
+      "hop": 1
+    },
+    {
+      "source": "nuclear-power",
+      "target": "new-materials",
+      "weight": 0.55,
+      "relation": "demand-chain",
+      "rationale": "核电设备需要锆合金、特殊钢等高性能材料",
+      "hop": 1
+    },
+    {
+      "source": "nuclear-power",
+      "target": "advanced-manufacturing",
+      "weight": 0.65,
+      "relation": "demand-chain",
+      "rationale": "核反应堆零部件精度要求极高，带动精密制造需求",
+      "hop": 1
+    },
+    {
+      "source": "industrial-ai",
+      "target": "model-applications",
+      "weight": 0.72,
+      "relation": "demand-chain",
+      "rationale": "工业大模型是通用大模型向制造业落地的关键路径",
+      "hop": 1
+    },
+    {
+      "source": "industrial-ai",
+      "target": "robotics",
+      "weight": 0.68,
+      "relation": "demand-chain",
+      "rationale": "工业AI与工业机器人高度协同，视觉引导和任务规划依赖AI",
+      "hop": 1
+    },
+    {
+      "source": "industrial-ai",
+      "target": "advanced-manufacturing",
+      "weight": 0.75,
+      "relation": "theme-overlap",
+      "rationale": "工业AI的主要应用场景就是精密制造的质检、调度和维护",
+      "hop": 1
+    },
+    {
+      "source": "ar-vr",
+      "target": "chip-design",
+      "weight": 0.70,
+      "relation": "demand-chain",
+      "rationale": "XR设备需要专用SoC，带动芯片设计需求",
+      "hop": 1
+    },
+    {
+      "source": "ar-vr",
+      "target": "optical-interconnect",
+      "weight": 0.52,
+      "relation": "supply-chain",
+      "rationale": "光波导和微型显示器件与光学互联技术存在工艺交叉",
+      "hop": 2
+    },
+    {
+      "source": "quantum-computing",
+      "target": "chip-design",
+      "weight": 0.60,
+      "relation": "demand-chain",
+      "rationale": "超导量子比特需要极低温控制芯片，带动设计链",
+      "hop": 1
+    },
+    {
+      "source": "quantum-computing",
+      "target": "domestic-substitution",
+      "weight": 0.65,
+      "relation": "policy-spillover",
+      "rationale": "量子通信是信创安全体系的重要组成部分",
+      "hop": 1
+    },
+    {
+      "source": "ai-healthcare",
+      "target": "model-applications",
+      "weight": 0.72,
+      "relation": "demand-chain",
+      "rationale": "AI医疗是大模型应用落地的重要垂直赛道",
+      "hop": 1
+    },
+    {
+      "source": "ai-healthcare",
+      "target": "robotics",
+      "weight": 0.60,
+      "relation": "adjacent-theme",
+      "rationale": "手术机器人是AI医疗的硬件载体，技术路径高度重叠",
+      "hop": 1
+    }
+  ]
+}

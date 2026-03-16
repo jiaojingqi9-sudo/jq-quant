@@ -1,0 +1,11 @@
+{
+  "unknown_term_detector": {
+    "enabled": true,
+    "min_freq": 3,
+    "min_discovery_score": 2.0,
+    "min_top_impact_score": 0.35,
+    "max_candidates_per_run": 50,
+    "token_min_length": 2,
+    "token_max_length": 10
+  }
+}

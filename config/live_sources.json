@@ -1,42 +1,229 @@
-[
-  {
-    "type": "cninfo_home",
-    "name": "cninfo-latest-announcements",
+{
+  "cninfo": {
+    "enabled": true,
     "source_id": "cninfo_latest",
+    "name": "cninfo-latest-announcements",
     "url": "https://www.cninfo.com.cn/",
     "source_trust": 0.99,
     "language": "zh",
     "item_limit": 12
   },
-  {
-    "type": "rss",
-    "name": "hkex-news-releases",
-    "source_id": "hkex_news",
-    "url": "https://www.hkex.com.hk/Services/RSS-Feeds/News-Releases?sc_lang=en",
-    "source_trust": 0.97,
-    "language": "en",
-    "regions": ["HK"],
-    "item_limit": 12,
-    "exclude_title_patterns": ["^20\\d{2}$"]
+  "rss": {
+    "feeds": [
+      {
+        "url": "https://www.36kr.com/feed",
+        "name": "36kr",
+        "source_id": "36kr",
+        "source_trust": 0.72,
+        "language": "zh",
+        "regions": ["CN"]
+      },
+      {
+        "url": "https://www.hkex.com.hk/Services/RSS-Feeds/News-Releases?sc_lang=en",
+        "name": "hkex-news-releases",
+        "source_id": "hkex_news",
+        "source_trust": 0.97,
+        "language": "en",
+        "regions": ["HK"],
+        "exclude_title_patterns": ["^20\\d{2}$"]
+      },
+      {
+        "url": "https://www.sec.gov/news/pressreleases.rss",
+        "name": "sec-press-releases",
+        "source_id": "sec_press",
+        "source_trust": 0.98,
+        "language": "en",
+        "regions": ["US"]
+      },
+      {
+        "url": "https://www.sec.gov/Archives/edgar/usgaap.rss.xml",
+        "name": "sec-xbrl-usgaap",
+        "source_id": "sec_xbrl_usgaap",
+        "source_trust": 0.99,
+        "language": "en",
+        "regions": ["US"]
+      },
+      {
+        "url": "https://www.tmtpost.com/feed",
+        "name": "tmtpost",
+        "source_id": "tmtpost",
+        "source_trust": 0.70,
+        "language": "zh",
+        "regions": ["CN"],
+        "include_title_patterns": ["AI|人工智能|芯片|半导体|机器人|算力|大模型|云|汽车|新材料|储能|量子|信创|医疗"]
+      }
+    ]
   },
-  {
-    "type": "rss",
-    "name": "sec-press-releases",
-    "source_id": "sec_press",
-    "url": "https://www.sec.gov/news/pressreleases.rss",
-    "source_trust": 0.98,
-    "language": "en",
-    "regions": ["US"],
-    "item_limit": 12
+  "eastmoney": {
+    "enabled": true,
+    "endpoints": ["ann-a", "ann-h", "news"],
+    "page_size": 50,
+    "global_page_size": 30,
+    "max_records_per_endpoint": 20
   },
-  {
-    "type": "rss",
-    "name": "sec-xbrl-usgaap",
-    "source_id": "sec_xbrl_usgaap",
-    "url": "https://www.sec.gov/Archives/edgar/usgaap.rss.xml",
-    "source_trust": 0.99,
-    "language": "en",
-    "regions": ["US"],
-    "item_limit": 12
-  }
-]
+  "cls": {
+    "enabled": true,
+    "page_size": 20,
+    "min_level": 1,
+    "last_time_file": "cls_last_time.txt"
+  },
+  "gelonghui": {
+    "enabled": true,
+    "item_limit": 10,
+    "source_trust": 0.76
+  },
+  "weibo": {
+    "enabled": true,
+    "cookie_path": "~/.market_news/weibo_cookies.json",
+    "queries": [
+      "半导体", "AI算力", "国产替代", "芯片", "大模型", "光模块", "机器人",
+      "碳纤维", "信创", "网络安全", "新材料", "储能", "固态电池",
+      "核电", "工业AI", "AR眼镜", "量子计算", "低空经济", "人形机器人",
+      "科技板块", "港股科技"
+    ],
+    "max_results_per_query": 20,
+    "sleep_range_seconds": [2.0, 4.0],
+    "browser_timeout_ms": 15000,
+    "browser_warmup_ms": 1200
+  },
+  "xueqiu": {
+    "enabled": true,
+    "cookie_path": "~/.market_news/xueqiu_cookies.json",
+    "queries": [
+      "半导体", "科技股", "AI概念", "算力", "先进制程",
+      "碳纤维", "信创", "网络安全", "储能", "固态电池",
+      "机器人概念", "低空经济", "核电", "新材料", "港股科技"
+    ],
+    "max_results_per_query": 12,
+    "browser_timeout_ms": 15000,
+    "browser_warmup_ms": 8000
+  },
+  "html_sources": [
+    {
+      "enabled": false,
+      "type": "html_list_detail",
+      "name": "gelonghui-hk",
+      "source_id": "gelonghui",
+      "url": "https://www.gelonghui.com/live",
+      "source_trust": 0.76,
+      "timeout": 12,
+      "language": "zh",
+      "regions": ["HK", "CN"],
+      "themes": ["technology"],
+      "item_limit": 10,
+      "detail_fetch_limit": 4,
+      "include_link_patterns": ["https?://www\\.gelonghui\\.com/live/\\d+"],
+      "exclude_link_patterns": ["javascript:", "#"],
+      "include_title_patterns": [
+        "港股|HK\\$|恒生|腾讯|阿里|美团|小米|快手|京东|百度|科技|AI|半导体|芯片|机器人|新材料|电池|医疗|南向"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:dtb-content|article-content|content-detail)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "media-hk-specialist",
+        "compliance_policy": "public-web-html"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "xinhua-tech-home",
+      "source_id": "xinhua-tech",
+      "url": "https://www.news.cn/tech/",
+      "source_trust": 0.97,
+      "timeout": 12,
+      "language": "zh",
+      "regions": ["CN"],
+      "themes": ["technology"],
+      "item_limit": 8,
+      "detail_fetch_limit": 3,
+      "include_link_patterns": ["https?://www\\.news\\.cn/tech/\\d{8}/[^/]+/c\\.html"],
+      "exclude_link_patterns": ["index\\.htm$", "javascript:", "#", "\\.pdf$"],
+      "include_title_patterns": ["科技|AI|人工智能|芯片|半导体|机器人|算力|互联网|通信|数据|软件|汽车|智能"],
+      "exclude_title_patterns": ["组图$"],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:detail|content|page-content|article)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-media",
+        "compliance_policy": "public-web-html"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "huxiu-tech-channel",
+      "source_id": "huxiu",
+      "url": "https://www.huxiu.com/channel/105.html",
+      "source_trust": 0.71,
+      "timeout": 12,
+      "language": "zh",
+      "regions": ["CN"],
+      "themes": ["technology"],
+      "item_limit": 8,
+      "detail_fetch_limit": 2,
+      "include_link_patterns": ["https?://www\\.huxiu\\.com/article/\\d+\\.html"],
+      "exclude_link_patterns": ["javascript:", "#"],
+      "include_title_patterns": ["AI|人工智能|芯片|半导体|机器人|算力|互联网|大模型|云|汽车|软件|数据|科技|智驾"],
+      "exclude_title_patterns": ["虎嗅APP|打开APP|下载APP|登录|注册"],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:article__content|article-content|main-content|article-content-wrap)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "media-tech",
+        "compliance_policy": "public-web-html"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "ifeng-tech-home",
+      "source_id": "ifeng-tech",
+      "url": "https://tech.ifeng.com/",
+      "source_trust": 0.74,
+      "timeout": 12,
+      "language": "zh",
+      "regions": ["CN"],
+      "themes": ["technology"],
+      "item_limit": 8,
+      "detail_fetch_limit": 3,
+      "include_link_patterns": ["https?://tech\\.ifeng\\.com/c/[A-Za-z0-9]+"],
+      "exclude_link_patterns": ["javascript:", "#", "/special/"],
+      "include_title_patterns": ["AI|人工智能|芯片|半导体|机器人|算力|互联网|大模型|云|汽车|软件|数据|科技|智驾"],
+      "exclude_title_patterns": ["直播|视频"],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:articleBox|main_content|content|article)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "media-tech",
+        "compliance_policy": "public-web-html"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "csrc-home-updates",
+      "source_id": "csrc_home",
+      "url": "https://www.csrc.gov.cn/",
+      "source_trust": 1.0,
+      "language": "zh",
+      "regions": ["CN"],
+      "item_limit": 8,
+      "detail_fetch_limit": 6,
+      "include_link_patterns": ["/csrc/.+\\.shtml"],
+      "exclude_link_patterns": ["index\\.shtml", "javascript:", "#", "\\.pdf$"],
+      "include_title_patterns": ["科技|芯片|半导体|人工智能|算法|数据|软件|网络|互联网|并购|重组|问询|立案|处罚|减持|异常波动|收购|审核"],
+      "exclude_title_patterns": ["English|移动端|微信|微博|首页|机构概况"],
+      "body_container_patterns": ["<div[^>]+class=\\\"TRS_Editor\\\"[^>]*>.*?</div>", "<article.*?</article>"],
+      "metadata": {
+        "source_category": "regulator",
+        "compliance_policy": "metadata-and-features-only"
+      }
+    }
+  ]
+}

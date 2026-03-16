@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from market_news.domain.models import (
     AlertItem,
@@ -106,4 +106,19 @@ class DeliveryStore(Protocol):
 
 class Reporter(Protocol):
     def write(self, snapshot: PipelineSnapshot) -> dict[str, Path]:
+        ...
+
+
+class FeatureModule(Protocol):
+    name: str
+
+    def evaluate(self, snapshot: PipelineSnapshot) -> dict[str, Any]:
+        ...
+
+
+class Notifier(Protocol):
+    def resolve_target(self, channel: str, explicit_target: str | None = None) -> str:
+        ...
+
+    def send(self, *, channel: str, target: str, message: str) -> str:
         ...

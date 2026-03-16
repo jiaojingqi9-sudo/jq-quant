@@ -71,8 +71,12 @@ class SQLiteRunStore:
                     impact_score REAL NOT NULL,
                     confidence_score REAL NOT NULL,
                     final_score REAL NOT NULL,
-                    reasons_json TEXT NOT NULL
+                    reasons_json TEXT NOT NULL,
+                    PRIMARY KEY (run_id, cluster_id, symbol, market)
                 );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_ranked_instruments_pk
+                ON ranked_instruments (run_id, cluster_id, symbol, market);
 
                 CREATE TABLE IF NOT EXISTS alert_deliveries (
                     delivery_id TEXT PRIMARY KEY,
@@ -176,9 +180,13 @@ class SQLiteRunStore:
                     for event in snapshot.ranked_events
                 ],
             )
+            connection.execute(
+                "DELETE FROM ranked_instruments WHERE run_id = ?",
+                (snapshot.run_id,),
+            )
             connection.executemany(
                 """
-                INSERT INTO ranked_instruments (
+                INSERT OR REPLACE INTO ranked_instruments (
                     run_id, cluster_id, symbol, market, asset_type, name, direction,
                     exposure_score, impact_score, confidence_score, final_score, reasons_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

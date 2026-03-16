@@ -18,7 +18,7 @@ class HttpResponse:
 
 
 class UrllibHttpClient:
-    def __init__(self, user_agent: str | None = None, timeout: int = 20) -> None:
+    def __init__(self, user_agent: str | None = None, timeout: int = 8) -> None:
         self.user_agent = user_agent or DEFAULT_USER_AGENT
         self.timeout = timeout
         self.ssl_context = ssl.create_default_context()

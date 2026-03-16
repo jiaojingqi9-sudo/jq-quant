@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import json
 from pathlib import Path
 
 from market_news.domain.models import AlertLevel
-from market_news.domain.ports import DeliveryStore
-from market_news.infrastructure.notifications.openclaw import OpenClawNotifier
+from market_news.domain.ports import DeliveryStore, Notifier
 from market_news.services.notification import AlertDigestBuilder
 
 
@@ -20,6 +19,7 @@ class NotificationResult:
     preview_path: Path
     cluster_ids: list[str]
     detail: str
+    modules: list[dict[str, object]] = field(default_factory=list)
 
 
 class NotificationRunner:
@@ -27,7 +27,7 @@ class NotificationRunner:
         self,
         *,
         store: DeliveryStore,
-        notifier: OpenClawNotifier,
+        notifier: Notifier,
     ) -> None:
         self.store = store
         self.notifier = notifier
@@ -80,6 +80,10 @@ class NotificationRunner:
                 preview_path=preview_path,
                 cluster_ids=[],
                 detail=message,
+                modules=[
+                    {"name": "core_alerts", "status": "idle", "count": 0, "detail": "high/critical alert stream"},
+                    {"name": "tech_block", "status": "idle", "count": 0, "detail": "A/H tech catalyst stream"},
+                ],
             )
 
         plan.preview_path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,6 +98,7 @@ class NotificationRunner:
                 preview_path=plan.preview_path,
                 cluster_ids=plan.cluster_ids,
                 detail="Preview generated only; nothing sent.",
+                modules=plan.modules,
             )
 
         transport_detail = self.notifier.send(
@@ -117,6 +122,7 @@ class NotificationRunner:
             preview_path=plan.preview_path,
             cluster_ids=plan.cluster_ids,
             detail=transport_detail,
+            modules=plan.modules,
         )
 
     def send_probe(
@@ -143,6 +149,7 @@ class NotificationRunner:
                 preview_path=preview_path,
                 cluster_ids=[],
                 detail="Probe preview generated only; nothing sent.",
+                modules=[],
             )
 
         transport_detail = self.notifier.send(
@@ -158,6 +165,7 @@ class NotificationRunner:
             preview_path=preview_path,
             cluster_ids=[],
             detail=transport_detail,
+            modules=[],
         )
 
     def _build_probe_message(self, *, status_path: Path | None = None) -> str:

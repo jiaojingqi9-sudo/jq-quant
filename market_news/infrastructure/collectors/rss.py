@@ -42,7 +42,7 @@ class RSSCollector:
             if not title or not self._allowed(title):
                 continue
             link = self._get_link(item, response.url)
-            summary = self._get_text(item, ["description", "summary", "content"])
+            summary = self._clean_fragment(self._get_text(item, ["description", "summary", "content"]))
             published = self._parse_date(
                 self._get_text(item, ["pubDate", "published", "updated"])
             )
@@ -51,8 +51,8 @@ class RSSCollector:
                 RawNewsRecord(
                     source_id=self.spec.source_id,
                     external_id=guid or link or title,
-                    title=unescape(title),
-                    summary=unescape(summary.strip()),
+                    title=self._clean_fragment(title),
+                    summary=summary,
                     url=link,
                     published_at=published,
                     language=self.spec.language,
@@ -116,3 +116,16 @@ class RSSCollector:
         except (TypeError, ValueError):
             return utcnow()
 
+    def _clean_fragment(self, value: str) -> str:
+        text = unescape(value or "")
+        text = re.sub(r"<script\b.*?</script>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"<style\b.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+        text = re.sub(r"</?(?:p|div|li|ul|ol|article|section)\b[^>]*>", "\n", text, flags=re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", text)
+        lines = [
+            re.sub(r"\s+", " ", line).strip()
+            for line in text.splitlines()
+        ]
+        lines = [line for line in lines if line]
+        return "\n".join(lines).strip()

@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Abstract, low-coupling market news collector MVP for A-share, Hong Kong, and US instruments."
 requires-python = ">=3.11"
 
+[project.optional-dependencies]
+zh = ["jieba>=0.42"]
+
 [project.scripts]
 market-news = "market_news.cli:main"
-

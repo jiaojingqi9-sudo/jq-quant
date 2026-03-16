@@ -37,6 +37,7 @@ class ConfigDrivenInstrumentMapper:
         cluster_sectors = {sector.lower() for sector in unique_preserve(cluster.sectors + impact.affected_sectors)}
         preferred_markets = {market.value for market in impact.affected_markets}
         candidate_instruments = self._merge_dynamic_instruments(cluster)
+        direct_symbols = self._resolve_direct_symbols(cluster)
 
         matches: list[InstrumentMatch] = []
         for instrument in candidate_instruments:
@@ -45,6 +46,7 @@ class ConfigDrivenInstrumentMapper:
             entity_overlap = len(cluster_entities & {alias.lower() for alias in instrument.aliases})
             alias_hits = [alias for alias in instrument.aliases if alias.lower() in cluster_text]
             market_bonus = 1.0 if instrument.market.value in preferred_markets else 0.3
+            direct_match = instrument.symbol in direct_symbols
 
             exposure = clamp(
                 0.28 * min(1.0, sector_overlap)
@@ -52,7 +54,10 @@ class ConfigDrivenInstrumentMapper:
                 + 0.28 * min(1.0, entity_overlap)
                 + 0.10 * min(1.0, len(alias_hits))
                 + 0.10 * market_bonus
+                + 0.22 * (1.0 if direct_match else 0.0)
             )
+            if direct_match:
+                exposure = max(exposure, 0.78)
             if exposure < 0.4:
                 continue
 
@@ -65,6 +70,8 @@ class ConfigDrivenInstrumentMapper:
                 reasons.append(f"entity/alias match: {', '.join(unique_preserve(alias_hits + instrument.aliases[:1]))}")
             if instrument.market.value in preferred_markets:
                 reasons.append(f"preferred market: {instrument.market.value}")
+            if direct_match:
+                reasons.append("direct code from source")
             matches.append(
                 InstrumentMatch(
                     cluster_id=cluster.cluster_id,
@@ -114,6 +121,19 @@ class ConfigDrivenInstrumentMapper:
         for instrument in dynamic:
             unique.setdefault(instrument.symbol, instrument)
         return list(unique.values())
+
+    def _resolve_direct_symbols(self, cluster: EventCluster) -> set[str]:
+        symbols: set[str] = set()
+        for document in cluster.documents:
+            for raw_code in document.metadata.get("direct_codes", []):
+                code = str(raw_code).strip()
+                if not code:
+                    continue
+                for instrument in self.instruments:
+                    digits = "".join(char for char in instrument.symbol if char.isdigit())
+                    if digits == code:
+                        symbols.add(instrument.symbol)
+        return symbols
 
     def _normalize_symbol(self, stock_code: str, market: str) -> str | None:
         digits = "".join(char for char in stock_code if char.isdigit())

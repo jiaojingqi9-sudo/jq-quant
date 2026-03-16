@@ -1,0 +1,11 @@
+{
+  "version": "2026.03-p2",
+  "published_at": "2026-03-15T19:00:00+00:00",
+  "reviewer": "codex",
+  "change_note": "Expanded tech lexicon with v2 themes, added unknown-term discovery workflow, and extended tech-source coverage.",
+  "source_trace": {
+    "report": "tech_block_extension_v2.md",
+    "review_ticket": "tech-block-v2",
+    "scope": ["A-share tech", "Hong Kong tech", "impact-graph rules", "unknown term discovery"]
+  }
+}

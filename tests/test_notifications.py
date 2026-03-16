@@ -17,6 +17,7 @@ from market_news.services.mapping import ConfigDrivenInstrumentMapper
 from market_news.services.normalization import DefaultNormalizer
 from market_news.services.ranking import WeightedEventRanker, WeightedInstrumentRanker
 from market_news.services.reporting import MarkdownJsonReporter
+from market_news.services.tech_block import AHShareTechFeatureBlock
 
 
 class FakeOpenClawNotifier:
@@ -52,6 +53,13 @@ class NotificationIntegrationTest(unittest.TestCase):
                 alert_engine=RuleBasedAlertEngine(),
                 store=SQLiteRunStore(temp_path / "market_news.db"),
                 reporter=MarkdownJsonReporter(temp_path / "reports"),
+                feature_modules=[
+                    AHShareTechFeatureBlock.from_files(
+                        universe_path=root / "config" / "tech_universe_cn_hk.json",
+                        lexicon_path=root / "config" / "tech_lexicon.json",
+                        graph_path=root / "config" / "tech_impact_graph.json",
+                    )
+                ],
             )
             snapshot = pipeline.run()
 
@@ -70,6 +78,7 @@ class NotificationIntegrationTest(unittest.TestCase):
             self.assertEqual(preview.status, "preview")
             self.assertTrue(preview_path.exists())
             self.assertIn("市场新闻提醒", preview_path.read_text(encoding="utf-8"))
+            self.assertIn("港A科技催化", preview_path.read_text(encoding="utf-8"))
             self.assertEqual(len(notifier.messages), 0)
 
             sent = runner.deliver_from_report(
@@ -81,6 +90,7 @@ class NotificationIntegrationTest(unittest.TestCase):
             self.assertEqual(sent.status, "sent")
             self.assertGreaterEqual(sent.alert_count, 1)
             self.assertEqual(len(notifier.messages), 1)
+            self.assertTrue(any(module["name"] == "tech_block" for module in sent.modules))
 
             skipped = runner.deliver_from_report(
                 report_path=Path(snapshot.artifacts["json_report"]),

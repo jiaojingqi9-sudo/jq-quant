@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from market_news.common import parse_datetime, significant_tokens, stable_id, unique_preserve, utcnow
+from market_news.common import ensure_utc, significant_tokens, stable_id, unique_preserve, utcnow
 from market_news.domain.models import NewsDocument, RawNewsRecord
 
 
@@ -29,7 +29,7 @@ class DefaultNormalizer:
                     summary=record.summary.strip(),
                     body=record.body.strip(),
                     url=record.url.strip(),
-                    published_at=parse_datetime(published_at.isoformat()),
+                    published_at=ensure_utc(published_at),
                     fetched_at=fetched_at,
                     language=record.language,
                     source_trust=record.source_trust,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from market_news.common import clamp
+from market_news.common import clamp, utcnow
 from market_news.domain.models import (
     Direction,
     EventCluster,
@@ -18,7 +18,7 @@ class WeightedEventRanker:
         self.recency_window = timedelta(hours=72)
 
     def rank(self, cluster: EventCluster, impact: ImpactAssessment) -> RankedEvent:
-        age = cluster.documents[0].fetched_at - cluster.last_seen_at
+        age = utcnow() - cluster.last_seen_at
         recency_score = clamp(1.0 - (age / self.recency_window))
         doc_count_score = clamp(cluster.doc_count / 4)
         source_diversity_score = clamp(len(cluster.source_ids) / 4)

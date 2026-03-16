@@ -1,0 +1,1506 @@
+[
+  {
+    "canonical_text": "AI算力",
+    "term_type": "theme",
+    "synonyms": [
+      "ai算力",
+      "算力",
+      "compute",
+      "gpu",
+      "ai infrastructure",
+      "data center",
+      "数据中心"
+    ],
+    "regexes": [
+      "\\bgpu\\b",
+      "\\bcapex\\b"
+    ],
+    "impact_vector": {
+      "ai-compute": 1.0,
+      "server-chain": 0.82,
+      "optical-interconnect": 0.76,
+      "data-center": 0.72
+    },
+    "trigger_tags": [
+      "主线题材",
+      "算力扩张"
+    ],
+    "base_confidence": 0.84,
+    "spec_weight": 0.78,
+    "heat_weight": 0.9,
+    "importance_weight": 0.82,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "先进制程",
+    "term_type": "tech",
+    "synonyms": [
+      "先进制程",
+      "先进工艺",
+      "leading node",
+      "n3",
+      "n2",
+      "foundry"
+    ],
+    "regexes": [
+      "\\bn[23]\\b"
+    ],
+    "impact_vector": {
+      "advanced-process": 1.0,
+      "chip-manufacturing": 0.86,
+      "semicap-equipment": 0.72
+    },
+    "trigger_tags": [
+      "先进工艺",
+      "半导体"
+    ],
+    "base_confidence": 0.78,
+    "spec_weight": 0.66,
+    "heat_weight": 0.68,
+    "importance_weight": 0.8,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "先进封装",
+    "term_type": "tech",
+    "synonyms": [
+      "先进封装",
+      "chiplet",
+      "先进封装产线",
+      "co-packaged optics",
+      "cpo"
+    ],
+    "regexes": [
+      "\\bcpo\\b",
+      "\\bchiplet\\b"
+    ],
+    "impact_vector": {
+      "advanced-packaging": 1.0,
+      "optical-interconnect": 0.65,
+      "chip-manufacturing": 0.55
+    },
+    "trigger_tags": [
+      "先进封装"
+    ],
+    "base_confidence": 0.76,
+    "spec_weight": 0.72,
+    "heat_weight": 0.62,
+    "importance_weight": 0.74,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "光模块",
+    "term_type": "theme",
+    "synonyms": [
+      "光模块",
+      "optical module",
+      "coherent optics",
+      "800g",
+      "1.6t",
+      "硅光"
+    ],
+    "regexes": [
+      "\\b800g\\b",
+      "\\b1\\.6t\\b"
+    ],
+    "impact_vector": {
+      "optical-interconnect": 1.0,
+      "data-center": 0.72,
+      "ai-compute": 0.58
+    },
+    "trigger_tags": [
+      "高速互联",
+      "弹性品种"
+    ],
+    "base_confidence": 0.81,
+    "spec_weight": 0.86,
+    "heat_weight": 0.74,
+    "importance_weight": 0.7,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "服务器",
+    "term_type": "theme",
+    "synonyms": [
+      "server",
+      "服务器",
+      "rack",
+      "机柜",
+      "liquid cooling",
+      "液冷"
+    ],
+    "regexes": [
+      "\\bserver\\b"
+    ],
+    "impact_vector": {
+      "server-chain": 1.0,
+      "data-center": 0.72,
+      "ai-compute": 0.66
+    },
+    "trigger_tags": [
+      "服务器链"
+    ],
+    "base_confidence": 0.72,
+    "spec_weight": 0.63,
+    "heat_weight": 0.68,
+    "importance_weight": 0.7,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "国产替代",
+    "term_type": "theme",
+    "synonyms": [
+      "国产替代",
+      "local substitution",
+      "自主可控",
+      "domestic substitution"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "domestic-substitution": 1.0,
+      "chip-design": 0.62,
+      "cloud-software": 0.52
+    },
+    "trigger_tags": [
+      "政策映射"
+    ],
+    "base_confidence": 0.74,
+    "spec_weight": 0.68,
+    "heat_weight": 0.55,
+    "importance_weight": 0.76,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "大模型",
+    "term_type": "theme",
+    "synonyms": [
+      "大模型",
+      "foundation model",
+      "llm",
+      "model training",
+      "大模型应用"
+    ],
+    "regexes": [
+      "\\bllm\\b"
+    ],
+    "impact_vector": {
+      "model-applications": 1.0,
+      "ai-compute": 0.56,
+      "cloud-software": 0.62
+    },
+    "trigger_tags": [
+      "应用层",
+      "模型进展"
+    ],
+    "base_confidence": 0.77,
+    "spec_weight": 0.84,
+    "heat_weight": 0.66,
+    "importance_weight": 0.68,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "机器人",
+    "term_type": "theme",
+    "synonyms": [
+      "机器人",
+      "humanoid",
+      "人形机器人",
+      "robotics"
+    ],
+    "regexes": [
+      "\\brobotics\\b"
+    ],
+    "impact_vector": {
+      "robotics": 1.0,
+      "ai-hardware": 0.54
+    },
+    "trigger_tags": [
+      "机器人"
+    ],
+    "base_confidence": 0.7,
+    "spec_weight": 0.82,
+    "heat_weight": 0.58,
+    "importance_weight": 0.56,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "自动驾驶",
+    "term_type": "theme",
+    "synonyms": [
+      "自动驾驶",
+      "autonomous driving",
+      "智能驾驶",
+      "adas"
+    ],
+    "regexes": [
+      "\\badas\\b"
+    ],
+    "impact_vector": {
+      "autonomous-driving": 1.0,
+      "model-applications": 0.48
+    },
+    "trigger_tags": [
+      "智驾"
+    ],
+    "base_confidence": 0.68,
+    "spec_weight": 0.7,
+    "heat_weight": 0.52,
+    "importance_weight": 0.6,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "中标订单",
+    "term_type": "catalyst",
+    "synonyms": [
+      "中标",
+      "订单",
+      "new order",
+      "major contract",
+      "签订",
+      "供货",
+      "批量供货"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "order-momentum": 1.0
+    },
+    "trigger_tags": [
+      "订单催化",
+      "小消息可炒"
+    ],
+    "base_confidence": 0.86,
+    "spec_weight": 1.0,
+    "heat_weight": 0.62,
+    "importance_weight": 0.76,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "合作导入",
+    "term_type": "catalyst",
+    "synonyms": [
+      "战略合作",
+      "合作",
+      "导入",
+      "validation",
+      "joint development",
+      "进入供应链"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "order-momentum": 0.72,
+      "model-applications": 0.24
+    },
+    "trigger_tags": [
+      "合作催化"
+    ],
+    "base_confidence": 0.79,
+    "spec_weight": 0.94,
+    "heat_weight": 0.58,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "量产放量",
+    "term_type": "catalyst",
+    "synonyms": [
+      "量产",
+      "mass production",
+      "放量",
+      "ramp",
+      "扩产"
+    ],
+    "regexes": [
+      "\\bramp\\b"
+    ],
+    "impact_vector": {
+      "order-momentum": 0.8,
+      "advanced-process": 0.22,
+      "optical-interconnect": 0.22
+    },
+    "trigger_tags": [
+      "量产逻辑"
+    ],
+    "base_confidence": 0.78,
+    "spec_weight": 0.95,
+    "heat_weight": 0.7,
+    "importance_weight": 0.74,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "试点补贴",
+    "term_type": "policy",
+    "synonyms": [
+      "试点",
+      "补贴",
+      "支持政策",
+      "纳入",
+      "立项",
+      "备案",
+      "示范应用"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "domestic-substitution": 0.58,
+      "model-applications": 0.4,
+      "robotics": 0.35
+    },
+    "trigger_tags": [
+      "政策催化"
+    ],
+    "base_confidence": 0.74,
+    "spec_weight": 0.8,
+    "heat_weight": 0.54,
+    "importance_weight": 0.88,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "回购增持",
+    "term_type": "catalyst",
+    "synonyms": [
+      "回购",
+      "repurchase",
+      "增持",
+      "buyback"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "capital-support": 1.0
+    },
+    "trigger_tags": [
+      "情绪修复"
+    ],
+    "base_confidence": 0.83,
+    "spec_weight": 0.72,
+    "heat_weight": 0.5,
+    "importance_weight": 0.62,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "业绩预增",
+    "term_type": "catalyst",
+    "synonyms": [
+      "业绩预增",
+      "盈喜",
+      "full year results",
+      "profit alert",
+      "record profit"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "earnings-momentum": 1.0
+    },
+    "trigger_tags": [
+      "业绩催化"
+    ],
+    "base_confidence": 0.82,
+    "spec_weight": 0.88,
+    "heat_weight": 0.62,
+    "importance_weight": 0.92,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "涨价缺货",
+    "term_type": "catalyst",
+    "synonyms": [
+      "涨价",
+      "price increase",
+      "缺货",
+      "供不应求",
+      "爆单"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "order-momentum": 0.9,
+      "advanced-process": 0.18,
+      "optical-interconnect": 0.22
+    },
+    "trigger_tags": [
+      "供需紧张"
+    ],
+    "base_confidence": 0.76,
+    "spec_weight": 0.98,
+    "heat_weight": 0.72,
+    "importance_weight": 0.68,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "减持计划",
+    "term_type": "risk",
+    "synonyms": [
+      "减持计划",
+      "share reduction plan",
+      "reduce holdings"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "supply-overhang": 1.0
+    },
+    "trigger_tags": [
+      "筹码压力"
+    ],
+    "base_confidence": 0.9,
+    "spec_weight": 0.84,
+    "heat_weight": 0.58,
+    "importance_weight": 0.72,
+    "direction_hint": "negative"
+  },
+  {
+    "canonical_text": "监管问询",
+    "term_type": "risk",
+    "synonyms": [
+      "问询",
+      "处罚",
+      "立案",
+      "investigation",
+      "penalty",
+      "regulatory inquiry"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "compliance-risk": 1.0
+    },
+    "trigger_tags": [
+      "监管风险"
+    ],
+    "base_confidence": 0.92,
+    "spec_weight": 0.72,
+    "heat_weight": 0.7,
+    "importance_weight": 0.94,
+    "direction_hint": "negative"
+  },
+  {
+    "canonical_text": "异常波动停牌",
+    "term_type": "risk",
+    "synonyms": [
+      "异常波动",
+      "停牌核查",
+      "volatility halt"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "compliance-risk": 0.62,
+      "supply-overhang": 0.34
+    },
+    "trigger_tags": [
+      "交易风险"
+    ],
+    "base_confidence": 0.86,
+    "spec_weight": 0.64,
+    "heat_weight": 0.62,
+    "importance_weight": 0.72,
+    "direction_hint": "negative"
+  },
+  {
+    "canonical_text": "DeepSeek",
+    "term_type": "company",
+    "synonyms": [
+      "deepseek",
+      "深度求索",
+      "ds-r1",
+      "ds-v3"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "model-applications": 1.0,
+      "ai-compute": 0.82,
+      "domestic-substitution": 0.76
+    },
+    "trigger_tags": [
+      "国产大模型",
+      "模型催化"
+    ],
+    "base_confidence": 0.92,
+    "spec_weight": 0.88,
+    "heat_weight": 0.95,
+    "importance_weight": 0.85,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "Kimi/月之暗面",
+    "term_type": "company",
+    "synonyms": [
+      "kimi",
+      "月之暗面",
+      "moonshot ai"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "model-applications": 1.0,
+      "ai-compute": 0.72
+    },
+    "trigger_tags": [
+      "国产大模型"
+    ],
+    "base_confidence": 0.82,
+    "spec_weight": 0.78,
+    "heat_weight": 0.85,
+    "importance_weight": 0.75,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "大模型推理",
+    "term_type": "theme",
+    "synonyms": [
+      "模型推理",
+      "inference",
+      "推理算力",
+      "推理加速",
+      "kv cache",
+      "speculative decoding"
+    ],
+    "regexes": [
+      "\\binference\\b"
+    ],
+    "impact_vector": {
+      "ai-compute": 0.88,
+      "chip-design": 0.74,
+      "server-chain": 0.65
+    },
+    "trigger_tags": [
+      "推理扩张"
+    ],
+    "base_confidence": 0.84,
+    "spec_weight": 0.82,
+    "heat_weight": 0.8,
+    "importance_weight": 0.78,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "Agent/具身智能",
+    "term_type": "theme",
+    "synonyms": [
+      "ai agent",
+      "具身智能",
+      "embodied ai",
+      "智能体",
+      "多模态",
+      "multimodal"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "model-applications": 0.88,
+      "robotics": 0.72,
+      "ai-hardware": 0.65
+    },
+    "trigger_tags": [
+      "AI应用",
+      "具身智能"
+    ],
+    "base_confidence": 0.79,
+    "spec_weight": 0.8,
+    "heat_weight": 0.82,
+    "importance_weight": 0.74,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "出口管制",
+    "term_type": "policy",
+    "synonyms": [
+      "出口管制",
+      "export control",
+      "entity list",
+      "实体清单",
+      "芯片禁令",
+      "制裁"
+    ],
+    "regexes": [
+      "\\bexport control\\b"
+    ],
+    "impact_vector": {
+      "domestic-substitution": 1.0,
+      "semicap-equipment": 0.88,
+      "chip-manufacturing": 0.76,
+      "compliance-risk": 0.9
+    },
+    "trigger_tags": [
+      "制裁风险",
+      "国产替代催化"
+    ],
+    "base_confidence": 0.9,
+    "spec_weight": 0.85,
+    "heat_weight": 0.92,
+    "importance_weight": 0.95,
+    "direction_hint": "negative"
+  },
+  {
+    "canonical_text": "HBM",
+    "term_type": "tech",
+    "synonyms": [
+      "hbm",
+      "高带宽内存",
+      "hbm2e",
+      "hbm3",
+      "hbm4"
+    ],
+    "regexes": [
+      "\\bhbm\\d?[e]?\\b"
+    ],
+    "impact_vector": {
+      "ai-compute": 0.85,
+      "chip-design": 0.7,
+      "advanced-packaging": 0.68
+    },
+    "trigger_tags": [
+      "AI内存",
+      "算力瓶颈"
+    ],
+    "base_confidence": 0.83,
+    "spec_weight": 0.86,
+    "heat_weight": 0.78,
+    "importance_weight": 0.8,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "海光信息",
+    "term_type": "company",
+    "synonyms": [
+      "海光",
+      "hygon",
+      "海光信息",
+      "dcu"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "chip-design": 1.0,
+      "domestic-substitution": 0.92,
+      "ai-compute": 0.78
+    },
+    "trigger_tags": [
+      "国产算力",
+      "GPU替代"
+    ],
+    "base_confidence": 0.88,
+    "spec_weight": 0.84,
+    "heat_weight": 0.88,
+    "importance_weight": 0.86,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "寒武纪",
+    "term_type": "company",
+    "synonyms": [
+      "寒武纪",
+      "cambricon",
+      "mlu"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "chip-design": 1.0,
+      "ai-compute": 0.84,
+      "domestic-substitution": 0.88
+    },
+    "trigger_tags": [
+      "AI芯片",
+      "国产替代"
+    ],
+    "base_confidence": 0.85,
+    "spec_weight": 0.82,
+    "heat_weight": 0.9,
+    "importance_weight": 0.85,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "北方华创",
+    "term_type": "company",
+    "synonyms": [
+      "北方华创",
+      "naura",
+      "刻蚀设备"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "semicap-equipment": 1.0,
+      "domestic-substitution": 0.9,
+      "chip-manufacturing": 0.68
+    },
+    "trigger_tags": [
+      "半导体设备",
+      "国产替代"
+    ],
+    "base_confidence": 0.88,
+    "spec_weight": 0.85,
+    "heat_weight": 0.82,
+    "importance_weight": 0.88,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "中芯国际",
+    "term_type": "company",
+    "synonyms": [
+      "中芯",
+      "smic",
+      "中芯国际"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "chip-manufacturing": 1.0,
+      "domestic-substitution": 0.88,
+      "advanced-process": 0.62
+    },
+    "trigger_tags": [
+      "晶圆代工",
+      "国产替代"
+    ],
+    "base_confidence": 0.9,
+    "spec_weight": 0.86,
+    "heat_weight": 0.85,
+    "importance_weight": 0.9,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "人形机器人",
+    "term_type": "theme",
+    "synonyms": [
+      "人形机器人",
+      "humanoid",
+      "optimus",
+      "figure",
+      "宇树",
+      "unitree",
+      "fourier"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "robotics": 1.0,
+      "ai-hardware": 0.72,
+      "autonomous-driving": 0.45
+    },
+    "trigger_tags": [
+      "具身智能",
+      "机器人催化"
+    ],
+    "base_confidence": 0.84,
+    "spec_weight": 0.82,
+    "heat_weight": 0.92,
+    "importance_weight": 0.78,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "减速机/伺服",
+    "term_type": "tech",
+    "synonyms": [
+      "减速机",
+      "rv减速机",
+      "谐波减速机",
+      "伺服电机",
+      "伺服驱动",
+      "servo"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "robotics": 0.95,
+      "advanced-manufacturing": 0.65
+    },
+    "trigger_tags": [
+      "机器人零部件"
+    ],
+    "base_confidence": 0.8,
+    "spec_weight": 0.78,
+    "heat_weight": 0.74,
+    "importance_weight": 0.75,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "智能驾驶芯片",
+    "term_type": "tech",
+    "synonyms": [
+      "智驾芯片",
+      "adas芯片",
+      "自动驾驶芯片",
+      "orin",
+      "地平线",
+      "黑芝麻",
+      "征程"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "autonomous-driving": 1.0,
+      "chip-design": 0.78,
+      "ai-hardware": 0.7
+    },
+    "trigger_tags": [
+      "智驾催化",
+      "车载AI"
+    ],
+    "base_confidence": 0.82,
+    "spec_weight": 0.8,
+    "heat_weight": 0.78,
+    "importance_weight": 0.8,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "商汤科技",
+    "term_type": "company",
+    "synonyms": [
+      "商汤",
+      "sensetime",
+      "商汤科技"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "model-applications": 0.92,
+      "ai-hardware": 0.75,
+      "cloud-software": 0.6
+    },
+    "trigger_tags": [
+      "港股AI"
+    ],
+    "base_confidence": 0.82,
+    "spec_weight": 0.76,
+    "heat_weight": 0.84,
+    "importance_weight": 0.78,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "腾讯/微信AI",
+    "term_type": "company",
+    "synonyms": [
+      "腾讯",
+      "tencent",
+      "weixin",
+      "混元大模型"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "model-applications": 0.8,
+      "cloud-software": 0.85,
+      "ai-compute": 0.6
+    },
+    "trigger_tags": [
+      "港股科技",
+      "大模型应用"
+    ],
+    "base_confidence": 0.86,
+    "spec_weight": 0.7,
+    "heat_weight": 0.88,
+    "importance_weight": 0.85,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "阿里云/通义",
+    "term_type": "company",
+    "synonyms": [
+      "阿里云",
+      "alibaba cloud",
+      "通义千问",
+      "qwen"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "cloud-software": 1.0,
+      "model-applications": 0.82,
+      "ai-compute": 0.65
+    },
+    "trigger_tags": [
+      "云计算",
+      "大模型"
+    ],
+    "base_confidence": 0.86,
+    "spec_weight": 0.74,
+    "heat_weight": 0.86,
+    "importance_weight": 0.84,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "科技政策支持",
+    "term_type": "policy",
+    "synonyms": [
+      "科技自立自强",
+      "新质生产力",
+      "科创板",
+      "数字经济",
+      "工业母机",
+      "专精特新"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "domestic-substitution": 0.88,
+      "capital-support": 0.82,
+      "ai-compute": 0.55
+    },
+    "trigger_tags": [
+      "政策催化"
+    ],
+    "base_confidence": 0.82,
+    "spec_weight": 0.72,
+    "heat_weight": 0.8,
+    "importance_weight": 0.86,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "减持/解禁",
+    "term_type": "risk",
+    "synonyms": [
+      "减持",
+      "解禁",
+      "大股东减持",
+      "限售股解禁",
+      "清仓"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "supply-overhang": 1.0
+    },
+    "trigger_tags": [
+      "减持压制",
+      "警示"
+    ],
+    "base_confidence": 0.88,
+    "spec_weight": 0.82,
+    "heat_weight": 0.78,
+    "importance_weight": 0.8,
+    "direction_hint": "negative"
+  },
+  {
+    "canonical_text": "监管/反垄断",
+    "term_type": "risk",
+    "synonyms": [
+      "反垄断",
+      "监管处罚",
+      "约谈",
+      "整改",
+      "罚款",
+      "数据安全",
+      "算法监管"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "compliance-risk": 1.0,
+      "cloud-software": 0.55
+    },
+    "trigger_tags": [
+      "监管风险"
+    ],
+    "base_confidence": 0.86,
+    "spec_weight": 0.8,
+    "heat_weight": 0.85,
+    "importance_weight": 0.88,
+    "direction_hint": "negative"
+  },
+  {
+    "canonical_text": "碳纤维",
+    "term_type": "tech",
+    "synonyms": [
+      "碳纤维",
+      "carbon fiber",
+      "碳纤",
+      "t800",
+      "t1000",
+      "高模碳纤维",
+      "小丝束",
+      "大丝束"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "new-materials": 1.0,
+      "aerospace-defense": 0.72,
+      "robotics": 0.6,
+      "advanced-manufacturing": 0.45
+    },
+    "trigger_tags": [
+      "新材料",
+      "军工需求"
+    ],
+    "base_confidence": 0.82,
+    "spec_weight": 0.88,
+    "heat_weight": 0.7,
+    "importance_weight": 0.8,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "碳化硅SiC",
+    "term_type": "tech",
+    "synonyms": [
+      "碳化硅",
+      "sic",
+      "sic衬底",
+      "sic外延",
+      "第三代半导体",
+      "氮化镓",
+      "gan"
+    ],
+    "regexes": [
+      "\\bsic\\b"
+    ],
+    "impact_vector": {
+      "new-materials": 0.9,
+      "advanced-process": 0.55,
+      "chip-design": 0.62,
+      "energy-storage": 0.48
+    },
+    "trigger_tags": [
+      "第三代半导体",
+      "新材料"
+    ],
+    "base_confidence": 0.84,
+    "spec_weight": 0.86,
+    "heat_weight": 0.75,
+    "importance_weight": 0.82,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "航空航天",
+    "term_type": "theme",
+    "synonyms": [
+      "航空航天",
+      "航天",
+      "商业航天",
+      "低轨卫星",
+      "星座",
+      "火箭",
+      "卫星互联网",
+      "spacex",
+      "空天"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 1.0,
+      "new-materials": 0.7,
+      "chip-design": 0.48
+    },
+    "trigger_tags": [
+      "商业航天",
+      "空天经济"
+    ],
+    "base_confidence": 0.8,
+    "spec_weight": 0.82,
+    "heat_weight": 0.72,
+    "importance_weight": 0.78,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "军工/无人机",
+    "term_type": "theme",
+    "synonyms": [
+      "军工",
+      "国防",
+      "无人机",
+      "uav",
+      "察打一体",
+      "低空经济",
+      "eVTOL",
+      "飞行汽车",
+      "直升机"
+    ],
+    "regexes": [
+      "\\buav\\b",
+      "\\bevtol\\b"
+    ],
+    "impact_vector": {
+      "aerospace-defense": 1.0,
+      "new-materials": 0.68,
+      "advanced-manufacturing": 0.55,
+      "chip-design": 0.5
+    },
+    "trigger_tags": [
+      "军工催化",
+      "低空经济"
+    ],
+    "base_confidence": 0.79,
+    "spec_weight": 0.84,
+    "heat_weight": 0.76,
+    "importance_weight": 0.8,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "固态电池",
+    "term_type": "tech",
+    "synonyms": [
+      "固态电池",
+      "固态锂电",
+      "全固态",
+      "半固态",
+      "solid state battery",
+      "固态电解质"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "energy-storage": 1.0,
+      "new-materials": 0.55,
+      "advanced-manufacturing": 0.48
+    },
+    "trigger_tags": [
+      "下一代电池",
+      "储能催化"
+    ],
+    "base_confidence": 0.8,
+    "spec_weight": 0.86,
+    "heat_weight": 0.8,
+    "importance_weight": 0.76,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "储能",
+    "term_type": "theme",
+    "synonyms": [
+      "储能",
+      "电化学储能",
+      "钠离子电池",
+      "磷酸铁锂",
+      "液流电池",
+      "bess",
+      "调峰"
+    ],
+    "regexes": [
+      "\\bbess\\b"
+    ],
+    "impact_vector": {
+      "energy-storage": 1.0,
+      "ai-energy": 0.52
+    },
+    "trigger_tags": [
+      "储能主线",
+      "新能源"
+    ],
+    "base_confidence": 0.76,
+    "spec_weight": 0.8,
+    "heat_weight": 0.68,
+    "importance_weight": 0.72,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "信创",
+    "term_type": "theme",
+    "synonyms": [
+      "信创",
+      "信息技术应用创新",
+      "党政信创",
+      "金融信创",
+      "央国企信创",
+      "国产操作系统",
+      "国产数据库",
+      "国产中间件",
+      "麒麟",
+      "统信",
+      "达梦",
+      "OceanBase",
+      "OpenKylin"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "domestic-substitution": 1.0,
+      "cloud-software": 0.85,
+      "chip-design": 0.62,
+      "order-momentum": 0.55
+    },
+    "trigger_tags": [
+      "政策主题",
+      "国产替代核心"
+    ],
+    "base_confidence": 0.86,
+    "spec_weight": 0.82,
+    "heat_weight": 0.8,
+    "importance_weight": 0.9,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "网络安全",
+    "term_type": "theme",
+    "synonyms": [
+      "网络安全",
+      "cybersecurity",
+      "数据安全",
+      "信息安全",
+      "网安",
+      "零信任",
+      "zero trust",
+      "态势感知",
+      "SOC",
+      "安全运营",
+      "等保2.0",
+      "等级保护",
+      "数安法",
+      "关基保护",
+      "工控安全"
+    ],
+    "regexes": [
+      "\\bcybersecurity\\b",
+      "\\bzero.trust\\b"
+    ],
+    "impact_vector": {
+      "cloud-software": 0.75,
+      "domestic-substitution": 0.72,
+      "order-momentum": 0.68,
+      "compliance-risk": 0.3
+    },
+    "trigger_tags": [
+      "政策催化",
+      "安全合规"
+    ],
+    "base_confidence": 0.83,
+    "spec_weight": 0.82,
+    "heat_weight": 0.72,
+    "importance_weight": 0.88,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "核电/小型堆",
+    "term_type": "theme",
+    "synonyms": [
+      "核电",
+      "核能",
+      "核反应堆",
+      "小型堆",
+      "SMR",
+      "小型模块堆",
+      "玲龙一号",
+      "华龙一号",
+      "氦气冷却",
+      "高温气冷堆",
+      "核聚变",
+      "核电重启",
+      "商业核电"
+    ],
+    "regexes": [
+      "\\bsmr\\b"
+    ],
+    "impact_vector": {
+      "ai-energy": 0.85,
+      "advanced-manufacturing": 0.62,
+      "new-materials": 0.48,
+      "order-momentum": 0.72
+    },
+    "trigger_tags": [
+      "AI电力",
+      "能源主线"
+    ],
+    "base_confidence": 0.82,
+    "spec_weight": 0.88,
+    "heat_weight": 0.85,
+    "importance_weight": 0.86,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "工业AI",
+    "term_type": "theme",
+    "synonyms": [
+      "工业AI",
+      "工业大模型",
+      "工业互联网",
+      "数字孪生",
+      "智能制造",
+      "工业软件",
+      "PLM",
+      "MES",
+      "ERP",
+      "工业自动化",
+      "机器视觉",
+      "质检AI",
+      "预测性维护",
+      "工业元宇宙"
+    ],
+    "regexes": [
+      "\\bmes\\b",
+      "\\bplm\\b"
+    ],
+    "impact_vector": {
+      "model-applications": 0.72,
+      "robotics": 0.65,
+      "advanced-manufacturing": 0.78,
+      "cloud-software": 0.58,
+      "domestic-substitution": 0.55
+    },
+    "trigger_tags": [
+      "AI落地",
+      "制造升级"
+    ],
+    "base_confidence": 0.78,
+    "spec_weight": 0.8,
+    "heat_weight": 0.72,
+    "importance_weight": 0.82,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "AR/VR/空间计算",
+    "term_type": "theme",
+    "synonyms": [
+      "AR眼镜",
+      "VR头显",
+      "混合现实",
+      "XR",
+      "空间计算",
+      "扩展现实",
+      "苹果Vision",
+      "Vision Pro",
+      "光波导",
+      "微型显示",
+      "Micro LED",
+      "OLED on Silicon",
+      "亮亮视野",
+      "雷鸟创新",
+      "XREAL",
+      "meta quest"
+    ],
+    "regexes": [
+      "\\bxr\\b",
+      "\\bvr\\b"
+    ],
+    "impact_vector": {
+      "model-applications": 0.58,
+      "chip-design": 0.72,
+      "optical-interconnect": 0.5,
+      "advanced-manufacturing": 0.55
+    },
+    "trigger_tags": [
+      "XR主题",
+      "苹果供应链"
+    ],
+    "base_confidence": 0.76,
+    "spec_weight": 0.82,
+    "heat_weight": 0.8,
+    "importance_weight": 0.72,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "量子计算",
+    "term_type": "theme",
+    "synonyms": [
+      "量子计算",
+      "quantum computing",
+      "量子纠错",
+      "量子芯片",
+      "超导量子比特",
+      "量子优势",
+      "量子通信",
+      "量子密钥",
+      "国盾量子",
+      "本源量子",
+      "量子科技",
+      "Willow"
+    ],
+    "regexes": [
+      "\\bquantum\\b"
+    ],
+    "impact_vector": {
+      "chip-design": 0.65,
+      "advanced-process": 0.5,
+      "domestic-substitution": 0.6,
+      "order-momentum": 0.45
+    },
+    "trigger_tags": [
+      "量子概念",
+      "未来技术"
+    ],
+    "base_confidence": 0.74,
+    "spec_weight": 0.8,
+    "heat_weight": 0.82,
+    "importance_weight": 0.7,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "AI医疗",
+    "term_type": "theme",
+    "synonyms": [
+      "AI医疗",
+      "医疗AI",
+      "医疗大模型",
+      "AI辅助诊断",
+      "手术机器人",
+      "医疗器械",
+      "医学影像AI",
+      "AI制药",
+      "AI新药",
+      "数字疗法",
+      "联影医疗",
+      "迈瑞医疗",
+      "达芬奇机器人",
+      "天智航"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "model-applications": 0.72,
+      "robotics": 0.58,
+      "cloud-software": 0.5,
+      "order-momentum": 0.62
+    },
+    "trigger_tags": [
+      "AI医疗",
+      "医械催化"
+    ],
+    "base_confidence": 0.78,
+    "spec_weight": 0.8,
+    "heat_weight": 0.7,
+    "importance_weight": 0.8,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "氢能/燃料电池",
+    "term_type": "theme",
+    "synonyms": [
+      "氢能",
+      "燃料电池",
+      "绿氢",
+      "蓝氢",
+      "制氢",
+      "储氢",
+      "加氢站",
+      "质子交换膜",
+      "PEM电解槽",
+      "氢燃料电池重卡",
+      "氢能汽车"
+    ],
+    "regexes": [
+      "\\bpem\\b"
+    ],
+    "impact_vector": {
+      "energy-storage": 0.82,
+      "new-materials": 0.62,
+      "advanced-manufacturing": 0.55
+    },
+    "trigger_tags": [
+      "氢能概念",
+      "政策催化"
+    ],
+    "base_confidence": 0.74,
+    "spec_weight": 0.78,
+    "heat_weight": 0.85,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "OpenClaw",
+    "term_type": "tech",
+    "synonyms": [
+      "OpenClaw"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "model-applications": 0.422,
+      "cloud-software": 0.316,
+      "ai-compute": 0.277,
+      "robotics": 0.222,
+      "order-momentum": 0.218
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "T1200",
+    "term_type": "theme",
+    "synonyms": [
+      "T1200"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "new-materials": 0.5,
+      "order-momentum": 0.417,
+      "aerospace-defense": 0.36,
+      "robotics": 0.3,
+      "advanced-manufacturing": 0.225
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  }
+]

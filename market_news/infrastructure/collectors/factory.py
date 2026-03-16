@@ -7,53 +7,218 @@ from market_news.infrastructure.collectors.cninfo import (
     CNInfoLatestAnnouncementsCollector,
     CNInfoSpec,
 )
+from market_news.infrastructure.collectors.cls import ClsTelegraphCollector
 from market_news.infrastructure.collectors.composite import CompositeCollector
+from market_news.infrastructure.collectors.eastmoney import EastmoneyCollector
+from market_news.infrastructure.collectors.gelonghui import GelonghuiLiveCollector
+from market_news.infrastructure.collectors.html_source import (
+    HtmlListDetailCollector,
+    HtmlSourceSpec,
+)
 from market_news.infrastructure.collectors.rss import FeedSpec, RSSCollector
+from market_news.infrastructure.collectors.weibo import WeiboCollector
+from market_news.infrastructure.collectors.xueqiu import XueqiuCollector
+from market_news.infrastructure.cookie_store import resolve_cookie_path
 from market_news.infrastructure.http import UrllibHttpClient
 
 
 def build_live_collector(config_path: Path, user_agent: str) -> CompositeCollector:
     payload = json.loads(config_path.read_text(encoding="utf-8"))
-    http_client = UrllibHttpClient(user_agent=user_agent)
+    default_http_client = UrllibHttpClient(user_agent=user_agent, timeout=8)
+    official_http_client = UrllibHttpClient(user_agent=user_agent, timeout=12)
     collectors = []
-    for item in payload:
-        source_type = item["type"]
-        if source_type == "rss":
+    if isinstance(payload, list):
+        payload = {"legacy_sources": payload}
+
+    cninfo_config = payload.get("cninfo", {})
+    if isinstance(cninfo_config, dict) and bool(cninfo_config.get("enabled", True)):
+        collectors.append(
+            CNInfoLatestAnnouncementsCollector(
+                default_http_client,
+                CNInfoSpec(
+                    source_id=cninfo_config.get("source_id", "cninfo_latest"),
+                    name=cninfo_config.get("name", "cninfo-latest-announcements"),
+                    url=cninfo_config.get("url", "https://www.cninfo.com.cn/"),
+                    source_trust=float(cninfo_config.get("source_trust", 0.99)),
+                    item_limit=int(cninfo_config.get("item_limit", 12)),
+                    language=cninfo_config.get("language", "zh"),
+                ),
+            )
+        )
+
+    rss_config = payload.get("rss", {})
+    for item in rss_config.get("feeds", []) if isinstance(rss_config, dict) else []:
+        client = _select_rss_client(item=item, default_http_client=default_http_client, official_http_client=official_http_client)
+        collectors.append(
+            RSSCollector(
+                client,
+                FeedSpec(
+                    source_id=item["source_id"],
+                    name=item.get("name", item["source_id"]),
+                    url=item["url"],
+                    source_trust=float(item.get("source_trust", 0.8)),
+                    language=item.get("language", "en"),
+                    regions=item.get("regions", []),
+                    themes=item.get("themes", []),
+                    item_limit=int(item.get("item_limit", 20)),
+                    include_title_patterns=item.get("include_title_patterns", []),
+                    exclude_title_patterns=item.get("exclude_title_patterns", []),
+                    metadata=item.get("metadata", {}),
+                ),
+            )
+        )
+
+    eastmoney_config = payload.get("eastmoney", {})
+    if isinstance(eastmoney_config, dict) and bool(eastmoney_config.get("enabled", False)):
+        collectors.append(
+            EastmoneyCollector(
+                default_http_client,
+                endpoints=eastmoney_config.get("endpoints", ["ann-a", "ann-h", "news"]),
+                page_size=int(eastmoney_config.get("page_size", 50)),
+                global_page_size=int(eastmoney_config.get("global_page_size", 30)),
+                max_records_per_endpoint=int(eastmoney_config.get("max_records_per_endpoint", 20)),
+            )
+        )
+
+    cls_config = payload.get("cls", {})
+    if isinstance(cls_config, dict) and bool(cls_config.get("enabled", False)):
+        last_time_path = Path(str(cls_config.get("last_time_file", "cls_last_time.txt")))
+        if not last_time_path.is_absolute():
+            last_time_path = config_path.parent.parent / "data" / last_time_path
+        collectors.append(
+            ClsTelegraphCollector(
+                http_client=default_http_client,
+                page_size=int(cls_config.get("page_size", 20)),
+                min_level=int(cls_config.get("min_level", 1)),
+                last_time_file=last_time_path,
+            )
+        )
+
+    gelonghui_config = payload.get("gelonghui", {})
+    if isinstance(gelonghui_config, dict) and bool(gelonghui_config.get("enabled", False)):
+        collectors.append(
+            GelonghuiLiveCollector(
+                default_http_client,
+                item_limit=int(gelonghui_config.get("item_limit", 10)),
+                source_trust=float(gelonghui_config.get("source_trust", 0.76)),
+            )
+        )
+
+    for item in payload.get("html_sources", []):
+        if not bool(item.get("enabled", True)):
+            continue
+        html_client = _select_html_client(
+            item=item,
+            default_http_client=default_http_client,
+            official_http_client=official_http_client,
+            user_agent=user_agent,
+        )
+        collectors.append(
+            HtmlListDetailCollector(
+                html_client,
+                HtmlSourceSpec(
+                    source_id=item["source_id"],
+                    name=item["name"],
+                    url=item["url"],
+                    source_trust=float(item.get("source_trust", 0.8)),
+                    language=item.get("language", "zh"),
+                    regions=item.get("regions", []),
+                    themes=item.get("themes", []),
+                    item_limit=int(item.get("item_limit", 12)),
+                    detail_fetch_limit=int(item.get("detail_fetch_limit", 6)),
+                    include_link_patterns=item.get("include_link_patterns", []),
+                    exclude_link_patterns=item.get("exclude_link_patterns", []),
+                    include_title_patterns=item.get("include_title_patterns", []),
+                    exclude_title_patterns=item.get("exclude_title_patterns", []),
+                    body_container_patterns=item.get("body_container_patterns", []),
+                    metadata=item.get("metadata", {}),
+                ),
+            )
+        )
+
+    weibo_config = payload.get("weibo", {})
+    if isinstance(weibo_config, dict) and bool(weibo_config.get("enabled", False)):
+        sleep_range = weibo_config.get("sleep_range_seconds", [0.4, 1.0])
+        if not isinstance(sleep_range, (list, tuple)) or len(sleep_range) != 2:
+            sleep_range = [0.4, 1.0]
+        collectors.append(
+            WeiboCollector(
+                queries=weibo_config.get("queries", []),
+                cookie_path=resolve_cookie_path(weibo_config.get("cookie_path", "~/.market_news/weibo_cookies.json")),
+                http_client=default_http_client,
+                max_results_per_query=int(weibo_config.get("max_results_per_query", 20)),
+                sleep_range=(float(sleep_range[0]), float(sleep_range[1])),
+                browser_timeout_ms=int(weibo_config.get("browser_timeout_ms", 15000)),
+                browser_warmup_ms=int(weibo_config.get("browser_warmup_ms", 1200)),
+            )
+        )
+
+    xueqiu_config = payload.get("xueqiu", {})
+    if isinstance(xueqiu_config, dict) and bool(xueqiu_config.get("enabled", False)):
+        collectors.append(
+            XueqiuCollector(
+                queries=xueqiu_config.get("queries", []),
+                cookie_path=resolve_cookie_path(xueqiu_config.get("cookie_path", "~/.market_news/xueqiu_cookies.json")),
+                http_client=default_http_client,
+                max_results_per_query=int(xueqiu_config.get("max_results_per_query", 20)),
+                browser_timeout_ms=int(xueqiu_config.get("browser_timeout_ms", 15000)),
+                browser_warmup_ms=int(xueqiu_config.get("browser_warmup_ms", 8000)),
+            )
+        )
+
+    for item in payload.get("legacy_sources", []):
+        if not bool(item.get("enabled", True)):
+            continue
+        if item.get("type") == "html_list_detail":
             collectors.append(
-                RSSCollector(
-                    http_client,
-                    FeedSpec(
+                HtmlListDetailCollector(
+                    default_http_client,
+                    HtmlSourceSpec(
                         source_id=item["source_id"],
                         name=item["name"],
                         url=item["url"],
                         source_trust=float(item.get("source_trust", 0.8)),
-                        language=item.get("language", "en"),
+                        language=item.get("language", "zh"),
                         regions=item.get("regions", []),
                         themes=item.get("themes", []),
-                        item_limit=int(item.get("item_limit", 20)),
+                        item_limit=int(item.get("item_limit", 12)),
+                        detail_fetch_limit=int(item.get("detail_fetch_limit", 6)),
+                        include_link_patterns=item.get("include_link_patterns", []),
+                        exclude_link_patterns=item.get("exclude_link_patterns", []),
                         include_title_patterns=item.get("include_title_patterns", []),
                         exclude_title_patterns=item.get("exclude_title_patterns", []),
+                        body_container_patterns=item.get("body_container_patterns", []),
                         metadata=item.get("metadata", {}),
                     ),
                 )
             )
-            continue
-        if source_type == "cninfo_home":
-            collectors.append(
-                CNInfoLatestAnnouncementsCollector(
-                    http_client,
-                    CNInfoSpec(
-                        source_id=item["source_id"],
-                        name=item["name"],
-                        url=item["url"],
-                        source_trust=float(item.get("source_trust", 0.99)),
-                        item_limit=int(item.get("item_limit", 12)),
-                        language=item.get("language", "zh"),
-                    ),
-                )
-            )
-            continue
-        raise ValueError(f"Unsupported live source type: {source_type}")
 
     return CompositeCollector("live-authoritative", collectors)
 
+
+def _select_rss_client(
+    *,
+    item: dict[str, object],
+    default_http_client: UrllibHttpClient,
+    official_http_client: UrllibHttpClient,
+) -> UrllibHttpClient:
+    url = str(item.get("url", "")).lower()
+    source_id = str(item.get("source_id", "")).lower()
+    if "xinhuanet" in url or source_id.startswith("xinhua"):
+        return official_http_client
+    return default_http_client
+
+
+def _select_html_client(
+    *,
+    item: dict[str, object],
+    default_http_client: UrllibHttpClient,
+    official_http_client: UrllibHttpClient,
+    user_agent: str,
+) -> UrllibHttpClient:
+    timeout = item.get("timeout")
+    if timeout is not None:
+        return UrllibHttpClient(user_agent=user_agent, timeout=int(timeout))
+    if float(item.get("source_trust", 0.0)) >= 0.9:
+        return official_http_client
+    return default_http_client

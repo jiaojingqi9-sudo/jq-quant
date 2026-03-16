@@ -194,4 +194,5 @@ class PipelineSnapshot:
     ranked_events: list[RankedEvent]
     ranked_instruments: list[RankedInstrument]
     alerts: list[AlertItem] = field(default_factory=list)
+    feature_blocks: dict[str, dict[str, Any]] = field(default_factory=dict)
     artifacts: dict[str, str] = field(default_factory=dict)
