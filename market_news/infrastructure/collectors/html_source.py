@@ -3,12 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html import unescape
+import logging
 import re
 from urllib.parse import urljoin, urlparse
 
 from market_news.common import utcnow, unique_preserve
 from market_news.domain.models import RawNewsRecord
 from market_news.infrastructure.http import UrllibHttpClient
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -57,6 +60,13 @@ class HtmlListDetailCollector:
                     detail = None
                 if detail is not None:
                     body = self._extract_body(detail.text)
+                    if not body:
+                        logger.warning(
+                            "%s: body extraction returned empty for %s — "
+                            "body_container_patterns may not match current page structure",
+                            self.spec.source_id,
+                            candidate.url,
+                        )
                     summary = self._build_summary(body)
                     published_at = self._extract_published_at(detail.text) or published_at
 

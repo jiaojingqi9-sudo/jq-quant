@@ -106,14 +106,17 @@ class LexiconReviewService:
             min_score=self.min_score,
             limit=self.list_limit,
         )
+        accepted_terms = self._accepted_terms_payload()
         payload = {
             "ok": True,
             "summary": {
                 "pending_count": len(candidates),
+                "accepted_count": len(accepted_terms),
                 "discovery_path": str(self.discovery_path),
                 "lexicon_path": str(self.lexicon_path),
             },
             "candidates": candidates,
+            "accepted_terms": accepted_terms,
             "message": message or "待审核队列已刷新。",
         }
         return payload
@@ -164,6 +167,24 @@ class LexiconReviewService:
             self._last_action = f"rejected {term}"
             self._touch_status("ok", self._last_action)
             return self.pending_payload(message=f"已忽略：{term}")
+
+    def remove_term(self, term: str) -> dict[str, object]:
+        with self._lock:
+            lexicon_payload = self._load_lexicon()
+            lowered = term.strip().lower()
+            filtered = [
+                item
+                for item in lexicon_payload
+                if not self._term_matches_entry(item, lowered)
+            ]
+            if len(filtered) == len(lexicon_payload):
+                raise ValueError(f"Lexicon term not found: {term}")
+            _write_json(self.lexicon_path, filtered)
+            detector = self._build_detector(filtered)
+            detector.set_status(self.discovery_path, term, "rejected")
+            self._last_action = f"removed {term}"
+            self._touch_status("ok", self._last_action)
+            return self.pending_payload(message=f"已从正式词库删除：{term}")
 
     def health_payload(self) -> dict[str, object]:
         return {
@@ -217,6 +238,50 @@ class LexiconReviewService:
         payload = lexicon_payload if lexicon_payload is not None else self._load_lexicon()
         return UnknownTermDetector(lexicon=payload, config=self.detector_config)
 
+    @staticmethod
+    def _term_matches_entry(entry: dict[str, Any], lowered: str) -> bool:
+        canonical = str(entry.get("canonical_text", "")).strip().lower()
+        if canonical and canonical == lowered:
+            return True
+        for synonym in entry.get("synonyms", []):
+            if str(synonym).strip().lower() == lowered:
+                return True
+        return False
+
+    def _accepted_terms_payload(self) -> list[dict[str, Any]]:
+        lexicon_payload = self._load_lexicon()
+        return sorted(
+            [
+                {
+                    "text": str(item.get("canonical_text", "")).strip(),
+                    "term_type": str(item.get("term_type", "theme") or "theme").strip(),
+                    "synonyms": [
+                        str(synonym).strip()
+                        for synonym in item.get("synonyms", [])
+                        if str(synonym).strip()
+                    ][:5],
+                    "synonym_count": len(
+                        [
+                            str(synonym).strip()
+                            for synonym in item.get("synonyms", [])
+                            if str(synonym).strip()
+                        ]
+                    ),
+                    "trigger_tags": [
+                        str(tag).strip()
+                        for tag in item.get("trigger_tags", [])
+                        if str(tag).strip()
+                    ][:4],
+                }
+                for item in lexicon_payload
+                if str(item.get("canonical_text", "")).strip()
+            ],
+            key=lambda item: (
+                str(item.get("term_type", "theme")),
+                str(item.get("text", "")).lower(),
+            ),
+        )
+
 
 def make_review_api_handler(service: LexiconReviewService) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
@@ -259,6 +324,12 @@ def make_review_api_handler(service: LexiconReviewService) -> type[BaseHTTPReque
                     if not term:
                         raise ValueError("Missing term")
                     self._send_json(service.reject_term(term))
+                    return
+                if path == "/api/lexicon/remove":
+                    term = str(payload.get("term", "")).strip()
+                    if not term:
+                        raise ValueError("Missing term")
+                    self._send_json(service.remove_term(term))
                     return
                 self._send_json({"ok": False, "error": "not-found"}, status_code=404)
             except ValueError as exc:

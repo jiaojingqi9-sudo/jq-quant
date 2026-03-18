@@ -1,4 +1,55 @@
 {
+  "source_policy": {
+    "evidence_source_ids": [
+      "eastmoney-ann",
+      "eastmoney-focus",
+      "eastmoney-724",
+      "eastmoney-tech-focus",
+      "cls",
+      "cninfo_latest",
+      "csrc_home",
+      "gov-miit",
+      "gov-most",
+      "gov-ndrc",
+      "reuters-tech",
+      "xinhua-tech",
+      "hkex_news"
+    ],
+    "official_source_ids": [
+      "cninfo_latest",
+      "csrc_home",
+      "gov-miit",
+      "gov-most",
+      "gov-ndrc",
+      "xinhua-tech",
+      "hkex_news"
+    ],
+    "social_source_ids": [
+      "weibo",
+      "xueqiu"
+    ],
+    "vetted_wire_source_ids": [
+      "eastmoney-focus",
+      "eastmoney-724",
+      "eastmoney-tech-focus",
+      "cls",
+      "reuters-tech"
+    ],
+    "excluded_source_ids": [
+      "36kr",
+      "tmtpost",
+      "gelonghui",
+      "huxiu",
+      "ifeng-tech",
+      "sec_press",
+      "sec_xbrl_usgaap"
+    ],
+    "min_evidence_docs": 1,
+    "min_evidence_source_trust": 0.82,
+    "min_attention_if_single_evidence_doc": 58.0,
+    "allowed_event_types": ["company", "industry", "policy"],
+    "require_candidate_assets": true
+  },
   "unknown_term_detector": {
     "enabled": true,
     "min_freq": 3,
@@ -6,6 +57,32 @@
     "min_top_impact_score": 0.35,
     "max_candidates_per_run": 50,
     "token_min_length": 2,
-    "token_max_length": 10
+    "token_max_length": 10,
+      "preferred_source_ids": [
+        "eastmoney-ann",
+        "eastmoney-focus",
+        "eastmoney-724",
+        "eastmoney-tech-focus",
+        "cls",
+        "cninfo_latest",
+        "csrc_home",
+        "gov-miit",
+        "gov-most",
+        "gov-ndrc",
+        "reuters-tech",
+        "xinhua-tech",
+        "hkex_news"
+      ],
+    "exclude_source_ids": [
+      "weibo",
+      "xueqiu",
+      "36kr",
+      "tmtpost",
+      "gelonghui",
+      "huxiu",
+      "ifeng-tech",
+      "sec_press",
+      "sec_xbrl_usgaap"
+    ]
   }
 }

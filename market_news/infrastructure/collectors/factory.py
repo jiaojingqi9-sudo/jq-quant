@@ -10,6 +10,7 @@ from market_news.infrastructure.collectors.cninfo import (
 from market_news.infrastructure.collectors.cls import ClsTelegraphCollector
 from market_news.infrastructure.collectors.composite import CompositeCollector
 from market_news.infrastructure.collectors.eastmoney import EastmoneyCollector
+from market_news.infrastructure.collectors.full_text import FullTextEnrichingCollector
 from market_news.infrastructure.collectors.gelonghui import GelonghuiLiveCollector
 from market_news.infrastructure.collectors.html_source import (
     HtmlListDetailCollector,
@@ -77,6 +78,9 @@ def build_live_collector(config_path: Path, user_agent: str) -> CompositeCollect
                 page_size=int(eastmoney_config.get("page_size", 50)),
                 global_page_size=int(eastmoney_config.get("global_page_size", 30)),
                 max_records_per_endpoint=int(eastmoney_config.get("max_records_per_endpoint", 20)),
+                tech_focus_include_patterns=eastmoney_config.get("tech_focus_include_patterns", []),
+                tech_focus_boost_patterns=eastmoney_config.get("tech_focus_boost_patterns", []),
+                tech_focus_exclude_patterns=eastmoney_config.get("tech_focus_exclude_patterns", []),
             )
         )
 
@@ -193,7 +197,22 @@ def build_live_collector(config_path: Path, user_agent: str) -> CompositeCollect
                 )
             )
 
-    return CompositeCollector("live-authoritative", collectors)
+    composite = CompositeCollector("live-authoritative", collectors)
+    full_text_config = payload.get("full_text", {})
+    if isinstance(full_text_config, dict) and bool(full_text_config.get("enabled", True)):
+        detail_http_client = UrllibHttpClient(
+            user_agent=user_agent,
+            timeout=int(full_text_config.get("timeout", 18)),
+        )
+        return FullTextEnrichingCollector(
+            composite,
+            detail_http_client,
+            enabled_source_ids=full_text_config.get("source_ids", []),
+            min_body_length=int(full_text_config.get("min_body_length", 220)),
+            max_records=int(full_text_config.get("max_records", 36)),
+            max_body_length=int(full_text_config.get("max_body_length", 24000)),
+        )
+    return composite
 
 
 def _select_rss_client(

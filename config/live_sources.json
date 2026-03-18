@@ -11,14 +11,6 @@
   "rss": {
     "feeds": [
       {
-        "url": "https://www.36kr.com/feed",
-        "name": "36kr",
-        "source_id": "36kr",
-        "source_trust": 0.72,
-        "language": "zh",
-        "regions": ["CN"]
-      },
-      {
         "url": "https://www.hkex.com.hk/Services/RSS-Feeds/News-Releases?sc_lang=en",
         "name": "hkex-news-releases",
         "source_id": "hkex_news",
@@ -44,22 +36,24 @@
         "regions": ["US"]
       },
       {
-        "url": "https://www.tmtpost.com/feed",
-        "name": "tmtpost",
-        "source_id": "tmtpost",
-        "source_trust": 0.70,
-        "language": "zh",
-        "regions": ["CN"],
-        "include_title_patterns": ["AI|人工智能|芯片|半导体|机器人|算力|大模型|云|汽车|新材料|储能|量子|信创|医疗"]
+        "url": "https://www.reutersagency.com/feed/?taxonomy=best-sectors&post_type=best",
+        "name": "reuters-tech",
+        "source_id": "reuters-tech",
+        "source_trust": 0.88,
+        "language": "en",
+        "regions": ["US", "GLOBAL"],
+        "include_title_patterns": [
+          "AI|chip|semiconductor|quantum|robot|EUV|HBM|TSMC|ASML|Nvidia|data center|battery|nuclear|carbon fiber|SpaceX|lithography|DRAM|solid.state"
+        ]
       }
     ]
   },
   "eastmoney": {
     "enabled": true,
-    "endpoints": ["ann-a", "ann-h", "news"],
+    "endpoints": ["ann-a", "ann-h", "news", "focus", "global"],
     "page_size": 50,
     "global_page_size": 30,
-    "max_records_per_endpoint": 20
+    "max_records_per_endpoint": 25
   },
   "cls": {
     "enabled": true,
@@ -68,7 +62,7 @@
     "last_time_file": "cls_last_time.txt"
   },
   "gelonghui": {
-    "enabled": true,
+    "enabled": false,
     "item_limit": 10,
     "source_trust": 0.76
   },
@@ -97,6 +91,23 @@
     "max_results_per_query": 12,
     "browser_timeout_ms": 15000,
     "browser_warmup_ms": 8000
+  },
+  "full_text": {
+    "enabled": true,
+    "timeout": 18,
+    "min_body_length": 220,
+    "max_records": 36,
+    "max_body_length": 24000,
+    "source_ids": [
+      "cninfo_latest",
+      "eastmoney-724",
+      "eastmoney-focus",
+      "eastmoney-news",
+      "hkex_news",
+      "sec_press",
+      "sec_xbrl_usgaap",
+      "reuters-tech"
+    ]
   },
   "html_sources": [
     {
@@ -153,7 +164,7 @@
       }
     },
     {
-      "enabled": true,
+      "enabled": false,
       "type": "html_list_detail",
       "name": "huxiu-tech-channel",
       "source_id": "huxiu",
@@ -179,7 +190,7 @@
       }
     },
     {
-      "enabled": true,
+      "enabled": false,
       "type": "html_list_detail",
       "name": "ifeng-tech-home",
       "source_id": "ifeng-tech",
@@ -223,6 +234,87 @@
       "metadata": {
         "source_category": "regulator",
         "compliance_policy": "metadata-and-features-only"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "miit-policy",
+      "source_id": "gov-miit",
+      "url": "https://www.miit.gov.cn/zwgk/zcwj/wjfb/tz/index.html",
+      "source_trust": 0.96,
+      "timeout": 15,
+      "language": "zh",
+      "regions": ["CN"],
+      "themes": ["technology", "policy"],
+      "item_limit": 10,
+      "detail_fetch_limit": 4,
+      "include_link_patterns": ["/zwgk/.+\\.html"],
+      "exclude_link_patterns": ["index\\.html$", "javascript:", "#"],
+      "include_title_patterns": [
+        "人工智能|芯片|半导体|机器人|新材料|软件|集成电路|通信|5G|6G|制造|数字|算力|储能|新能源|航空|航天|核电|工业互联网|工业母机|智能制造|信创|数据"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|xxgk_content|article|content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-policy",
+        "source_tier": "T1"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "most-policy",
+      "source_id": "gov-most",
+      "url": "https://www.most.gov.cn/xxgk/xinxifenlei/fdzdgknr/fgzc/gfxwj/index.html",
+      "source_trust": 0.95,
+      "timeout": 15,
+      "language": "zh",
+      "regions": ["CN"],
+      "themes": ["technology", "policy"],
+      "item_limit": 10,
+      "detail_fetch_limit": 4,
+      "include_link_patterns": ["/xxgk/.+\\.html"],
+      "exclude_link_patterns": ["index\\.html$", "javascript:", "#"],
+      "include_title_patterns": [
+        "科技|创新|人工智能|量子|集成电路|生物|航天|新材料|新能源|数字|基础研究|重大专项|芯片|机器人"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content|xxgk_content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-policy",
+        "source_tier": "T1"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "ndrc-policy",
+      "source_id": "gov-ndrc",
+      "url": "https://www.ndrc.gov.cn/xxgk/zcfb/tz/index.html",
+      "source_trust": 0.95,
+      "timeout": 15,
+      "language": "zh",
+      "regions": ["CN"],
+      "themes": ["technology", "policy"],
+      "item_limit": 10,
+      "detail_fetch_limit": 4,
+      "include_link_patterns": ["/xxgk/.+/\\d+/t\\d+_\\d+\\.html"],
+      "exclude_link_patterns": ["index\\.html$", "javascript:", "#"],
+      "include_title_patterns": [
+        "高技术|战略性新兴|数字经济|新质生产力|储能|氢能|核电|半导体|算力|产业基金|创新|信息技术|智能"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article_con|article|content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-policy",
+        "source_tier": "T1"
       }
     }
   ]

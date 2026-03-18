@@ -79,7 +79,7 @@ class TechBlockTest(unittest.TestCase):
             top_assets = {item["symbol"] for item in first_signal["candidate_assets"]}
             self.assertTrue({"688981.SH", "0981.HK", "300308.SZ"} & top_assets)
 
-    def test_source_multiplier_rewards_official_sources_over_social_sources(self) -> None:
+    def test_source_multiplier_rewards_official_sources_over_lower_quality_media(self) -> None:
         root = Path(__file__).resolve().parent.parent
         block = AHShareTechFeatureBlock.from_files(
             universe_path=root / "config" / "tech_universe_cn_hk.json",
@@ -161,12 +161,195 @@ class TechBlockTest(unittest.TestCase):
         )
         official_score = block.evaluate(base_snapshot)["signals"][0]["trading_attention_score"]
 
-        social_document = replace(document, source_id="weibo", source_trust=0.4)
-        social_cluster = replace(cluster, documents=[social_document], source_ids=["weibo"])
-        social_snapshot = replace(base_snapshot, documents=[social_document], clusters=[social_cluster])
-        social_score = block.evaluate(social_snapshot)["signals"][0]["trading_attention_score"]
+        lower_quality_document = replace(document, source_id="huxiu", source_trust=0.71)
+        lower_quality_cluster = replace(cluster, documents=[lower_quality_document], source_ids=["huxiu"])
+        lower_quality_snapshot = replace(
+            base_snapshot,
+            documents=[lower_quality_document],
+            clusters=[lower_quality_cluster],
+        )
+        lower_quality_score = block.evaluate(lower_quality_snapshot)["signals"][0]["trading_attention_score"]
 
-        self.assertGreater(official_score, social_score)
+        self.assertGreater(official_score, lower_quality_score)
+
+    def test_clean_source_policy_blocks_social_only_signal_and_keeps_social_as_heat_only(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        block = AHShareTechFeatureBlock.from_files(
+            universe_path=root / "config" / "tech_universe_cn_hk.json",
+            lexicon_path=root / "config" / "tech_lexicon.json",
+            lexicon_release_path=root / "config" / "tech_lexicon_release.json",
+            graph_path=root / "config" / "tech_impact_graph.json",
+            config_path=root / "config" / "tech_block.json",
+        )
+        timestamp = datetime(2026, 3, 17, 9, 0, tzinfo=UTC)
+        weibo_doc = NewsDocument(
+            doc_id=stable_id("doc", "weibo-tech"),
+            source_id="weibo",
+            title="算力链今天又爆了",
+            summary="讨论聚焦AI算力与光模块。",
+            body="AI算力、光模块、大模型链路被集中讨论。",
+            url="https://weibo.com/demo/1",
+            published_at=timestamp,
+            fetched_at=timestamp,
+            language="zh",
+            source_trust=0.45,
+            canonical_key="weibo-tech",
+            metadata={"discussion_count": 320},
+        )
+        clean_doc = replace(
+            weibo_doc,
+            doc_id=stable_id("doc", "cls-tech"),
+            source_id="cls",
+            title="【财联社】算力产业链景气延续",
+            summary="服务器、光模块和液冷环节景气延续。",
+            body="AI算力、服务器、光模块和液冷链持续受益。",
+            url="https://www.cls.cn/detail/123",
+            source_trust=0.9,
+            canonical_key="cls-tech",
+            metadata={"discussion_count": 0},
+        )
+        impact = ImpactAssessment(
+            event_type=EventType.INDUSTRY,
+            direction=Direction.POSITIVE,
+            affected_markets=[],
+            affected_sectors=["ai"],
+            affected_themes=["ai-compute"],
+            severity=0.82,
+            confidence=0.86,
+            matched_rules=["ai"],
+            rationale=["tech demand"],
+        )
+        event = RankedEvent(
+            cluster_id="cluster-clean-tech",
+            headline=clean_doc.title,
+            impact=impact,
+            heat_score=70.0,
+            importance_score=68.0,
+            confidence_score=80.0,
+            market_relevance_score=76.0,
+            final_score=73.0,
+        )
+
+        social_only_cluster = EventCluster(
+            cluster_id="cluster-clean-tech",
+            story_key="clean-tech",
+            headline=weibo_doc.title,
+            summary=weibo_doc.summary,
+            documents=[weibo_doc],
+            entities=[],
+            themes=["AI算力"],
+            sectors=["ai"],
+            regions=["CN"],
+            source_ids=["weibo"],
+            first_seen_at=timestamp,
+            last_seen_at=timestamp,
+        )
+        social_only_snapshot = PipelineSnapshot(
+            run_id="run-social-only",
+            created_at=timestamp,
+            source_name="test",
+            raw_records=[],
+            documents=[weibo_doc],
+            clusters=[social_only_cluster],
+            ranked_events=[event],
+            ranked_instruments=[],
+            alerts=[],
+        )
+        self.assertEqual(block.evaluate(social_only_snapshot)["signals"], [])
+
+        mixed_cluster = replace(
+            social_only_cluster,
+            headline=clean_doc.title,
+            summary=clean_doc.summary,
+            documents=[clean_doc, weibo_doc],
+            source_ids=["cls", "weibo"],
+        )
+        mixed_snapshot = replace(
+            social_only_snapshot,
+            documents=[clean_doc, weibo_doc],
+            clusters=[mixed_cluster],
+        )
+        signal = block.evaluate(mixed_snapshot)["signals"][0]
+        self.assertEqual(signal["evidence_source_ids"], ["cls"])
+        self.assertEqual(signal["social_source_ids"], ["weibo"])
+        self.assertEqual(signal["source_quality"], "vetted-wire")
+
+    def test_frontier_breakthrough_detection_surfaces_semicap_signal(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        block = AHShareTechFeatureBlock.from_files(
+            universe_path=root / "config" / "tech_universe_cn_hk.json",
+            lexicon_path=root / "config" / "tech_lexicon.json",
+            lexicon_release_path=root / "config" / "tech_lexicon_release.json",
+            graph_path=root / "config" / "tech_impact_graph.json",
+            frontier_map_path=root / "config" / "tech_frontier_map.json",
+        )
+        timestamp = datetime(2026, 3, 17, 10, 0, tzinfo=UTC)
+        document = NewsDocument(
+            doc_id=stable_id("doc", "arf-breakthrough"),
+            source_id="eastmoney-focus",
+            title="国产ArF光刻胶突破量产",
+            summary="光刻胶国产化率提升，半导体材料链受关注。",
+            body="国产ArF光刻胶突破量产，电子特气国产替代提速，南大光电与晶瑞电材等半导体材料链受关注。",
+            url="https://example.com/arf-breakthrough",
+            published_at=timestamp,
+            fetched_at=timestamp,
+            language="zh",
+            source_trust=0.88,
+            canonical_key="arf-breakthrough",
+        )
+        cluster = EventCluster(
+            cluster_id="cluster-arf-breakthrough",
+            story_key="arf-breakthrough",
+            headline=document.title,
+            summary=document.summary,
+            documents=[document],
+            entities=["南大光电", "晶瑞电材"],
+            themes=["半导体", "国产替代"],
+            sectors=["semicap", "materials"],
+            regions=["CN"],
+            source_ids=["eastmoney-focus"],
+            first_seen_at=timestamp,
+            last_seen_at=timestamp,
+        )
+        impact = ImpactAssessment(
+            event_type=EventType.INDUSTRY,
+            direction=Direction.POSITIVE,
+            affected_markets=[],
+            affected_sectors=["半导体材料"],
+            affected_themes=["semicap-equipment", "domestic-substitution"],
+            severity=0.8,
+            confidence=0.84,
+            matched_rules=["semicap"],
+            rationale=["国产替代与半导体材料突破"],
+        )
+        event = RankedEvent(
+            cluster_id=cluster.cluster_id,
+            headline=cluster.headline,
+            impact=impact,
+            heat_score=70.0,
+            importance_score=76.0,
+            confidence_score=82.0,
+            market_relevance_score=78.0,
+            final_score=75.0,
+        )
+        snapshot = PipelineSnapshot(
+            run_id="run-frontier",
+            created_at=timestamp,
+            source_name="test",
+            raw_records=[],
+            documents=[document],
+            clusters=[cluster],
+            ranked_events=[event],
+            ranked_instruments=[],
+            alerts=[],
+        )
+
+        signal = block.evaluate(snapshot)["signals"][0]
+
+        self.assertTrue(signal["frontier_hits"])
+        self.assertEqual(signal["frontier_hits"][0]["frontier_id"], "photoresist-chemicals")
+        self.assertGreaterEqual(signal["spec_score"], 55)
+        self.assertIn("semicap-equipment", {item["theme"] for item in signal["activated_themes"]})
 
 
 if __name__ == "__main__":

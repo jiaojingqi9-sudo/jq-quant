@@ -1,732 +1,4 @@
-from __future__ import annotations
-
-from collections import defaultdict
-import json
-from pathlib import Path
-from string import Template
-
-from market_news.domain.models import Direction, EventCluster, NewsDocument, PipelineSnapshot
-from market_news.services.unknown_term_detector import UnknownTermDetector
-
-
-class MarkdownJsonReporter:
-    def __init__(
-        self,
-        output_dir: Path,
-        top_n: int = 8,
-        *,
-        lexicon_discovery_path: Path | None = None,
-        lexicon_path: Path | None = None,
-        tech_block_config_path: Path | None = None,
-    ) -> None:
-        self.output_dir = output_dir
-        self.top_n = top_n
-        self.lexicon_discovery_path = lexicon_discovery_path
-        self.lexicon_path = lexicon_path
-        self.tech_block_config_path = tech_block_config_path
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-    def write(self, snapshot: PipelineSnapshot) -> dict[str, Path]:
-        json_path = self.output_dir / "latest_report.json"
-        markdown_path = self.output_dir / "latest_report.md"
-        html_path = self.output_dir / "latest_dashboard.html"
-
-        cluster_by_id = {cluster.cluster_id: cluster for cluster in snapshot.clusters}
-
-        grouped_instruments: dict[str, list[dict[str, object]]] = defaultdict(list)
-        for instrument in snapshot.ranked_instruments:
-            grouped_instruments[instrument.cluster_id].append(
-                {
-                    "symbol": instrument.symbol,
-                    "market": instrument.market.value,
-                    "name": instrument.name,
-                    "direction": instrument.direction.value,
-                    "final_score": instrument.final_score,
-                    "reasons": instrument.reasons,
-                }
-            )
-
-        positive_events = [
-            event for event in snapshot.ranked_events if event.impact.direction == Direction.POSITIVE
-        ][: self.top_n]
-        negative_events = [
-            event for event in snapshot.ranked_events if event.impact.direction == Direction.NEGATIVE
-        ][: self.top_n]
-        neutral_events = [
-            event for event in snapshot.ranked_events if event.impact.direction == Direction.NEUTRAL
-        ][: self.top_n]
-        latest_feed = snapshot.documents[: self.top_n * 2]
-
-        alert_counts = {
-            "critical": sum(1 for item in snapshot.alerts if item.level.value == "critical"),
-            "high": sum(1 for item in snapshot.alerts if item.level.value == "high"),
-            "medium": sum(1 for item in snapshot.alerts if item.level.value == "medium"),
-            "new": sum(1 for item in snapshot.alerts if item.is_new),
-        }
-        runtime_status = self._load_runtime_status()
-        tech_block = self._enrich_tech_block(
-            snapshot.feature_blocks.get("tech_block", {}),
-            cluster_by_id,
-        )
-        lexicon_discovery = self._load_lexicon_discovery()
-
-        json_payload = {
-            "run_id": snapshot.run_id,
-            "created_at": snapshot.created_at.isoformat(),
-            "source": snapshot.source_name,
-            "counts": {
-                "raw_records": len(snapshot.raw_records),
-                "documents": len(snapshot.documents),
-                "clusters": len(snapshot.clusters),
-                "ranked_events": len(snapshot.ranked_events),
-                "ranked_instruments": len(snapshot.ranked_instruments),
-            },
-            "alerts": [
-                {
-                    "cluster_id": item.cluster_id,
-                    "headline": item.headline,
-                    "level": item.level.value,
-                    "direction": item.direction.value,
-                    "event_type": item.event_type.value,
-                    "is_new": item.is_new,
-                    "final_score": item.final_score,
-                    "symbols": item.symbols,
-                    "reason": item.reason,
-                }
-                for item in snapshot.alerts
-            ],
-            "alert_counts": alert_counts,
-            "top_events": [
-                self._event_payload(
-                    event,
-                    cluster_by_id.get(event.cluster_id),
-                    grouped_instruments.get(event.cluster_id, [])[:5],
-                )
-                for event in snapshot.ranked_events[: self.top_n]
-            ],
-            "positive_catalysts": [
-                self._event_payload(
-                    event,
-                    cluster_by_id.get(event.cluster_id),
-                    grouped_instruments.get(event.cluster_id, [])[:5],
-                )
-                for event in positive_events
-            ],
-            "negative_risks": [
-                self._event_payload(
-                    event,
-                    cluster_by_id.get(event.cluster_id),
-                    grouped_instruments.get(event.cluster_id, [])[:5],
-                )
-                for event in negative_events
-            ],
-            "watchlist": [
-                self._event_payload(
-                    event,
-                    cluster_by_id.get(event.cluster_id),
-                    grouped_instruments.get(event.cluster_id, [])[:5],
-                )
-                for event in neutral_events
-            ],
-            "top_instruments": [
-                {
-                    "cluster_id": instrument.cluster_id,
-                    "headline": instrument.cluster_headline,
-                    "symbol": instrument.symbol,
-                    "market": instrument.market.value,
-                    "name": instrument.name,
-                    "direction": instrument.direction.value,
-                    "final_score": instrument.final_score,
-                    "reasons": instrument.reasons,
-                }
-                for instrument in snapshot.ranked_instruments[: self.top_n]
-            ],
-            "latest_feed": [
-                self._document_payload(document)
-                for document in latest_feed
-            ],
-            "feature_blocks": snapshot.feature_blocks,
-            "tech_block": tech_block,
-            "lexicon_discovery": lexicon_discovery,
-            "runtime_status": runtime_status,
-        }
-        json_path.write_text(json.dumps(json_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        lines = [
-            "# Market News Collector Report",
-            "",
-            f"- Run ID: `{snapshot.run_id}`",
-            f"- Source: `{snapshot.source_name}`",
-            f"- Raw records: `{len(snapshot.raw_records)}`",
-            f"- Deduplicated documents: `{len(snapshot.documents)}`",
-            f"- Event clusters: `{len(snapshot.clusters)}`",
-            f"- Alerts: `critical={alert_counts['critical']}` `high={alert_counts['high']}` `medium={alert_counts['medium']}` `new={alert_counts['new']}`",
-            "",
-            "## Alert Summary",
-            "",
-        ]
-
-        if snapshot.alerts:
-            for index, alert in enumerate(snapshot.alerts[: self.top_n], start=1):
-                prefix = "NEW " if alert.is_new else ""
-                symbols = ", ".join(alert.symbols) if alert.symbols else "n/a"
-                lines.extend(
-                    [
-                        f"{index}. `{alert.level.value.upper()}` {prefix}`{alert.direction.value}` {alert.headline}",
-                        f"   symbols: {symbols}",
-                        f"   why: {alert.reason}",
-                    ]
-                )
-            lines.append("")
-        else:
-            lines.extend(["No active alerts.", ""])
-
-        self._append_event_section(
-            lines,
-            title="## Negative Risks",
-            events=negative_events,
-            grouped_instruments=grouped_instruments,
-            cluster_by_id=cluster_by_id,
-        )
-        self._append_event_section(
-            lines,
-            title="## Positive Catalysts",
-            events=positive_events,
-            grouped_instruments=grouped_instruments,
-            cluster_by_id=cluster_by_id,
-        )
-        self._append_event_section(
-            lines,
-            title="## Watchlist",
-            events=neutral_events,
-            grouped_instruments=grouped_instruments,
-            cluster_by_id=cluster_by_id,
-        )
-        self._append_tech_block_section(lines, tech_block)
-        self._append_lexicon_discovery_section(lines, lexicon_discovery)
-
-        lines.extend(["## Latest Feed", ""])
-        for index, document in enumerate(latest_feed, start=1):
-            themes = ", ".join(document.themes[:3]) or "n/a"
-            entities = ", ".join(document.entities[:3]) or "n/a"
-            lines.extend(
-                [
-                    f"{index}. `{document.published_at.isoformat()}` `{document.source_id}` {document.title}",
-                    f"   themes: {themes}",
-                    f"   entities: {entities}",
-                ]
-            )
-        lines.append("")
-
-        markdown_path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
-        html_path.write_text(self._build_html(json_payload), encoding="utf-8")
-        return {
-            "json_report": json_path,
-            "markdown_report": markdown_path,
-            "html_report": html_path,
-        }
-
-    def _load_lexicon_discovery(self) -> dict[str, object]:
-        if (
-            self.lexicon_discovery_path is None
-            or self.lexicon_path is None
-            or not self.lexicon_discovery_path.exists()
-            or not self.lexicon_path.exists()
-        ):
-            return {
-                "summary": {
-                    "pending_count": 0,
-                    "accepted_count": 0,
-                    "discovery_path": str(self.lexicon_discovery_path or ""),
-                    "lexicon_path": str(self.lexicon_path or ""),
-                },
-                "candidates": [],
-                "accepted_terms": [],
-            }
-
-        try:
-            lexicon_payload = json.loads(self.lexicon_path.read_text(encoding="utf-8"))
-            if not isinstance(lexicon_payload, list):
-                raise ValueError("lexicon payload must be a JSON array")
-            detector_config: dict[str, object] = {}
-            if self.tech_block_config_path is not None and self.tech_block_config_path.exists():
-                config_payload = json.loads(self.tech_block_config_path.read_text(encoding="utf-8"))
-                if isinstance(config_payload, dict):
-                    detector_config = config_payload.get("unknown_term_detector", config_payload)
-                    if not isinstance(detector_config, dict):
-                        detector_config = {}
-            detector = UnknownTermDetector(lexicon=lexicon_payload, config=detector_config)
-            min_score = float(detector_config.get("min_discovery_score", 2.0))
-            candidates = detector.list_pending(
-                self.lexicon_discovery_path,
-                min_score=min_score,
-                limit=max(self.top_n, 10),
-            )
-            accepted_terms = sorted(
-                [
-                    {
-                        "text": str(item.get("canonical_text", "")).strip(),
-                        "term_type": str(item.get("term_type", "theme") or "theme").strip(),
-                        "synonyms": [
-                            str(synonym).strip()
-                            for synonym in item.get("synonyms", [])
-                            if str(synonym).strip()
-                        ][:5],
-                        "synonym_count": len(
-                            [
-                                str(synonym).strip()
-                                for synonym in item.get("synonyms", [])
-                                if str(synonym).strip()
-                            ]
-                        ),
-                        "trigger_tags": [
-                            str(tag).strip()
-                            for tag in item.get("trigger_tags", [])
-                            if str(tag).strip()
-                        ][:4],
-                    }
-                    for item in lexicon_payload
-                    if str(item.get("canonical_text", "")).strip()
-                ],
-                key=lambda item: (
-                    str(item.get("term_type", "theme")),
-                    str(item.get("text", "")).lower(),
-                ),
-            )
-        except Exception:
-            candidates = []
-            accepted_terms = []
-
-        return {
-            "summary": {
-                "pending_count": len(candidates),
-                "accepted_count": len(accepted_terms),
-                "discovery_path": str(self.lexicon_discovery_path),
-                "lexicon_path": str(self.lexicon_path),
-            },
-            "candidates": candidates,
-            "accepted_terms": accepted_terms,
-        }
-
-    def _append_event_section(
-        self,
-        lines: list[str],
-        *,
-        title: str,
-        events: list[object],
-        grouped_instruments: dict[str, list[dict[str, object]]],
-        cluster_by_id: dict[str, EventCluster],
-    ) -> None:
-        lines.extend([title, ""])
-        if not events:
-            lines.extend(["No items.", ""])
-            return
-        for index, event in enumerate(events[: self.top_n], start=1):
-            cluster = cluster_by_id.get(event.cluster_id)
-            summary = cluster.summary if cluster is not None else ""
-            lines.extend(
-                [
-                    f"{index}. `{event.final_score}` {event.headline}",
-                    f"   direction: {event.impact.direction.value} | type: {event.impact.event_type.value}",
-                    f"   themes: {', '.join(event.impact.affected_themes) or 'n/a'}",
-                    f"   why: {'; '.join(event.impact.rationale)}",
-                ]
-            )
-            if summary:
-                lines.append(f"   summary: {self._truncate(summary, 160)}")
-            related = grouped_instruments.get(event.cluster_id, [])[:4]
-            if related:
-                lines.append(
-                    "   instruments: "
-                    + ", ".join(
-                        f"{instrument['symbol']}({instrument['market']})"
-                        for instrument in related
-                    )
-                )
-        lines.append("")
-
-    def _append_tech_block_section(
-        self,
-        lines: list[str],
-        tech_block: dict[str, object],
-    ) -> None:
-        lines.extend(["## AH Tech Catalyst Block", ""])
-        signals = tech_block.get("signals", []) if isinstance(tech_block, dict) else []
-        assets = tech_block.get("asset_ladder", []) if isinstance(tech_block, dict) else []
-        themes = tech_block.get("themes", []) if isinstance(tech_block, dict) else []
-        summary = tech_block.get("summary", {}) if isinstance(tech_block, dict) else {}
-        lexicon_version = summary.get("lexicon_version") if isinstance(summary, dict) else None
-        if lexicon_version:
-            lines.append(f"词库版本: `{lexicon_version}`")
-            lines.append("")
-        if not signals:
-            lines.extend(["No tech speculative signals in this run.", ""])
-            return
-
-        for index, signal in enumerate(signals[: self.top_n], start=1):
-            candidate_assets = ", ".join(
-                f"{asset['symbol']}({asset['market']})"
-                for asset in signal.get("candidate_assets", [])[:4]
-            ) or "n/a"
-            trigger_tags = ", ".join(signal.get("trigger_tags", [])[:4]) or "n/a"
-            lines.extend(
-                [
-                    f"{index}. `{signal['trading_attention_score']}` {signal['headline']}",
-                    f"   direction: {signal['direction']} | tier: {signal['attention_tier']}",
-                    f"   triggers: {trigger_tags}",
-                    f"   assets: {candidate_assets}",
-                    f"   why: {'; '.join(signal.get('rationale', [])[:3])}",
-                ]
-            )
-        lines.append("")
-
-        lines.extend(["## AH Tech Theme Ladder", ""])
-        if themes:
-            for index, theme in enumerate(themes[:8], start=1):
-                lines.append(
-                    f"{index}. `{theme['score']}` {theme['label']} | drivers: {', '.join(theme.get('drivers', [])[:4]) or 'n/a'}"
-                )
-        else:
-            lines.append("No active tech themes.")
-        lines.append("")
-
-        lines.extend(["## AH Tech Asset Ladder", ""])
-        if assets:
-            for index, asset in enumerate(assets[:10], start=1):
-                lines.append(
-                    f"{index}. `{asset['score']}` {asset['symbol']} {asset['name']} | {asset['direction']} | {', '.join(asset.get('drivers', [])[:3]) or 'n/a'}"
-                )
-        else:
-            lines.append("No ranked tech assets.")
-        lines.append("")
-
-    def _append_lexicon_discovery_section(
-        self,
-        lines: list[str],
-        lexicon_discovery: dict[str, object],
-    ) -> None:
-        lines.extend(["## Lexicon Discovery Queue", ""])
-        summary = lexicon_discovery.get("summary", {}) if isinstance(lexicon_discovery, dict) else {}
-        candidates = lexicon_discovery.get("candidates", []) if isinstance(lexicon_discovery, dict) else []
-        pending_count = summary.get("pending_count", 0) if isinstance(summary, dict) else 0
-        lines.append(f"待审核候选词: `{pending_count}`")
-        lines.append("")
-        if not candidates:
-            lines.extend(["No pending discovery candidates.", ""])
-            return
-        for index, candidate in enumerate(candidates[:8], start=1):
-            impacts = candidate.get("inferred_impact", {}) if isinstance(candidate, dict) else {}
-            snippets = candidate.get("example_snippets", []) if isinstance(candidate, dict) else []
-            impact_text = ", ".join(f"{key}:{value}" for key, value in list(impacts.items())[:4]) or "n/a"
-            lines.extend(
-                [
-                    f"{index}. `{candidate.get('discovery_score', 0)}` {candidate.get('text', 'term')}",
-                    f"   freq: {candidate.get('raw_freq', 0)} | impact: {impact_text}",
-                    f"   snippet: {self._truncate(' | '.join(snippets), 160) if snippets else 'n/a'}",
-                ]
-            )
-        lines.append("")
-
-    def _event_payload(
-        self,
-        event: object,
-        cluster: EventCluster | None,
-        top_instruments: list[dict[str, object]],
-    ) -> dict[str, object]:
-        related_documents = []
-        if cluster is not None:
-            related_documents = [
-                self._document_payload(document)
-                for document in cluster.documents[:6]
-            ]
-
-        return {
-            "cluster_id": event.cluster_id,
-            "headline": event.headline,
-            "summary": cluster.summary if cluster is not None else "",
-            "direction": event.impact.direction.value,
-            "event_type": event.impact.event_type.value,
-            "final_score": event.final_score,
-            "heat_score": event.heat_score,
-            "importance_score": event.importance_score,
-            "confidence_score": event.confidence_score,
-            "markets": [market.value for market in event.impact.affected_markets],
-            "themes": event.impact.affected_themes,
-            "entities": cluster.entities[:8] if cluster is not None else [],
-            "sectors": cluster.sectors[:6] if cluster is not None else [],
-            "regions": cluster.regions[:6] if cluster is not None else [],
-            "rationale": event.impact.rationale,
-            "source_ids": cluster.source_ids if cluster is not None else [],
-            "doc_count": cluster.doc_count if cluster is not None else len(related_documents),
-            "first_seen_at": cluster.first_seen_at.isoformat() if cluster is not None else "",
-            "last_seen_at": cluster.last_seen_at.isoformat() if cluster is not None else "",
-            "top_instruments": top_instruments,
-            "related_documents": related_documents,
-        }
-
-    def _document_payload(self, document: NewsDocument) -> dict[str, object]:
-        summary = document.summary.strip() or self._truncate(document.body.strip(), 220)
-        return {
-            "doc_id": document.doc_id,
-            "published_at": document.published_at.isoformat(),
-            "source_id": document.source_id,
-            "title": document.title,
-            "summary": summary,
-            "themes": document.themes,
-            "entities": document.entities[:4],
-            "url": document.url,
-        }
-
-    def _enrich_tech_block(
-        self,
-        tech_block: object,
-        cluster_by_id: dict[str, EventCluster],
-    ) -> dict[str, object]:
-        """Inject related_documents into each tech signal so the dashboard can
-        render 主证据原文 without needing a separate ranked-event lookup."""
-        if not isinstance(tech_block, dict):
-            return {}
-        raw_signals = tech_block.get("signals", [])
-        if not isinstance(raw_signals, list):
-            return dict(tech_block)
-        enriched: list[dict[str, object]] = []
-        for signal in raw_signals:
-            if not isinstance(signal, dict):
-                enriched.append(signal)
-                continue
-            cid = signal.get("cluster_id")
-            cluster = cluster_by_id.get(cid) if cid else None
-            if cluster is None:
-                enriched.append(signal)
-                continue
-            evidence_ids: set[str] = set(signal.get("evidence_source_ids") or [])
-            docs = [
-                self._document_payload(doc)
-                for doc in cluster.documents[:8]
-                if not evidence_ids or doc.source_id in evidence_ids
-            ]
-            enriched.append({**signal, "related_documents": docs})
-        return {**tech_block, "signals": enriched}
-
-    def _truncate(self, value: str, limit: int) -> str:
-        if len(value) <= limit:
-            return value
-        return value[: limit - 3].rstrip() + "..."
-
-    def _load_runtime_status(self) -> dict[str, object]:
-        health_payload = self._read_json(self.output_dir / "health_status.json")
-        collect_payload = self._read_json(self.output_dir / "collect_status.json")
-        delivery_payload = self._read_json(self.output_dir / "delivery_status.json")
-        monitor_payload = self._read_json(self.output_dir / "monitor_status.json")
-
-        health_checks = {}
-        if health_payload:
-            for check in health_payload.get("checks", []):
-                name = str(check.get("name") or "").strip().lower()
-                if name:
-                    health_checks[name] = {
-                        "name": name,
-                        "status": str(check.get("status") or "unknown"),
-                        "detail": str(check.get("detail") or ""),
-                        "last_update": check.get("last_update"),
-                        "age_seconds": check.get("age_seconds"),
-                        "source_status": check.get("source_status"),
-                        "status_path": check.get("status_path"),
-                        "report_path": check.get("report_path"),
-                        "modules": check.get("modules", []),
-                    }
-
-        lines = [
-            self._runtime_line(
-                name="collect",
-                status_payload=collect_payload,
-                health_check=health_checks.get("collect"),
-            ),
-            self._runtime_line(
-                name="delivery",
-                status_payload=delivery_payload,
-                health_check=health_checks.get("delivery"),
-            ),
-            self._runtime_line(
-                name="review_api",
-                status_payload=self._read_json(self.output_dir / "review_api_status.json"),
-                health_check=health_checks.get("review_api"),
-            ),
-            self._runtime_health_line(health_payload),
-            self._runtime_cookie_line(),
-        ]
-
-        if not collect_payload and not delivery_payload and monitor_payload:
-            lines = [
-                self._runtime_line(
-                    name="monitor",
-                    status_payload=monitor_payload,
-                    health_check=health_checks.get("monitor"),
-                ),
-                self._runtime_health_line(health_payload),
-            ]
-
-        checked_at = None
-        if health_payload:
-            checked_at = health_payload.get("timestamp")
-        else:
-            available_timestamps = [
-                line["last_update"] for line in lines if line.get("last_update")
-            ]
-            checked_at = available_timestamps[0] if available_timestamps else None
-
-        return {
-            "overall_status": health_payload.get("overall_status")
-            if health_payload
-            else self._derive_runtime_overall(lines),
-            "checked_at": checked_at,
-            "lines": lines,
-        }
-
-    def _runtime_line(
-        self,
-        *,
-        name: str,
-        status_payload: dict[str, object] | None,
-        health_check: dict[str, object] | None,
-    ) -> dict[str, object]:
-        if health_check is not None:
-            return health_check
-        if status_payload is None:
-            return {
-                "name": name,
-                "status": "missing",
-                "detail": "还没有产出状态文件",
-                "last_update": None,
-                "age_seconds": None,
-                "source_status": None,
-                "status_path": str(self.output_dir / f"{name}_status.json"),
-                "report_path": None,
-                "modules": [],
-            }
-        artifacts = status_payload.get("artifacts", {})
-        return {
-            "name": name,
-            "status": str(status_payload.get("overall_status") or "unknown"),
-            "detail": "状态文件已更新",
-            "last_update": status_payload.get("timestamp"),
-            "age_seconds": None,
-            "source_status": status_payload.get("overall_status"),
-            "status_path": str(self.output_dir / f"{name}_status.json"),
-            "report_path": artifacts.get("json_report"),
-            "modules": status_payload.get("modules", []),
-        }
-
-    def _runtime_health_line(self, health_payload: dict[str, object] | None) -> dict[str, object]:
-        if health_payload is None:
-            return {
-                "name": "health",
-                "status": "missing",
-                "detail": "健康监控还没有运行",
-                "last_update": None,
-                "age_seconds": None,
-            "source_status": None,
-            "status_path": str(self.output_dir / "health_status.json"),
-            "report_path": None,
-            "modules": [],
-        }
-        return {
-            "name": "health",
-            "status": str(health_payload.get("overall_status") or "unknown"),
-            "detail": "健康监控快照",
-            "last_update": health_payload.get("timestamp"),
-            "age_seconds": None,
-            "source_status": health_payload.get("overall_status"),
-            "status_path": str(self.output_dir / "health_status.json"),
-            "report_path": None,
-            "modules": [],
-        }
-
-    def _runtime_cookie_line(self) -> dict[str, object]:
-        """Build a runtime status card showing whether weibo/xueqiu cookies are valid."""
-        import json as _json
-        from market_news.infrastructure.cookie_store import (
-            is_cookie_expired,
-            market_news_cookie_dir,
-        )
-
-        cookie_dir = market_news_cookie_dir()
-        known = [
-            ("weibo",  cookie_dir / "weibo_cookies.json"),
-            ("xueqiu", cookie_dir / "xueqiu_cookies.json"),
-        ]
-        modules: list[dict[str, object]] = []
-        any_error = False
-        all_missing = True
-
-        for name, path in known:
-            if not path.exists():
-                modules.append({"name": name, "status": "missing"})
-            else:
-                all_missing = False
-                expired, _reason = is_cookie_expired(path)
-                if expired:
-                    any_error = True
-                    expired_at = ""
-                    try:
-                        data = _json.loads(path.with_suffix(".expired").read_text(encoding="utf-8"))
-                        raw_ts = str(data.get("expired_at", ""))
-                        if raw_ts:
-                            from datetime import datetime, UTC as _UTC
-                            dt = datetime.fromisoformat(raw_ts)
-                            expired_at = dt.strftime("%m-%d %H:%M")
-                    except Exception:
-                        pass
-                    modules.append({
-                        "name": name,
-                        "status": "error",
-                        "reason": f"过期 {expired_at}".strip() if expired_at else "已过期",
-                    })
-                else:
-                    modules.append({"name": name, "status": "ok"})
-
-        if any_error:
-            overall, detail = "error", "Cookie 已过期 — 运行 market-news cookies set-<source>"
-        elif all_missing:
-            overall, detail = "missing", "Cookie 未配置 — 运行 market-news cookies set-weibo/set-xueqiu"
-        elif any(m["status"] == "missing" for m in modules):
-            overall, detail = "degraded", "部分 Cookie 未配置"
-        else:
-            overall, detail = "ok", "所有 Cookie 有效"
-
-        return {
-            "name": "cookies",
-            "status": overall,
-            "detail": detail,
-            "last_update": None,
-            "age_seconds": None,
-            "source_status": overall,
-            "status_path": str(cookie_dir),
-            "report_path": None,
-            "modules": modules,
-        }
-
-    def _derive_runtime_overall(self, lines: list[dict[str, object]]) -> str:
-        statuses = {str(line.get("status") or "unknown") for line in lines}
-        if statuses <= {"ok", "idle"}:
-            return "ok"
-        if statuses & {"error", "missing"}:
-            return "error"
-        return "degraded"
-
-    def _read_json(self, path: Path) -> dict[str, object] | None:
-        if not path.exists():
-            return None
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        return payload if isinstance(payload, dict) else None
-
-    def _build_html(self, payload: dict[str, object]) -> str:
-        payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
-        template = Template(
-            """<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -1872,7 +1144,7 @@ class MarkdownJsonReporter:
     </section>
   </div>
 
-  <script id="report-data" type="application/json">$payload_json</script>
+  <script id="report-data" type="application/json">{"run_id": "6117c29e-8e34-57ce-8b64-f9edeccd2dfd", "created_at": "2026-03-18T01:28:43.332890+00:00", "source": "local-json", "counts": {"raw_records": 6, "documents": 6, "clusters": 5, "ranked_events": 5, "ranked_instruments": 18}, "alerts": [{"cluster_id": "70169504-66b5-5004-8e71-88bb0acf9f6e", "headline": "New EV tariff proposals raise pressure on battery exporters", "level": "high", "direction": "negative", "event_type": "regulation", "is_new": false, "final_score": 64.58, "symbols": ["1211.HK", "300750.SZ", "TSLA"], "reason": "downside-sensitive, regulation, score=64.58"}], "alert_counts": {"critical": 0, "high": 1, "medium": 0, "new": 0}, "top_events": [{"cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54", "headline": "AI chip demand accelerates as cloud giants expand capex plans", "summary": "Chipmakers and compute suppliers are in focus after another round of spending upgrades by hyperscalers.", "direction": "positive", "event_type": "industry", "final_score": 71.83, "heat_score": 43.25, "importance_score": 89.95, "confidence_score": 79.17, "markets": ["US", "HK", "CN-A"], "themes": ["ai", "semiconductors", "cloud"], "entities": ["NVIDIA", "AMD"], "sectors": ["semiconductors", "technology"], "regions": ["US"], "rationale": ["AI Capex Expansion: matched ai, data center, gpu, chip demand, capex. AI capex and chip demand usually lift compute and semiconductor chains."], "source_ids": ["bloomberg", "reuters"], "doc_count": 2, "first_seen_at": "2026-03-12T07:30:00+00:00", "last_seen_at": "2026-03-12T08:05:00+00:00", "top_instruments": [{"symbol": "NVDA", "market": "US", "name": "NVIDIA", "direction": "positive", "final_score": 91.64, "reasons": ["sector overlap: semiconductors, technology", "theme overlap: ai, chips, data-center", "entity/alias match: nvidia, gpu", "preferred market: US"]}, {"symbol": "AMD", "market": "US", "name": "AMD", "direction": "positive", "final_score": 90.89, "reasons": ["sector overlap: semiconductors, technology", "theme overlap: ai, chips, data-center", "entity/alias match: gpu, amd", "preferred market: US"]}, {"symbol": "QQQ", "market": "US", "name": "Invesco QQQ Trust", "direction": "positive", "final_score": 85.45, "reasons": ["sector overlap: technology", "theme overlap: growth, ai", "preferred market: US"]}, {"symbol": "SOXX", "market": "US", "name": "iShares Semiconductor ETF", "direction": "positive", "final_score": 84.55, "reasons": ["sector overlap: semiconductors", "theme overlap: ai, chips", "preferred market: US"]}, {"symbol": "512480.SH", "market": "CN-A", "name": "Semiconductor ETF", "direction": "positive", "final_score": 83.05, "reasons": ["sector overlap: semiconductors", "theme overlap: chips, ai", "preferred market: CN-A"]}], "related_documents": [{"doc_id": "fcf13a56-ff62-543f-b799-6dc8183064d2", "published_at": "2026-03-12T08:05:00+00:00", "source_id": "bloomberg", "title": "AI chip demand accelerates as cloud giants expand capex plans", "summary": "Chipmakers and compute suppliers are in focus after another round of spending upgrades by hyperscalers.", "themes": ["ai", "semiconductors", "cloud"], "entities": ["NVIDIA", "AMD"], "url": "https://example.com/news/ai-002"}, {"doc_id": "92a93bb0-6f39-5e5c-8ca1-560d92c3ce72", "published_at": "2026-03-12T07:30:00+00:00", "source_id": "reuters", "title": "Nvidia suppliers rally as hyperscalers raise AI data center spending", "summary": "Higher GPU and server orders are expected after major cloud groups lifted 2026 capex targets.", "themes": ["ai", "semiconductors", "data-center"], "entities": ["NVIDIA"], "url": "https://example.com/news/ai-001"}]}, {"cluster_id": "d4b8ae3d-c0e7-5d4c-8572-55d792e57367", "headline": "China officials signal broader stimulus for consumption and property stabilization", "summary": "Brokerage, property and consumer names drew attention after authorities discussed additional support measures.", "direction": "positive", "event_type": "policy", "final_score": 67.71, "heat_score": 32.0, "importance_score": 91.0, "confidence_score": 73.3, "markets": ["CN-A", "HK", "US"], "themes": ["china-reopening", "brokerage", "property", "consumption"], "entities": ["China"], "sectors": ["brokerage", "property", "consumer"], "regions": ["CN", "HK"], "rationale": ["China Stimulus Support: matched china, stimulus, consumption, property, support. Broad China support typically lifts domestic cyclicals, brokers, and China-beta products."], "source_ids": ["xinhua"], "doc_count": 1, "first_seen_at": "2026-03-12T06:40:00+00:00", "last_seen_at": "2026-03-12T06:40:00+00:00", "top_instruments": [{"symbol": "600030.SH", "market": "CN-A", "name": "CITIC Securities", "direction": "positive", "final_score": 82.88, "reasons": ["sector overlap: brokerage, financials", "theme overlap: china-reopening, brokerage", "preferred market: CN-A"]}, {"symbol": "FXI", "market": "US", "name": "iShares China Large-Cap ETF", "direction": "positive", "final_score": 82.58, "reasons": ["sector overlap: brokerage, property, consumer", "theme overlap: china-reopening, china-beta", "preferred market: US"]}, {"symbol": "06066.HK", "market": "HK", "name": "CSC Financial", "direction": "positive", "final_score": 81.38, "reasons": ["sector overlap: brokerage, financials", "theme overlap: china-reopening, brokerage", "preferred market: HK"]}], "related_documents": [{"doc_id": "e9ffb7cf-2c19-5069-8cf5-7114766061f8", "published_at": "2026-03-12T06:40:00+00:00", "source_id": "xinhua", "title": "China officials signal broader stimulus for consumption and property stabilization", "summary": "Brokerage, property and consumer names drew attention after authorities discussed additional support measures.", "themes": ["china-reopening", "brokerage", "property", "consumption"], "entities": ["China"], "url": "https://example.com/news/cn-001"}]}, {"cluster_id": "df440c11-c2f9-5793-b84c-6fe31fc2abd4", "headline": "Treasury yields slide as traders price deeper Fed rate cuts", "summary": "Duration and growth products outperformed after a softer inflation read revived easing expectations.", "direction": "positive", "event_type": "macro", "final_score": 65.2, "heat_score": 32.75, "importance_score": 84.05, "confidence_score": 74.72, "markets": ["US", "HK", "CN-A"], "themes": ["rates", "duration", "growth"], "entities": ["Federal Reserve"], "sectors": ["bonds", "technology"], "regions": ["US"], "rationale": ["Fed Easing Expectations: matched fed, rate cuts, yields, treasury, easing. Lower yields often support duration assets, bonds, and growth-heavy products."], "source_ids": ["ft"], "doc_count": 1, "first_seen_at": "2026-03-12T04:15:00+00:00", "last_seen_at": "2026-03-12T04:15:00+00:00", "top_instruments": [{"symbol": "TLT", "market": "US", "name": "iShares 20+ Year Treasury Bond ETF", "direction": "positive", "final_score": 80.87, "reasons": ["sector overlap: bonds", "theme overlap: rates, duration", "entity/alias match: treasury, tlt", "preferred market: US"]}, {"symbol": "QQQ", "market": "US", "name": "Invesco QQQ Trust", "direction": "positive", "final_score": 79.92, "reasons": ["sector overlap: technology", "theme overlap: growth, ai", "preferred market: US"]}, {"symbol": "513100.SH", "market": "CN-A", "name": "Nasdaq 100 ETF", "direction": "positive", "final_score": 77.07, "reasons": ["sector overlap: technology", "theme overlap: growth, ai", "preferred market: CN-A"]}], "related_documents": [{"doc_id": "a30dcf2c-6036-5fd9-a63e-5d66d351c5bf", "published_at": "2026-03-12T04:15:00+00:00", "source_id": "ft", "title": "Treasury yields slide as traders price deeper Fed rate cuts", "summary": "Duration and growth products outperformed after a softer inflation read revived easing expectations.", "themes": ["rates", "duration", "growth"], "entities": ["Federal Reserve"], "url": "https://example.com/news/rates-001"}]}, {"cluster_id": "70169504-66b5-5004-8e71-88bb0acf9f6e", "headline": "New EV tariff proposals raise pressure on battery exporters", "summary": "Trade restrictions could hit the sentiment around electric vehicle and battery names across Asia.", "direction": "negative", "event_type": "regulation", "final_score": 64.58, "heat_score": 31.5, "importance_score": 84.9, "confidence_score": 72.35, "markets": ["HK", "CN-A", "US"], "themes": ["ev", "battery", "trade-friction"], "entities": ["BYD", "CATL"], "sectors": ["autos", "battery"], "regions": ["CN", "HK", "US"], "rationale": ["EV Tariff Pressure: matched tariff, ev, battery, trade restrictions, sourcing restrictions. Trade restrictions and tariff pressure can weigh on EV and battery exporters."], "source_ids": ["nikkei"], "doc_count": 1, "first_seen_at": "2026-03-12T03:45:00+00:00", "last_seen_at": "2026-03-12T03:45:00+00:00", "top_instruments": [{"symbol": "1211.HK", "market": "HK", "name": "BYD", "direction": "negative", "final_score": 84.38, "reasons": ["sector overlap: autos, battery", "theme overlap: ev, battery", "entity/alias match: byd", "preferred market: HK"]}, {"symbol": "300750.SZ", "market": "CN-A", "name": "CATL", "direction": "negative", "final_score": 84.23, "reasons": ["sector overlap: battery, autos", "theme overlap: ev, battery", "entity/alias match: catl", "preferred market: CN-A"]}, {"symbol": "TSLA", "market": "US", "name": "Tesla", "direction": "negative", "final_score": 81.09, "reasons": ["sector overlap: autos, technology", "theme overlap: ev, battery", "preferred market: US"]}], "related_documents": [{"doc_id": "b11e02bd-3342-526a-92d5-36a57ee29cd8", "published_at": "2026-03-12T03:45:00+00:00", "source_id": "nikkei", "title": "New EV tariff proposals raise pressure on battery exporters", "summary": "Trade restrictions could hit the sentiment around electric vehicle and battery names across Asia.", "themes": ["ev", "battery", "trade-friction"], "entities": ["BYD", "CATL"], "url": "https://example.com/news/ev-001"}]}, {"cluster_id": "1f1939a5-353c-5e86-bb01-338b97c387fb", "headline": "Oil climbs after OPEC+ extends supply cuts into the second half", "summary": "Energy stocks gained as traders priced a tighter crude market.", "direction": "positive", "event_type": "commodity", "final_score": 62.87, "heat_score": 32.5, "importance_score": 79.7, "confidence_score": 74.25, "markets": ["US", "HK", "CN-A"], "themes": ["energy", "oil"], "entities": ["OPEC+"], "sectors": ["energy", "oil-gas"], "regions": ["Global"], "rationale": ["Oil Supply Tightening: matched opec, oil, supply cuts, crude, production. Supply cuts usually support upstream oil names and energy products."], "source_ids": ["wsj"], "doc_count": 1, "first_seen_at": "2026-03-12T05:55:00+00:00", "last_seen_at": "2026-03-12T05:55:00+00:00", "top_instruments": [{"symbol": "XOM", "market": "US", "name": "Exxon Mobil", "direction": "positive", "final_score": 78.0, "reasons": ["sector overlap: energy, oil-gas", "theme overlap: oil, energy", "preferred market: US"]}, {"symbol": "0883.HK", "market": "HK", "name": "CNOOC", "direction": "positive", "final_score": 76.8, "reasons": ["sector overlap: energy, oil-gas", "theme overlap: oil, energy", "preferred market: HK"]}, {"symbol": "600028.SH", "market": "CN-A", "name": "Sinopec", "direction": "positive", "final_score": 76.35, "reasons": ["sector overlap: energy, oil-gas", "theme overlap: oil, energy", "preferred market: CN-A"]}], "related_documents": [{"doc_id": "8ddb1db3-3f20-55a0-a290-08001bc64ae0", "published_at": "2026-03-12T05:55:00+00:00", "source_id": "wsj", "title": "Oil climbs after OPEC+ extends supply cuts into the second half", "summary": "Energy stocks gained as traders priced a tighter crude market.", "themes": ["oil", "energy"], "entities": ["OPEC+"], "url": "https://example.com/news/oil-001"}]}], "positive_catalysts": [{"cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54", "headline": "AI chip demand accelerates as cloud giants expand capex plans", "summary": "Chipmakers and compute suppliers are in focus after another round of spending upgrades by hyperscalers.", "direction": "positive", "event_type": "industry", "final_score": 71.83, "heat_score": 43.25, "importance_score": 89.95, "confidence_score": 79.17, "markets": ["US", "HK", "CN-A"], "themes": ["ai", "semiconductors", "cloud"], "entities": ["NVIDIA", "AMD"], "sectors": ["semiconductors", "technology"], "regions": ["US"], "rationale": ["AI Capex Expansion: matched ai, data center, gpu, chip demand, capex. AI capex and chip demand usually lift compute and semiconductor chains."], "source_ids": ["bloomberg", "reuters"], "doc_count": 2, "first_seen_at": "2026-03-12T07:30:00+00:00", "last_seen_at": "2026-03-12T08:05:00+00:00", "top_instruments": [{"symbol": "NVDA", "market": "US", "name": "NVIDIA", "direction": "positive", "final_score": 91.64, "reasons": ["sector overlap: semiconductors, technology", "theme overlap: ai, chips, data-center", "entity/alias match: nvidia, gpu", "preferred market: US"]}, {"symbol": "AMD", "market": "US", "name": "AMD", "direction": "positive", "final_score": 90.89, "reasons": ["sector overlap: semiconductors, technology", "theme overlap: ai, chips, data-center", "entity/alias match: gpu, amd", "preferred market: US"]}, {"symbol": "QQQ", "market": "US", "name": "Invesco QQQ Trust", "direction": "positive", "final_score": 85.45, "reasons": ["sector overlap: technology", "theme overlap: growth, ai", "preferred market: US"]}, {"symbol": "SOXX", "market": "US", "name": "iShares Semiconductor ETF", "direction": "positive", "final_score": 84.55, "reasons": ["sector overlap: semiconductors", "theme overlap: ai, chips", "preferred market: US"]}, {"symbol": "512480.SH", "market": "CN-A", "name": "Semiconductor ETF", "direction": "positive", "final_score": 83.05, "reasons": ["sector overlap: semiconductors", "theme overlap: chips, ai", "preferred market: CN-A"]}], "related_documents": [{"doc_id": "fcf13a56-ff62-543f-b799-6dc8183064d2", "published_at": "2026-03-12T08:05:00+00:00", "source_id": "bloomberg", "title": "AI chip demand accelerates as cloud giants expand capex plans", "summary": "Chipmakers and compute suppliers are in focus after another round of spending upgrades by hyperscalers.", "themes": ["ai", "semiconductors", "cloud"], "entities": ["NVIDIA", "AMD"], "url": "https://example.com/news/ai-002"}, {"doc_id": "92a93bb0-6f39-5e5c-8ca1-560d92c3ce72", "published_at": "2026-03-12T07:30:00+00:00", "source_id": "reuters", "title": "Nvidia suppliers rally as hyperscalers raise AI data center spending", "summary": "Higher GPU and server orders are expected after major cloud groups lifted 2026 capex targets.", "themes": ["ai", "semiconductors", "data-center"], "entities": ["NVIDIA"], "url": "https://example.com/news/ai-001"}]}, {"cluster_id": "d4b8ae3d-c0e7-5d4c-8572-55d792e57367", "headline": "China officials signal broader stimulus for consumption and property stabilization", "summary": "Brokerage, property and consumer names drew attention after authorities discussed additional support measures.", "direction": "positive", "event_type": "policy", "final_score": 67.71, "heat_score": 32.0, "importance_score": 91.0, "confidence_score": 73.3, "markets": ["CN-A", "HK", "US"], "themes": ["china-reopening", "brokerage", "property", "consumption"], "entities": ["China"], "sectors": ["brokerage", "property", "consumer"], "regions": ["CN", "HK"], "rationale": ["China Stimulus Support: matched china, stimulus, consumption, property, support. Broad China support typically lifts domestic cyclicals, brokers, and China-beta products."], "source_ids": ["xinhua"], "doc_count": 1, "first_seen_at": "2026-03-12T06:40:00+00:00", "last_seen_at": "2026-03-12T06:40:00+00:00", "top_instruments": [{"symbol": "600030.SH", "market": "CN-A", "name": "CITIC Securities", "direction": "positive", "final_score": 82.88, "reasons": ["sector overlap: brokerage, financials", "theme overlap: china-reopening, brokerage", "preferred market: CN-A"]}, {"symbol": "FXI", "market": "US", "name": "iShares China Large-Cap ETF", "direction": "positive", "final_score": 82.58, "reasons": ["sector overlap: brokerage, property, consumer", "theme overlap: china-reopening, china-beta", "preferred market: US"]}, {"symbol": "06066.HK", "market": "HK", "name": "CSC Financial", "direction": "positive", "final_score": 81.38, "reasons": ["sector overlap: brokerage, financials", "theme overlap: china-reopening, brokerage", "preferred market: HK"]}], "related_documents": [{"doc_id": "e9ffb7cf-2c19-5069-8cf5-7114766061f8", "published_at": "2026-03-12T06:40:00+00:00", "source_id": "xinhua", "title": "China officials signal broader stimulus for consumption and property stabilization", "summary": "Brokerage, property and consumer names drew attention after authorities discussed additional support measures.", "themes": ["china-reopening", "brokerage", "property", "consumption"], "entities": ["China"], "url": "https://example.com/news/cn-001"}]}, {"cluster_id": "df440c11-c2f9-5793-b84c-6fe31fc2abd4", "headline": "Treasury yields slide as traders price deeper Fed rate cuts", "summary": "Duration and growth products outperformed after a softer inflation read revived easing expectations.", "direction": "positive", "event_type": "macro", "final_score": 65.2, "heat_score": 32.75, "importance_score": 84.05, "confidence_score": 74.72, "markets": ["US", "HK", "CN-A"], "themes": ["rates", "duration", "growth"], "entities": ["Federal Reserve"], "sectors": ["bonds", "technology"], "regions": ["US"], "rationale": ["Fed Easing Expectations: matched fed, rate cuts, yields, treasury, easing. Lower yields often support duration assets, bonds, and growth-heavy products."], "source_ids": ["ft"], "doc_count": 1, "first_seen_at": "2026-03-12T04:15:00+00:00", "last_seen_at": "2026-03-12T04:15:00+00:00", "top_instruments": [{"symbol": "TLT", "market": "US", "name": "iShares 20+ Year Treasury Bond ETF", "direction": "positive", "final_score": 80.87, "reasons": ["sector overlap: bonds", "theme overlap: rates, duration", "entity/alias match: treasury, tlt", "preferred market: US"]}, {"symbol": "QQQ", "market": "US", "name": "Invesco QQQ Trust", "direction": "positive", "final_score": 79.92, "reasons": ["sector overlap: technology", "theme overlap: growth, ai", "preferred market: US"]}, {"symbol": "513100.SH", "market": "CN-A", "name": "Nasdaq 100 ETF", "direction": "positive", "final_score": 77.07, "reasons": ["sector overlap: technology", "theme overlap: growth, ai", "preferred market: CN-A"]}], "related_documents": [{"doc_id": "a30dcf2c-6036-5fd9-a63e-5d66d351c5bf", "published_at": "2026-03-12T04:15:00+00:00", "source_id": "ft", "title": "Treasury yields slide as traders price deeper Fed rate cuts", "summary": "Duration and growth products outperformed after a softer inflation read revived easing expectations.", "themes": ["rates", "duration", "growth"], "entities": ["Federal Reserve"], "url": "https://example.com/news/rates-001"}]}, {"cluster_id": "1f1939a5-353c-5e86-bb01-338b97c387fb", "headline": "Oil climbs after OPEC+ extends supply cuts into the second half", "summary": "Energy stocks gained as traders priced a tighter crude market.", "direction": "positive", "event_type": "commodity", "final_score": 62.87, "heat_score": 32.5, "importance_score": 79.7, "confidence_score": 74.25, "markets": ["US", "HK", "CN-A"], "themes": ["energy", "oil"], "entities": ["OPEC+"], "sectors": ["energy", "oil-gas"], "regions": ["Global"], "rationale": ["Oil Supply Tightening: matched opec, oil, supply cuts, crude, production. Supply cuts usually support upstream oil names and energy products."], "source_ids": ["wsj"], "doc_count": 1, "first_seen_at": "2026-03-12T05:55:00+00:00", "last_seen_at": "2026-03-12T05:55:00+00:00", "top_instruments": [{"symbol": "XOM", "market": "US", "name": "Exxon Mobil", "direction": "positive", "final_score": 78.0, "reasons": ["sector overlap: energy, oil-gas", "theme overlap: oil, energy", "preferred market: US"]}, {"symbol": "0883.HK", "market": "HK", "name": "CNOOC", "direction": "positive", "final_score": 76.8, "reasons": ["sector overlap: energy, oil-gas", "theme overlap: oil, energy", "preferred market: HK"]}, {"symbol": "600028.SH", "market": "CN-A", "name": "Sinopec", "direction": "positive", "final_score": 76.35, "reasons": ["sector overlap: energy, oil-gas", "theme overlap: oil, energy", "preferred market: CN-A"]}], "related_documents": [{"doc_id": "8ddb1db3-3f20-55a0-a290-08001bc64ae0", "published_at": "2026-03-12T05:55:00+00:00", "source_id": "wsj", "title": "Oil climbs after OPEC+ extends supply cuts into the second half", "summary": "Energy stocks gained as traders priced a tighter crude market.", "themes": ["oil", "energy"], "entities": ["OPEC+"], "url": "https://example.com/news/oil-001"}]}], "negative_risks": [{"cluster_id": "70169504-66b5-5004-8e71-88bb0acf9f6e", "headline": "New EV tariff proposals raise pressure on battery exporters", "summary": "Trade restrictions could hit the sentiment around electric vehicle and battery names across Asia.", "direction": "negative", "event_type": "regulation", "final_score": 64.58, "heat_score": 31.5, "importance_score": 84.9, "confidence_score": 72.35, "markets": ["HK", "CN-A", "US"], "themes": ["ev", "battery", "trade-friction"], "entities": ["BYD", "CATL"], "sectors": ["autos", "battery"], "regions": ["CN", "HK", "US"], "rationale": ["EV Tariff Pressure: matched tariff, ev, battery, trade restrictions, sourcing restrictions. Trade restrictions and tariff pressure can weigh on EV and battery exporters."], "source_ids": ["nikkei"], "doc_count": 1, "first_seen_at": "2026-03-12T03:45:00+00:00", "last_seen_at": "2026-03-12T03:45:00+00:00", "top_instruments": [{"symbol": "1211.HK", "market": "HK", "name": "BYD", "direction": "negative", "final_score": 84.38, "reasons": ["sector overlap: autos, battery", "theme overlap: ev, battery", "entity/alias match: byd", "preferred market: HK"]}, {"symbol": "300750.SZ", "market": "CN-A", "name": "CATL", "direction": "negative", "final_score": 84.23, "reasons": ["sector overlap: battery, autos", "theme overlap: ev, battery", "entity/alias match: catl", "preferred market: CN-A"]}, {"symbol": "TSLA", "market": "US", "name": "Tesla", "direction": "negative", "final_score": 81.09, "reasons": ["sector overlap: autos, technology", "theme overlap: ev, battery", "preferred market: US"]}], "related_documents": [{"doc_id": "b11e02bd-3342-526a-92d5-36a57ee29cd8", "published_at": "2026-03-12T03:45:00+00:00", "source_id": "nikkei", "title": "New EV tariff proposals raise pressure on battery exporters", "summary": "Trade restrictions could hit the sentiment around electric vehicle and battery names across Asia.", "themes": ["ev", "battery", "trade-friction"], "entities": ["BYD", "CATL"], "url": "https://example.com/news/ev-001"}]}], "watchlist": [], "top_instruments": [{"cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54", "headline": "AI chip demand accelerates as cloud giants expand capex plans", "symbol": "NVDA", "market": "US", "name": "NVIDIA", "direction": "positive", "final_score": 91.64, "reasons": ["sector overlap: semiconductors, technology", "theme overlap: ai, chips, data-center", "entity/alias match: nvidia, gpu", "preferred market: US"]}, {"cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54", "headline": "AI chip demand accelerates as cloud giants expand capex plans", "symbol": "AMD", "market": "US", "name": "AMD", "direction": "positive", "final_score": 90.89, "reasons": ["sector overlap: semiconductors, technology", "theme overlap: ai, chips, data-center", "entity/alias match: gpu, amd", "preferred market: US"]}, {"cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54", "headline": "AI chip demand accelerates as cloud giants expand capex plans", "symbol": "QQQ", "market": "US", "name": "Invesco QQQ Trust", "direction": "positive", "final_score": 85.45, "reasons": ["sector overlap: technology", "theme overlap: growth, ai", "preferred market: US"]}, {"cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54", "headline": "AI chip demand accelerates as cloud giants expand capex plans", "symbol": "SOXX", "market": "US", "name": "iShares Semiconductor ETF", "direction": "positive", "final_score": 84.55, "reasons": ["sector overlap: semiconductors", "theme overlap: ai, chips", "preferred market: US"]}, {"cluster_id": "70169504-66b5-5004-8e71-88bb0acf9f6e", "headline": "New EV tariff proposals raise pressure on battery exporters", "symbol": "1211.HK", "market": "HK", "name": "BYD", "direction": "negative", "final_score": 84.38, "reasons": ["sector overlap: autos, battery", "theme overlap: ev, battery", "entity/alias match: byd", "preferred market: HK"]}, {"cluster_id": "70169504-66b5-5004-8e71-88bb0acf9f6e", "headline": "New EV tariff proposals raise pressure on battery exporters", "symbol": "300750.SZ", "market": "CN-A", "name": "CATL", "direction": "negative", "final_score": 84.23, "reasons": ["sector overlap: battery, autos", "theme overlap: ev, battery", "entity/alias match: catl", "preferred market: CN-A"]}, {"cluster_id": "654ac3dc-813a-5409-a7f6-e590abfdef54", "headline": "AI chip demand accelerates as cloud giants expand capex plans", "symbol": "512480.SH", "market": "CN-A", "name": "Semiconductor ETF", "direction": "positive", "final_score": 83.05, "reasons": ["sector overlap: semiconductors", "theme overlap: chips, ai", "preferred market: CN-A"]}, {"cluster_id": "d4b8ae3d-c0e7-5d4c-8572-55d792e57367", "headline": "China officials signal broader stimulus for consumption and property stabilization", "symbol": "600030.SH", "market": "CN-A", "name": "CITIC Securities", "direction": "positive", "final_score": 82.88, "reasons": ["sector overlap: brokerage, financials", "theme overlap: china-reopening, brokerage", "preferred market: CN-A"]}], "latest_feed": [{"doc_id": "fcf13a56-ff62-543f-b799-6dc8183064d2", "published_at": "2026-03-12T08:05:00+00:00", "source_id": "bloomberg", "title": "AI chip demand accelerates as cloud giants expand capex plans", "summary": "Chipmakers and compute suppliers are in focus after another round of spending upgrades by hyperscalers.", "themes": ["ai", "semiconductors", "cloud"], "entities": ["NVIDIA", "AMD"], "url": "https://example.com/news/ai-002"}, {"doc_id": "92a93bb0-6f39-5e5c-8ca1-560d92c3ce72", "published_at": "2026-03-12T07:30:00+00:00", "source_id": "reuters", "title": "Nvidia suppliers rally as hyperscalers raise AI data center spending", "summary": "Higher GPU and server orders are expected after major cloud groups lifted 2026 capex targets.", "themes": ["ai", "semiconductors", "data-center"], "entities": ["NVIDIA"], "url": "https://example.com/news/ai-001"}, {"doc_id": "e9ffb7cf-2c19-5069-8cf5-7114766061f8", "published_at": "2026-03-12T06:40:00+00:00", "source_id": "xinhua", "title": "China officials signal broader stimulus for consumption and property stabilization", "summary": "Brokerage, property and consumer names drew attention after authorities discussed additional support measures.", "themes": ["china-reopening", "brokerage", "property", "consumption"], "entities": ["China"], "url": "https://example.com/news/cn-001"}, {"doc_id": "8ddb1db3-3f20-55a0-a290-08001bc64ae0", "published_at": "2026-03-12T05:55:00+00:00", "source_id": "wsj", "title": "Oil climbs after OPEC+ extends supply cuts into the second half", "summary": "Energy stocks gained as traders priced a tighter crude market.", "themes": ["oil", "energy"], "entities": ["OPEC+"], "url": "https://example.com/news/oil-001"}, {"doc_id": "a30dcf2c-6036-5fd9-a63e-5d66d351c5bf", "published_at": "2026-03-12T04:15:00+00:00", "source_id": "ft", "title": "Treasury yields slide as traders price deeper Fed rate cuts", "summary": "Duration and growth products outperformed after a softer inflation read revived easing expectations.", "themes": ["rates", "duration", "growth"], "entities": ["Federal Reserve"], "url": "https://example.com/news/rates-001"}, {"doc_id": "b11e02bd-3342-526a-92d5-36a57ee29cd8", "published_at": "2026-03-12T03:45:00+00:00", "source_id": "nikkei", "title": "New EV tariff proposals raise pressure on battery exporters", "summary": "Trade restrictions could hit the sentiment around electric vehicle and battery names across Asia.", "themes": ["ev", "battery", "trade-friction"], "entities": ["BYD", "CATL"], "url": "https://example.com/news/ev-001"}], "feature_blocks": {"tech_block": {"summary": {"signal_count": 0, "tracked_assets": 25, "hot_theme_count": 0, "top_attention_score": 0.0, "lexicon_version": "2026.03-p2"}, "lexicon_release": {"version": "2026.03-p2", "published_at": "2026-03-15T19:00:00+00:00", "reviewer": "codex", "change_note": "Expanded tech lexicon with v2 themes, added unknown-term discovery workflow, and extended tech-source coverage.", "source_trace": {"report": "tech_block_extension_v2.md", "review_ticket": "tech-block-v2", "scope": ["A-share tech", "Hong Kong tech", "impact-graph rules", "unknown term discovery"]}}, "signals": [], "themes": [], "asset_ladder": []}, "lexicon_discovery": {"pending_count": 11, "saved_count": 0, "relevant_record_count": 0, "candidates": [{"text": "评估", "raw_freq": 7, "cooccurrence": {"美国": 4.0, "监管问询": 1.0}, "inferred_impact": {"aerospace-defense": 0.64, "new-materials": 0.438, "chip-design": 0.317, "advanced-manufacturing": 0.264, "compliance-risk": 0.2}, "discovery_score": 15.0, "example_snippets": ["麦迪科技:苏州麦迪斯顿医疗科技股份有限公司董事会关于独立董事独立性的专项评估意见 麦迪科技:苏州麦迪斯顿医疗科技股份有限公司董事会关于独立董事独立性的专项评估意见", "科技:苏州麦迪斯顿医疗科技股份有限公司对会计师事务所2025年度履职情况评估报告 麦迪科技:苏州麦迪斯顿医疗科技股份有限公司对会计师事务所2025年度履职情况评估报告", "交会（SEC）主席提出 可根据企业规模调整信息披露频率 目前该监管机构正评估对财报披露要求的修改 据报道，美国证交会（SEC）主席提出，可根据企业规模调整信息披露频率，目前"], "detected_at": "2026-03-17T22:50:42.739209+00:00", "status": "pending"}, {"text": "参与", "raw_freq": 6, "cooccurrence": {"美国": 4.0, "特朗普": 2.0, "总统": 2.0, "伊朗": 3.0, "监管问询": 1.0}, "inferred_impact": {"aerospace-defense": 0.808, "new-materials": 0.552, "chip-design": 0.402, "advanced-manufacturing": 0.381, "compliance-risk": 0.083}, "discovery_score": 14.037, "example_snippets": ["】美国总统特朗普17日在白宫会见到访的爱尔兰总理马丁时，再次对北约盟国不参与美国拟在霍尔木兹海峡发起的护航行动表达不满，称对北约“感到失望”。 【特朗普对北约“感到失望”】", "调，任何允许美国、以色列利用其领土作为攻击伊朗“跳板”的国家，都将被视为参与侵略，并由此成为伊朗的 【伊朗称可合法打击让美以用其领土国家】伊朗外长阿拉格齐当地时间3月17日", "，美国总统特朗普17日在白宫会见到访的爱尔兰总理马丁时，再次对北约盟国不参与美国拟在霍尔木兹海峡发起的护航行动表达不满，称对北约“感到失望”。特朗普对媒体记者称，“北约正在"], "detected_at": "2026-03-17T20:32:47.673623+00:00", "status": "pending"}, {"text": "一种", "raw_freq": 6, "cooccurrence": {"美国": 4.0, "航空航天": 2.0, "军工/无人机": 2.0}, "inferred_impact": {"aerospace-defense": 0.9, "new-materials": 0.619, "chip-design": 0.443, "advanced-manufacturing": 0.302, "autonomous-driving": 0.1}, "discovery_score": 14.037, "example_snippets": ["【工作电池中首次直接观察到锂枝晶生长与断裂全过程】在锂离子电池内部，有一种被称为“锂枝晶”的结构，形似微小的金属“尖刺”，长期以来，它一直被认为是导致电池性能衰退甚至短路", "计算】澳大利亚悉尼大学科学家研制出一款超紧凑型人工智能（AI）芯片。这是一种基于光子技术的纳米芯片，能以光速完成计算，为开发更节能的AI硬件奠定了坚实基础。相关论文发表于新", "室科学家携手，将随处可见的普通泡沫与3D打印而成的弹性支柱巧妙融合，得到一种“超级泡沫”，能量吸收能力跃升至传统材料的10倍。这项创新成本低廉、轻便耐用，有望给国防、汽车、"], "detected_at": "2026-03-17T22:58:19.581563+00:00", "status": "pending"}, {"text": "福立旺", "raw_freq": 20, "cooccurrence": {"中信": 2.0, "监管问询": 1.0}, "inferred_impact": {"aerospace-defense": 0.533, "new-materials": 0.363, "compliance-risk": 0.333, "advanced-manufacturing": 0.293, "chip-design": 0.267}, "discovery_score": 13.177, "example_snippets": ["福立旺:董事会审计委员会关于公司2026年度向特定对象发行A股股票相关事项的书面审核意见 福立旺:董事", "福立旺:关于开展票据池业务的公告 福立旺:关于开展票据池业务的公告", "福立旺:关于公司募集资金存放、管理与实际使用情况的专项报告 福立旺:关于公司募集资金存放、管理与实际使"], "detected_at": "2026-03-17T15:24:39.993985+00:00", "status": "pending"}, {"text": "霍尔木兹海峡", "raw_freq": 5, "cooccurrence": {"军工/无人机": 2.0, "美国": 4.0, "特朗普": 3.0, "总统": 4.0, "合作导入": 1.0}, "inferred_impact": {"aerospace-defense": 0.8, "new-materials": 0.545, "advanced-manufacturing": 0.409, "chip-design": 0.399, "order-momentum": 0.103}, "discovery_score": 12.925, "example_snippets": ["纽西斯通讯社17日报道，韩国国防部长官安圭伯表示，尚未收到美国方面关于向霍尔木兹海峡派兵的正式请求，目前尚未讨论是否派遣军舰赴中东地区。安圭伯当天在国会召开的国防委员会全体会议上被", "国际海事组织：霍尔木兹海峡护航不是长久之计 【国际海事组织：霍尔木兹海峡护航不是长久之计】国际海事组织警告，派军舰前往霍尔", "美方喊话护航霍尔木兹海峡 多方“打问号” 【美方喊话护航霍尔木兹海峡 多方“打问号”】美国总统特朗普近日多次提出，要欧洲"], "detected_at": "2026-03-17T15:24:39.994215+00:00", "status": "pending"}, {"text": "外交部长", "raw_freq": 5, "cooccurrence": {"袭击": 2.0, "伊朗": 2.0, "美国": 4.0, "总统": 2.0, "合作导入": 2.0, "军工/无人机": 1.0}, "inferred_impact": {"aerospace-defense": 0.746, "new-materials": 0.51, "chip-design": 0.371, "advanced-manufacturing": 0.348, "order-momentum": 0.138}, "discovery_score": 12.925, "example_snippets": ["总统特使有任何最新接触 【伊朗外长否认与美国总统特使有任何最新接触】伊朗外交部长阿拉格齐17日否认与美国总统特使威特科夫有过任何新的接触，表示双方上次接触是在美国和以色列对伊朗", "阿根廷正式退出世卫组织 【阿根廷正式退出世卫组织】阿根廷外交部长巴勃罗·基尔诺17日确认，这一南美国家退出世界卫生组织。 【阿根廷正式退出世卫组织】阿根廷外交部", "委员会会议后接受中国媒体采访】2026年3月17日，中共中央政治局委员、外交部长王毅在河内出席中越外交、国防、公安“3+3”战略对话机制首次部长级会议、主持双边合作指导委员会第"], "detected_at": "2026-03-17T18:50:38.970368+00:00", "status": "pending"}, {"text": "人员", "raw_freq": 5, "cooccurrence": {"核电/小型堆": 2.0, "袭击": 2.0, "伊朗": 4.0, "军工/无人机": 2.0, "总统": 2.0, "试点补贴": 1.0, "监管问询": 1.0, "监管/反垄断": 1.0}, "inferred_impact": {"aerospace-defense": 0.633, "new-materials": 0.496, "advanced-manufacturing": 0.391, "chip-design": 0.315, "compliance-risk": 0.133}, "discovery_score": 12.925, "example_snippets": ["17日发表声明称，当天19时左右布什尔核电站区域遭到袭击。此次袭击未造成人员、财务、技术设施损失，核电站各部门均未受损。 【伊朗原子能组织：布什尔核电站区域遭袭】伊朗原子能", "时透露，乌专家团队已抵达阿联酋、卡塔尔和沙特阿拉伯，并正前往科威特，这些人员均为精通无人机防御战术的军事专家，将协助海湾各国抵御伊朗无人机。他表示，目前该地区共有201名乌", "17日发表声明称，当天19时左右布什尔核电站区域遭到袭击。此次袭击未造成人员、财务、技术设施损失，核电站各部门均未受损。伊朗原子能组织在声明中强烈谴责这种行为严重违反了国际"], "detected_at": "2026-03-17T19:40:52.172782+00:00", "status": "pending"}, {"text": "发起", "raw_freq": 5, "cooccurrence": {"美国": 4.0, "特朗普": 2.0, "总统": 4.0, "袭击": 2.0, "伊朗": 3.0, "量产放量": 1.0, "试点补贴": 1.0}, "inferred_impact": {"aerospace-defense": 0.776, "new-materials": 0.53, "chip-design": 0.386, "advanced-manufacturing": 0.373, "order-momentum": 0.089}, "discovery_score": 12.925, "example_snippets": ["白宫会见到访的爱尔兰总理马丁时，再次对北约盟国不参与美国拟在霍尔木兹海峡发起的护航行动表达不满，称对北约“感到失望”。 【特朗普对北约“感到失望”】美国总统特朗普17日在白", "总统特使威特科夫有过任何新的接触，表示双方上次接触是在美国和以色列对伊朗发起大规模袭击之前。 【伊朗外长否认与美国总统特使有任何最新接触】伊朗外交部长阿拉格齐17日否认与美", "白宫会见到访的爱尔兰总理马丁时，再次对北约盟国不参与美国拟在霍尔木兹海峡发起的护航行动表达不满，称对北约“感到失望”。特朗普对媒体记者称，“北约正在犯一个非常愚蠢的错误”。"], "detected_at": "2026-03-17T20:32:47.673637+00:00", "status": "pending"}, {"text": "央视", "raw_freq": 7, "cooccurrence": {"美国": 3.0, "特朗普": 2.0, "总统": 3.0, "军工/无人机": 2.0, "以色列国防军": 1.0, "袭击": 1.0, "伊朗": 2.0, "量产放量": 1.0, "试点补贴": 1.0}, "inferred_impact": {"aerospace-defense": 0.791, "new-materials": 0.539, "advanced-manufacturing": 0.396, "chip-design": 0.394, "order-momentum": 0.084}, "discovery_score": 12.0, "example_snippets": ["北约的可能性 【特朗普称应考虑美国退出北约的可能性】当地时间3月17日，央视记者获悉，美国总统特朗普当日在白宫再次表达了他本人对北约的不满。特朗普表示，美国是否应退出北约“", "真主党成员。此外，以色列国防军打击了位于贝鲁特的一处真主党后勤设施。 (央视新闻)", "人死亡，2221人受伤。与此同时，以色列的袭击在全国范围内持续升级。 (央视新闻) 【本轮以黎冲突已造成黎巴嫩912人死亡】财联社3月18日电，根据黎巴嫩公共卫生部紧急行动"], "detected_at": "2026-03-17T18:07:25.339015+00:00", "status": "pending"}, {"text": "美方", "raw_freq": 4, "cooccurrence": {"军工/无人机": 2.0, "美国": 4.0, "特朗普": 2.0, "总统": 2.0}, "inferred_impact": {"aerospace-defense": 0.87, "new-materials": 0.593, "advanced-manufacturing": 0.435, "chip-design": 0.433, "autonomous-driving": 0.08}, "discovery_score": 11.61, "example_snippets": ["伯当天在国会召开的国防委员会全体会议上被问及相关问题时表示，韩方尚未收到美方关于向霍尔木兹海峡派兵的正式请求。 【韩国：未收到美国请求 未讨论派军舰赴中东】据韩国纽西斯通讯", "美方喊话护航霍尔木兹海峡 多方“打问号” 【美方喊话护航霍尔木兹海峡 多方“打问号”】美国总统特朗普", "准与美国贸易协定的程序，此前该进程曾遭阻断。欧盟议会贸易委员会将于周四就美方协议举行投票。 【欧盟将重启欧美贸易协议的批准程序】欧盟将重启批准与美国贸易协定的程序，此前该进"], "detected_at": "2026-03-17T15:24:39.994256+00:00", "status": "pending"}, {"text": "会见", "raw_freq": 4, "cooccurrence": {"袭击": 2.0, "总统": 4.0, "美国": 2.0, "特朗普": 2.0, "伊朗": 2.0}, "inferred_impact": {"aerospace-defense": 0.883, "new-materials": 0.603, "chip-design": 0.44, "advanced-manufacturing": 0.436, "order-momentum": 0.06}, "discovery_score": 11.61, "example_snippets": ["泽连斯基会见北约秘书长吕特 讨论加强乌克兰防空能力 【泽连斯基会见北约秘书长吕特 讨论加强乌克兰防空能力】当", "北约“感到失望” 【特朗普对北约“感到失望”】美国总统特朗普17日在白宫会见到访的爱尔兰总理马丁时，再次对北约盟国不参与美国拟在霍尔木兹海峡发起的护航行动表达不满，称对北约", "泽连斯基会见北约秘书长吕特 讨论加强乌克兰防空能力 【泽连斯基会见北约秘书长吕特 讨论加强乌克兰防空能力】财"], "detected_at": "2026-03-17T21:37:26.702463+00:00", "status": "pending"}], "enabled": true}}, "tech_block": {"summary": {"signal_count": 0, "tracked_assets": 25, "hot_theme_count": 0, "top_attention_score": 0.0, "lexicon_version": "2026.03-p2"}, "lexicon_release": {"version": "2026.03-p2", "published_at": "2026-03-15T19:00:00+00:00", "reviewer": "codex", "change_note": "Expanded tech lexicon with v2 themes, added unknown-term discovery workflow, and extended tech-source coverage.", "source_trace": {"report": "tech_block_extension_v2.md", "review_ticket": "tech-block-v2", "scope": ["A-share tech", "Hong Kong tech", "impact-graph rules", "unknown term discovery"]}}, "signals": [], "themes": [], "asset_ladder": []}, "lexicon_discovery": {"summary": {"pending_count": 10, "accepted_count": 82, "discovery_path": "/Users/jiao/All here/news collector/data/lexicon_discovery.jsonl", "lexicon_path": "/Users/jiao/All here/news collector/config/tech_lexicon.json"}, "candidates": [{"text": "评估", "raw_freq": 7, "cooccurrence": {"美国": 4.0, "监管问询": 1.0}, "inferred_impact": {"aerospace-defense": 0.64, "new-materials": 0.438, "chip-design": 0.317, "advanced-manufacturing": 0.264, "compliance-risk": 0.2}, "discovery_score": 15.0, "example_snippets": ["麦迪科技:苏州麦迪斯顿医疗科技股份有限公司董事会关于独立董事独立性的专项评估意见 麦迪科技:苏州麦迪斯顿医疗科技股份有限公司董事会关于独立董事独立性的专项评估意见", "科技:苏州麦迪斯顿医疗科技股份有限公司对会计师事务所2025年度履职情况评估报告 麦迪科技:苏州麦迪斯顿医疗科技股份有限公司对会计师事务所2025年度履职情况评估报告", "交会（SEC）主席提出 可根据企业规模调整信息披露频率 目前该监管机构正评估对财报披露要求的修改 据报道，美国证交会（SEC）主席提出，可根据企业规模调整信息披露频率，目前"], "detected_at": "2026-03-17T22:50:42.739209+00:00", "status": "pending"}, {"text": "参与", "raw_freq": 6, "cooccurrence": {"美国": 4.0, "特朗普": 2.0, "总统": 2.0, "伊朗": 3.0, "监管问询": 1.0}, "inferred_impact": {"aerospace-defense": 0.808, "new-materials": 0.552, "chip-design": 0.402, "advanced-manufacturing": 0.381, "compliance-risk": 0.083}, "discovery_score": 14.037, "example_snippets": ["】美国总统特朗普17日在白宫会见到访的爱尔兰总理马丁时，再次对北约盟国不参与美国拟在霍尔木兹海峡发起的护航行动表达不满，称对北约“感到失望”。 【特朗普对北约“感到失望”】", "调，任何允许美国、以色列利用其领土作为攻击伊朗“跳板”的国家，都将被视为参与侵略，并由此成为伊朗的 【伊朗称可合法打击让美以用其领土国家】伊朗外长阿拉格齐当地时间3月17日", "，美国总统特朗普17日在白宫会见到访的爱尔兰总理马丁时，再次对北约盟国不参与美国拟在霍尔木兹海峡发起的护航行动表达不满，称对北约“感到失望”。特朗普对媒体记者称，“北约正在"], "detected_at": "2026-03-17T20:32:47.673623+00:00", "status": "pending"}, {"text": "一种", "raw_freq": 6, "cooccurrence": {"美国": 4.0, "航空航天": 2.0, "军工/无人机": 2.0}, "inferred_impact": {"aerospace-defense": 0.9, "new-materials": 0.619, "chip-design": 0.443, "advanced-manufacturing": 0.302, "autonomous-driving": 0.1}, "discovery_score": 14.037, "example_snippets": ["【工作电池中首次直接观察到锂枝晶生长与断裂全过程】在锂离子电池内部，有一种被称为“锂枝晶”的结构，形似微小的金属“尖刺”，长期以来，它一直被认为是导致电池性能衰退甚至短路", "计算】澳大利亚悉尼大学科学家研制出一款超紧凑型人工智能（AI）芯片。这是一种基于光子技术的纳米芯片，能以光速完成计算，为开发更节能的AI硬件奠定了坚实基础。相关论文发表于新", "室科学家携手，将随处可见的普通泡沫与3D打印而成的弹性支柱巧妙融合，得到一种“超级泡沫”，能量吸收能力跃升至传统材料的10倍。这项创新成本低廉、轻便耐用，有望给国防、汽车、"], "detected_at": "2026-03-17T22:58:19.581563+00:00", "status": "pending"}, {"text": "福立旺", "raw_freq": 20, "cooccurrence": {"中信": 2.0, "监管问询": 1.0}, "inferred_impact": {"aerospace-defense": 0.533, "new-materials": 0.363, "compliance-risk": 0.333, "advanced-manufacturing": 0.293, "chip-design": 0.267}, "discovery_score": 13.177, "example_snippets": ["福立旺:董事会审计委员会关于公司2026年度向特定对象发行A股股票相关事项的书面审核意见 福立旺:董事", "福立旺:关于开展票据池业务的公告 福立旺:关于开展票据池业务的公告", "福立旺:关于公司募集资金存放、管理与实际使用情况的专项报告 福立旺:关于公司募集资金存放、管理与实际使"], "detected_at": "2026-03-17T15:24:39.993985+00:00", "status": "pending"}, {"text": "霍尔木兹海峡", "raw_freq": 5, "cooccurrence": {"军工/无人机": 2.0, "美国": 4.0, "特朗普": 3.0, "总统": 4.0, "合作导入": 1.0}, "inferred_impact": {"aerospace-defense": 0.8, "new-materials": 0.545, "advanced-manufacturing": 0.409, "chip-design": 0.399, "order-momentum": 0.103}, "discovery_score": 12.925, "example_snippets": ["纽西斯通讯社17日报道，韩国国防部长官安圭伯表示，尚未收到美国方面关于向霍尔木兹海峡派兵的正式请求，目前尚未讨论是否派遣军舰赴中东地区。安圭伯当天在国会召开的国防委员会全体会议上被", "国际海事组织：霍尔木兹海峡护航不是长久之计 【国际海事组织：霍尔木兹海峡护航不是长久之计】国际海事组织警告，派军舰前往霍尔", "美方喊话护航霍尔木兹海峡 多方“打问号” 【美方喊话护航霍尔木兹海峡 多方“打问号”】美国总统特朗普近日多次提出，要欧洲"], "detected_at": "2026-03-17T15:24:39.994215+00:00", "status": "pending"}, {"text": "外交部长", "raw_freq": 5, "cooccurrence": {"袭击": 2.0, "伊朗": 2.0, "美国": 4.0, "总统": 2.0, "合作导入": 2.0, "军工/无人机": 1.0}, "inferred_impact": {"aerospace-defense": 0.746, "new-materials": 0.51, "chip-design": 0.371, "advanced-manufacturing": 0.348, "order-momentum": 0.138}, "discovery_score": 12.925, "example_snippets": ["总统特使有任何最新接触 【伊朗外长否认与美国总统特使有任何最新接触】伊朗外交部长阿拉格齐17日否认与美国总统特使威特科夫有过任何新的接触，表示双方上次接触是在美国和以色列对伊朗", "阿根廷正式退出世卫组织 【阿根廷正式退出世卫组织】阿根廷外交部长巴勃罗·基尔诺17日确认，这一南美国家退出世界卫生组织。 【阿根廷正式退出世卫组织】阿根廷外交部", "委员会会议后接受中国媒体采访】2026年3月17日，中共中央政治局委员、外交部长王毅在河内出席中越外交、国防、公安“3+3”战略对话机制首次部长级会议、主持双边合作指导委员会第"], "detected_at": "2026-03-17T18:50:38.970368+00:00", "status": "pending"}, {"text": "人员", "raw_freq": 5, "cooccurrence": {"核电/小型堆": 2.0, "袭击": 2.0, "伊朗": 4.0, "军工/无人机": 2.0, "总统": 2.0, "试点补贴": 1.0, "监管问询": 1.0, "监管/反垄断": 1.0}, "inferred_impact": {"aerospace-defense": 0.633, "new-materials": 0.496, "advanced-manufacturing": 0.391, "chip-design": 0.315, "compliance-risk": 0.133}, "discovery_score": 12.925, "example_snippets": ["17日发表声明称，当天19时左右布什尔核电站区域遭到袭击。此次袭击未造成人员、财务、技术设施损失，核电站各部门均未受损。 【伊朗原子能组织：布什尔核电站区域遭袭】伊朗原子能", "时透露，乌专家团队已抵达阿联酋、卡塔尔和沙特阿拉伯，并正前往科威特，这些人员均为精通无人机防御战术的军事专家，将协助海湾各国抵御伊朗无人机。他表示，目前该地区共有201名乌", "17日发表声明称，当天19时左右布什尔核电站区域遭到袭击。此次袭击未造成人员、财务、技术设施损失，核电站各部门均未受损。伊朗原子能组织在声明中强烈谴责这种行为严重违反了国际"], "detected_at": "2026-03-17T19:40:52.172782+00:00", "status": "pending"}, {"text": "发起", "raw_freq": 5, "cooccurrence": {"美国": 4.0, "特朗普": 2.0, "总统": 4.0, "袭击": 2.0, "伊朗": 3.0, "量产放量": 1.0, "试点补贴": 1.0}, "inferred_impact": {"aerospace-defense": 0.776, "new-materials": 0.53, "chip-design": 0.386, "advanced-manufacturing": 0.373, "order-momentum": 0.089}, "discovery_score": 12.925, "example_snippets": ["白宫会见到访的爱尔兰总理马丁时，再次对北约盟国不参与美国拟在霍尔木兹海峡发起的护航行动表达不满，称对北约“感到失望”。 【特朗普对北约“感到失望”】美国总统特朗普17日在白", "总统特使威特科夫有过任何新的接触，表示双方上次接触是在美国和以色列对伊朗发起大规模袭击之前。 【伊朗外长否认与美国总统特使有任何最新接触】伊朗外交部长阿拉格齐17日否认与美", "白宫会见到访的爱尔兰总理马丁时，再次对北约盟国不参与美国拟在霍尔木兹海峡发起的护航行动表达不满，称对北约“感到失望”。特朗普对媒体记者称，“北约正在犯一个非常愚蠢的错误”。"], "detected_at": "2026-03-17T20:32:47.673637+00:00", "status": "pending"}, {"text": "央视", "raw_freq": 7, "cooccurrence": {"美国": 3.0, "特朗普": 2.0, "总统": 3.0, "军工/无人机": 2.0, "以色列国防军": 1.0, "袭击": 1.0, "伊朗": 2.0, "量产放量": 1.0, "试点补贴": 1.0}, "inferred_impact": {"aerospace-defense": 0.791, "new-materials": 0.539, "advanced-manufacturing": 0.396, "chip-design": 0.394, "order-momentum": 0.084}, "discovery_score": 12.0, "example_snippets": ["北约的可能性 【特朗普称应考虑美国退出北约的可能性】当地时间3月17日，央视记者获悉，美国总统特朗普当日在白宫再次表达了他本人对北约的不满。特朗普表示，美国是否应退出北约“", "真主党成员。此外，以色列国防军打击了位于贝鲁特的一处真主党后勤设施。 (央视新闻)", "人死亡，2221人受伤。与此同时，以色列的袭击在全国范围内持续升级。 (央视新闻) 【本轮以黎冲突已造成黎巴嫩912人死亡】财联社3月18日电，根据黎巴嫩公共卫生部紧急行动"], "detected_at": "2026-03-17T18:07:25.339015+00:00", "status": "pending"}, {"text": "美方", "raw_freq": 4, "cooccurrence": {"军工/无人机": 2.0, "美国": 4.0, "特朗普": 2.0, "总统": 2.0}, "inferred_impact": {"aerospace-defense": 0.87, "new-materials": 0.593, "advanced-manufacturing": 0.435, "chip-design": 0.433, "autonomous-driving": 0.08}, "discovery_score": 11.61, "example_snippets": ["伯当天在国会召开的国防委员会全体会议上被问及相关问题时表示，韩方尚未收到美方关于向霍尔木兹海峡派兵的正式请求。 【韩国：未收到美国请求 未讨论派军舰赴中东】据韩国纽西斯通讯", "美方喊话护航霍尔木兹海峡 多方“打问号” 【美方喊话护航霍尔木兹海峡 多方“打问号”】美国总统特朗普", "准与美国贸易协定的程序，此前该进程曾遭阻断。欧盟议会贸易委员会将于周四就美方协议举行投票。 【欧盟将重启欧美贸易协议的批准程序】欧盟将重启批准与美国贸易协定的程序，此前该进"], "detected_at": "2026-03-17T15:24:39.994256+00:00", "status": "pending"}], "accepted_terms": [{"text": "业绩预增", "term_type": "catalyst", "synonyms": ["业绩预增", "盈喜", "full year results", "profit alert", "record profit"], "synonym_count": 5, "trigger_tags": ["业绩催化"]}, {"text": "中标订单", "term_type": "catalyst", "synonyms": ["中标", "订单", "new order", "major contract", "签订"], "synonym_count": 7, "trigger_tags": ["订单催化", "小消息可炒"]}, {"text": "合作导入", "term_type": "catalyst", "synonyms": ["战略合作", "合作", "导入", "validation", "joint development"], "synonym_count": 6, "trigger_tags": ["合作催化"]}, {"text": "回购增持", "term_type": "catalyst", "synonyms": ["回购", "repurchase", "增持", "buyback"], "synonym_count": 4, "trigger_tags": ["情绪修复"]}, {"text": "涨价缺货", "term_type": "catalyst", "synonyms": ["涨价", "price increase", "缺货", "供不应求", "爆单"], "synonym_count": 5, "trigger_tags": ["供需紧张"]}, {"text": "量产放量", "term_type": "catalyst", "synonyms": ["量产", "mass production", "放量", "ramp", "扩产"], "synonym_count": 5, "trigger_tags": ["量产逻辑"]}, {"text": "DeepSeek", "term_type": "company", "synonyms": ["deepseek", "深度求索", "ds-r1", "ds-v3"], "synonym_count": 4, "trigger_tags": ["国产大模型", "模型催化"]}, {"text": "Kimi/月之暗面", "term_type": "company", "synonyms": ["kimi", "月之暗面", "moonshot ai"], "synonym_count": 3, "trigger_tags": ["国产大模型"]}, {"text": "中信", "term_type": "company", "synonyms": ["中信"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "中芯国际", "term_type": "company", "synonyms": ["中芯", "smic", "中芯国际"], "synonym_count": 3, "trigger_tags": ["晶圆代工", "国产替代"]}, {"text": "北方华创", "term_type": "company", "synonyms": ["北方华创", "naura", "刻蚀设备"], "synonym_count": 3, "trigger_tags": ["半导体设备", "国产替代"]}, {"text": "商汤科技", "term_type": "company", "synonyms": ["商汤", "sensetime", "商汤科技"], "synonym_count": 3, "trigger_tags": ["港股AI"]}, {"text": "寒武纪", "term_type": "company", "synonyms": ["寒武纪", "cambricon", "mlu"], "synonym_count": 3, "trigger_tags": ["AI芯片", "国产替代"]}, {"text": "海光信息", "term_type": "company", "synonyms": ["海光", "hygon", "海光信息", "dcu"], "synonym_count": 4, "trigger_tags": ["国产算力", "GPU替代"]}, {"text": "腾讯/微信AI", "term_type": "company", "synonyms": ["腾讯", "tencent", "weixin", "混元大模型"], "synonym_count": 4, "trigger_tags": ["港股科技", "大模型应用"]}, {"text": "阿里云/通义", "term_type": "company", "synonyms": ["阿里云", "alibaba cloud", "通义千问", "qwen"], "synonym_count": 4, "trigger_tags": ["云计算", "大模型"]}, {"text": "光刻胶/半导体材料国产化", "term_type": "localization_catalyst", "synonyms": ["光刻胶国产", "电子特气国产", "CMP材料国产", "靶材国产", "湿电子化学品"], "synonym_count": 8, "trigger_tags": ["半导体材料", "国产化催化"]}, {"text": "国产化率提升", "term_type": "localization_catalyst", "synonyms": ["国产化率", "国产替代率", "自主化比例", "进口替代进展", "供应链安全"], "synonym_count": 10, "trigger_tags": ["国产化催化", "供应链安全"]}, {"text": "大飞机零部件国产化", "term_type": "localization_catalyst", "synonyms": ["C919国产化", "机载设备国产", "航电系统国产", "飞控国产", "起落架国产"], "synonym_count": 10, "trigger_tags": ["大飞机催化", "国产化"]}, {"text": "工业软件/EDA国产化", "term_type": "localization_catalyst", "synonyms": ["EDA国产", "CAD国产", "CAE国产", "仿真软件国产", "华大九天"], "synonym_count": 10, "trigger_tags": ["EDA催化", "工业软件"]}, {"text": "党委", "term_type": "policy", "synonyms": ["党委"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "全国政协", "term_type": "policy", "synonyms": ["全国政协"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "出口管制", "term_type": "policy", "synonyms": ["出口管制", "export control", "entity list", "实体清单", "芯片禁令"], "synonym_count": 6, "trigger_tags": ["制裁风险", "国产替代催化"]}, {"text": "科技政策支持", "term_type": "policy", "synonyms": ["科技自立自强", "新质生产力", "科创板", "数字经济", "工业母机"], "synonym_count": 6, "trigger_tags": ["政策催化"]}, {"text": "试点工作", "term_type": "policy", "synonyms": ["试点工作"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "试点补贴", "term_type": "policy", "synonyms": ["试点", "补贴", "支持政策", "纳入", "立项"], "synonym_count": 7, "trigger_tags": ["政策催化"]}, {"text": "财政部", "term_type": "policy", "synonyms": ["财政部"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "金融监管", "term_type": "policy", "synonyms": ["金融监管"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "伊朗", "term_type": "risk", "synonyms": ["伊朗"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "减持/解禁", "term_type": "risk", "synonyms": ["减持", "解禁", "大股东减持", "限售股解禁", "清仓"], "synonym_count": 5, "trigger_tags": ["减持压制", "警示"]}, {"text": "减持计划", "term_type": "risk", "synonyms": ["减持计划", "share reduction plan", "reduce holdings"], "synonym_count": 3, "trigger_tags": ["筹码压力"]}, {"text": "导弹", "term_type": "risk", "synonyms": ["导弹"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "异常波动停牌", "term_type": "risk", "synonyms": ["异常波动", "停牌核查", "volatility halt"], "synonym_count": 3, "trigger_tags": ["交易风险"]}, {"text": "监管/反垄断", "term_type": "risk", "synonyms": ["反垄断", "监管处罚", "约谈", "整改", "罚款"], "synonym_count": 7, "trigger_tags": ["监管风险"]}, {"text": "监管问询", "term_type": "risk", "synonyms": ["问询", "处罚", "立案", "investigation", "penalty"], "synonym_count": 6, "trigger_tags": ["监管风险"]}, {"text": "袭击", "term_type": "risk", "synonyms": ["袭击"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "HBM", "term_type": "tech", "synonyms": ["hbm", "高带宽内存", "hbm2e", "hbm3", "hbm4"], "synonym_count": 5, "trigger_tags": ["AI内存", "算力瓶颈"]}, {"text": "OpenClaw", "term_type": "tech", "synonyms": ["OpenClaw"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "token", "term_type": "tech", "synonyms": ["token"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "信息化", "term_type": "tech", "synonyms": ["信息化"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "先进制程", "term_type": "tech", "synonyms": ["先进制程", "先进工艺", "leading node", "n3", "n2"], "synonym_count": 6, "trigger_tags": ["先进工艺", "半导体"]}, {"text": "先进封装", "term_type": "tech", "synonyms": ["先进封装", "chiplet", "先进封装产线", "co-packaged optics", "cpo"], "synonym_count": 5, "trigger_tags": ["先进封装"]}, {"text": "减速机/伺服", "term_type": "tech", "synonyms": ["减速机", "rv减速机", "谐波减速机", "伺服电机", "伺服驱动"], "synonym_count": 6, "trigger_tags": ["机器人零部件"]}, {"text": "固态电池", "term_type": "tech", "synonyms": ["固态电池", "固态锂电", "全固态", "半固态", "solid state battery"], "synonym_count": 6, "trigger_tags": ["下一代电池", "储能催化"]}, {"text": "存储芯片", "term_type": "tech", "synonyms": ["存储芯片"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "投毒", "term_type": "tech", "synonyms": ["投毒"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "智能驾驶芯片", "term_type": "tech", "synonyms": ["智驾芯片", "adas芯片", "自动驾驶芯片", "orin", "地平线"], "synonym_count": 7, "trigger_tags": ["智驾催化", "车载AI"]}, {"text": "碳化硅SiC", "term_type": "tech", "synonyms": ["碳化硅", "sic", "sic衬底", "sic外延", "第三代半导体"], "synonym_count": 7, "trigger_tags": ["第三代半导体", "新材料"]}, {"text": "碳纤维", "term_type": "tech", "synonyms": ["碳纤维", "carbon fiber", "碳纤", "t800", "t1000"], "synonym_count": 8, "trigger_tags": ["新材料", "军工需求"]}, {"text": "黄仁勋", "term_type": "tech", "synonyms": ["黄仁勋"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "Agent/具身智能", "term_type": "theme", "synonyms": ["ai agent", "具身智能", "embodied ai", "智能体", "多模态"], "synonym_count": 6, "trigger_tags": ["AI应用", "具身智能"]}, {"text": "AI医疗", "term_type": "theme", "synonyms": ["AI医疗", "医疗AI", "医疗大模型", "AI辅助诊断", "手术机器人"], "synonym_count": 14, "trigger_tags": ["AI医疗", "医械催化"]}, {"text": "AI算力", "term_type": "theme", "synonyms": ["ai算力", "算力", "compute", "gpu", "ai infrastructure"], "synonym_count": 7, "trigger_tags": ["主线题材", "算力扩张"]}, {"text": "AR/VR/空间计算", "term_type": "theme", "synonyms": ["AR眼镜", "VR头显", "混合现实", "XR", "空间计算"], "synonym_count": 16, "trigger_tags": ["XR主题", "苹果供应链"]}, {"text": "T1200", "term_type": "theme", "synonyms": ["T1200"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "人形机器人", "term_type": "theme", "synonyms": ["人形机器人", "humanoid", "optimus", "figure", "宇树"], "synonym_count": 7, "trigger_tags": ["具身智能", "机器人催化"]}, {"text": "以色列国防军", "term_type": "theme", "synonyms": ["以色列国防军"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "信创", "term_type": "theme", "synonyms": ["信创", "信息技术应用创新", "党政信创", "金融信创", "央国企信创"], "synonym_count": 13, "trigger_tags": ["政策主题", "国产替代核心"]}, {"text": "储能", "term_type": "theme", "synonyms": ["储能", "电化学储能", "钠离子电池", "磷酸铁锂", "液流电池"], "synonym_count": 7, "trigger_tags": ["储能主线", "新能源"]}, {"text": "光模块", "term_type": "theme", "synonyms": ["光模块", "optical module", "coherent optics", "800g", "1.6t"], "synonym_count": 6, "trigger_tags": ["高速互联", "弹性品种"]}, {"text": "军工/无人机", "term_type": "theme", "synonyms": ["军工", "国防", "无人机", "uav", "察打一体"], "synonym_count": 9, "trigger_tags": ["军工催化", "低空经济"]}, {"text": "国产替代", "term_type": "theme", "synonyms": ["国产替代", "local substitution", "自主可控", "domestic substitution"], "synonym_count": 4, "trigger_tags": ["政策映射"]}, {"text": "基础设施", "term_type": "theme", "synonyms": ["基础设施"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "大宗", "term_type": "theme", "synonyms": ["大宗"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "大模型", "term_type": "theme", "synonyms": ["大模型", "foundation model", "llm", "model training", "大模型应用"], "synonym_count": 5, "trigger_tags": ["应用层", "模型进展"]}, {"text": "大模型推理", "term_type": "theme", "synonyms": ["模型推理", "inference", "推理算力", "推理加速", "kv cache"], "synonym_count": 6, "trigger_tags": ["推理扩张"]}, {"text": "工业AI", "term_type": "theme", "synonyms": ["工业AI", "工业大模型", "工业互联网", "数字孪生", "智能制造"], "synonym_count": 14, "trigger_tags": ["AI落地", "制造升级"]}, {"text": "总统", "term_type": "theme", "synonyms": ["总统"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "恒生", "term_type": "theme", "synonyms": ["恒生"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "指数", "term_type": "theme", "synonyms": ["指数"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "服务器", "term_type": "theme", "synonyms": ["server", "服务器", "rack", "机柜", "liquid cooling"], "synonym_count": 6, "trigger_tags": ["服务器链"]}, {"text": "机器人", "term_type": "theme", "synonyms": ["机器人", "humanoid", "人形机器人", "robotics"], "synonym_count": 4, "trigger_tags": ["机器人"]}, {"text": "核电/小型堆", "term_type": "theme", "synonyms": ["核电", "核能", "核反应堆", "小型堆", "SMR"], "synonym_count": 13, "trigger_tags": ["AI电力", "能源主线"]}, {"text": "氢能/燃料电池", "term_type": "theme", "synonyms": ["氢能", "燃料电池", "绿氢", "蓝氢", "制氢"], "synonym_count": 11, "trigger_tags": ["氢能概念", "政策催化"]}, {"text": "港股", "term_type": "theme", "synonyms": ["港股"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "特朗普", "term_type": "theme", "synonyms": ["特朗普"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "网络安全", "term_type": "theme", "synonyms": ["网络安全", "cybersecurity", "数据安全", "信息安全", "网安"], "synonym_count": 15, "trigger_tags": ["政策催化", "安全合规"]}, {"text": "美国", "term_type": "theme", "synonyms": ["美国"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "能源", "term_type": "theme", "synonyms": ["能源"], "synonym_count": 1, "trigger_tags": ["待补充"]}, {"text": "自动驾驶", "term_type": "theme", "synonyms": ["自动驾驶", "autonomous driving", "智能驾驶", "adas"], "synonym_count": 4, "trigger_tags": ["智驾"]}, {"text": "航空航天", "term_type": "theme", "synonyms": ["航空航天", "航天", "商业航天", "低轨卫星", "星座"], "synonym_count": 9, "trigger_tags": ["商业航天", "空天经济"]}, {"text": "量子计算", "term_type": "theme", "synonyms": ["量子计算", "quantum computing", "量子纠错", "量子芯片", "超导量子比特"], "synonym_count": 12, "trigger_tags": ["量子概念", "未来技术"]}]}, "runtime_status": {"overall_status": "error", "checked_at": null, "lines": [{"name": "collect", "status": "missing", "detail": "还没有产出状态文件", "last_update": null, "age_seconds": null, "source_status": null, "status_path": "/Users/jiao/All here/news collector/reports/collect_status.json", "report_path": null, "modules": []}, {"name": "delivery", "status": "missing", "detail": "还没有产出状态文件", "last_update": null, "age_seconds": null, "source_status": null, "status_path": "/Users/jiao/All here/news collector/reports/delivery_status.json", "report_path": null, "modules": []}, {"name": "review_api", "status": "missing", "detail": "还没有产出状态文件", "last_update": null, "age_seconds": null, "source_status": null, "status_path": "/Users/jiao/All here/news collector/reports/review_api_status.json", "report_path": null, "modules": []}, {"name": "health", "status": "missing", "detail": "健康监控还没有运行", "last_update": null, "age_seconds": null, "source_status": null, "status_path": "/Users/jiao/All here/news collector/reports/health_status.json", "report_path": null, "modules": []}, {"name": "cookies", "status": "ok", "detail": "所有 Cookie 有效", "last_update": null, "age_seconds": null, "source_status": "ok", "status_path": "/Users/jiao/.market_news", "report_path": null, "modules": [{"name": "weibo", "status": "ok"}, {"name": "xueqiu", "status": "ok"}]}]}}</script>
   <script>
     (function ensureFreshUrl() {
       const url = new URL(window.location.href);
@@ -2486,35 +1758,34 @@ class MarkdownJsonReporter:
         return "<li>" + escapeHtml(item) + "</li>";
       }).join("") || "<li>暂无科技专题逻辑。</li>";
 
-      detailHost.innerHTML = `
-        <div class="tech-detail-grid">
-          <div class="detail-block">
-            <div class="detail-section-title"><strong>专题摘要</strong><span>$${escapeHtml(summaryLabel || "港A科技催化")}</span></div>
-            <div class="card-topline">
-              <span class="badge dir-$${escapeHtml(currentSignal.direction)}">$${escapeHtml(currentSignal.direction)}</span>
-              <span class="badge level-medium">$${escapeHtml(String(currentSignal.attention_tier || "watch").toUpperCase())}</span>
-              <span>docs $${escapeHtml(currentSignal.doc_count)}</span>
-              <span>$${escapeHtml(currentSignal.source_quality || "n/a")}</span>
-            </div>
-            <h3 class="headline-serif">$${escapeHtml(currentSignal.headline)}</h3>
-            <p class="summary">$${escapeHtml((currentSignal.trigger_tags || []).join("，") || "暂无触发词标签")}</p>
-            <div class="chip-row">
-              <span class="mini-tag">主证据：$${escapeHtml((currentSignal.evidence_source_ids || []).join(", ") || "n/a")}</span>
-              <span class="mini-tag">热度：$${escapeHtml((currentSignal.social_source_ids || []).join(", ") || "无")}</span>
-            </div>
-            <div class="score-strip">
-              <div class="score-box"><div class="label">Attention</div><div class="value">$${escapeHtml(score(currentSignal.trading_attention_score))}</div></div>
-              <div class="score-box"><div class="label">Spec</div><div class="value">$${escapeHtml(score(currentSignal.spec_score))}</div></div>
-              <div class="score-box"><div class="label">Heat</div><div class="value">$${escapeHtml(score(currentSignal.heat_score))}</div></div>
-            </div>
-          </div>
-          <div class="detail-block"><div class="detail-section-title"><strong>触发词</strong><span>命中的炒作因子</span></div><ul class="rationale-list">$${matchedTerms}</ul></div>
-          <div class="detail-block"><div class="detail-section-title"><strong>前沿命中</strong><span>美强中追追踪</span></div><div class="stack">$${frontierCards}</div></div>
-          <div class="detail-block"><div class="detail-section-title"><strong>影响链</strong><span>主题扩散路径</span></div><div class="stack">$${themeCards}</div></div>
-          <div class="detail-block"><div class="detail-section-title"><strong>候选标的</strong><span>港A科技映射</span></div><div class="stack">$${candidateCards}</div></div>
-          <div class="detail-block"><div class="detail-section-title"><strong>专题逻辑</strong><span>为什么值得看</span></div><ul class="rationale-list">$${rationale}</ul></div>
-          <div class="detail-block"><div class="detail-section-title"><strong>主证据原文</strong><span>只展示干净来源；微博/雪球只做热度加权</span></div><ul class="doc-list">$${linkedDocs || '<div class="empty">当前没有联动原文。</div>'}</ul></div>
-        </div>`;
+      detailHost.innerHTML = '<div class="tech-detail-grid">'
+        + '<div class="detail-block">'
+        + '<div class="detail-section-title"><strong>专题摘要</strong><span>' + escapeHtml(summaryLabel || "港A科技催化") + "</span></div>'
+        + '<div class="card-topline">'
+        + '<span class="badge dir-' + escapeHtml(currentSignal.direction) + '">' + escapeHtml(currentSignal.direction) + '</span>'
+        + '<span class="badge level-medium">' + escapeHtml(String(currentSignal.attention_tier || "watch").toUpperCase()) + '</span>'
+        + '<span>docs ' + escapeHtml(currentSignal.doc_count) + "</span>"
+        + '<span>' + escapeHtml(currentSignal.source_quality || "n/a") + "</span>"
+        + "</div>"
+        + '<h3 class="headline-serif">' + escapeHtml(currentSignal.headline) + "</h3>"
+        + '<p class="summary">' + escapeHtml((currentSignal.trigger_tags || []).join("，") || "暂无触发词标签") + "</p>"
+        + '<div class="chip-row">'
+        + '<span class="mini-tag">主证据：' + escapeHtml((currentSignal.evidence_source_ids || []).join(", ") || "n/a") + "</span>"
+        + '<span class="mini-tag">热度：' + escapeHtml((currentSignal.social_source_ids || []).join(", ") || "无") + "</span>"
+        + "</div>"
+        + '<div class="score-strip">'
+        + '<div class="score-box"><div class="label">Attention</div><div class="value">' + escapeHtml(score(currentSignal.trading_attention_score)) + "</div></div>"
+        + '<div class="score-box"><div class="label">Spec</div><div class="value">' + escapeHtml(score(currentSignal.spec_score)) + "</div></div>"
+        + '<div class="score-box"><div class="label">Heat</div><div class="value">' + escapeHtml(score(currentSignal.heat_score)) + "</div></div>"
+        + "</div>"
+        + "</div>"
+        + '<div class="detail-block"><div class="detail-section-title"><strong>触发词</strong><span>命中的炒作因子</span></div><ul class="rationale-list">' + matchedTerms + "</ul></div>"
+        + '<div class="detail-block"><div class="detail-section-title"><strong>前沿命中</strong><span>美强中追追踪</span></div><div class="stack">' + frontierCards + "</div></div>"
+        + '<div class="detail-block"><div class="detail-section-title"><strong>影响链</strong><span>主题扩散路径</span></div><div class="stack">' + themeCards + "</div></div>"
+        + '<div class="detail-block"><div class="detail-section-title"><strong>候选标的</strong><span>港A科技映射</span></div><div class="stack">' + candidateCards + "</div></div>"
+        + '<div class="detail-block"><div class="detail-section-title"><strong>专题逻辑</strong><span>为什么值得看</span></div><ul class="rationale-list">' + rationale + "</ul></div>"
+        + '<div class="detail-block"><div class="detail-section-title"><strong>主证据原文</strong><span>只展示干净来源；微博/雪球只做热度加权</span></div><ul class="doc-list">' + (linkedDocs || '<div class="empty">当前没有联动原文。</div>') + "</ul></div>"
+        + "</div>";
       detailHost.scrollTop = 0;
       const column = detailHost.closest(".right-column");
       if (column) {
@@ -3276,48 +2547,32 @@ class MarkdownJsonReporter:
       }
     }
 
-    const searchInput = document.getElementById("searchInput");
-    const lexiconCatalogInput = document.getElementById("lexiconCatalogQuery");
-    const resetButton = document.getElementById("resetButton");
+    document.getElementById("searchInput").addEventListener("input", function (event) {
+      markInteraction();
+      state.query = String(event.target.value || "").trim().toLowerCase();
+      render();
+    });
+
+    document.getElementById("lexiconCatalogQuery").addEventListener("input", function (event) {
+      markInteraction();
+      state.lexiconCatalogQuery = String(event.target.value || "").trim().toLowerCase();
+      renderTechBlock();
+      schedulePersistState();
+    });
+
+    document.getElementById("resetButton").addEventListener("click", function () {
+      markInteraction();
+      state.direction = "all";
+      state.query = "";
+      document.getElementById("searchInput").value = "";
+      render();
+    });
 
     restoreDashboardState();
-    if (searchInput) {
-      searchInput.value = state.query;
-    }
-    if (lexiconCatalogInput) {
-      lexiconCatalogInput.value = state.lexiconCatalogQuery;
-    }
+    document.getElementById("searchInput").value = state.query;
+    document.getElementById("lexiconCatalogQuery").value = state.lexiconCatalogQuery;
     renderAndRestoreIfNeeded();
     refreshDiscoveryFromApi();
-
-    if (searchInput) {
-      searchInput.addEventListener("input", function (event) {
-        markInteraction();
-        state.query = String(event.target.value || "").trim().toLowerCase();
-        render();
-      });
-    }
-
-    if (lexiconCatalogInput) {
-      lexiconCatalogInput.addEventListener("input", function (event) {
-        markInteraction();
-        state.lexiconCatalogQuery = String(event.target.value || "").trim().toLowerCase();
-        renderTechBlock();
-        schedulePersistState();
-      });
-    }
-
-    if (resetButton) {
-      resetButton.addEventListener("click", function () {
-        markInteraction();
-        state.direction = "all";
-        state.query = "";
-        if (searchInput) {
-          searchInput.value = "";
-        }
-        render();
-      });
-    }
 
     document.addEventListener("click", function () {
       markInteraction();
@@ -3345,11 +2600,7 @@ class MarkdownJsonReporter:
       window.location.replace(url.toString());
     }
     function renderRefreshText() {
-      const refreshText = document.getElementById("refreshText");
-      if (!refreshText) {
-        return;
-      }
-      refreshText.textContent = hasRecentInteraction()
+      document.getElementById("refreshText").textContent = hasRecentInteraction()
         ? "检测到你最近在操作，自动刷新已延后，停止操作后会再等 60 秒刷新。"
         : ("页面每 60 秒自动刷新一次，距下次刷新 " + countdown + " 秒");
     }
@@ -3370,22 +2621,3 @@ class MarkdownJsonReporter:
   </script>
 </body>
 </html>
-"""
-        )
-        return template.substitute(payload_json=payload_json)
-
-
-def refresh_runtime_status_views(report_path: Path) -> None:
-    if not report_path.exists():
-        return
-    try:
-        payload = json.loads(report_path.read_text(encoding="utf-8"))
-    except Exception:
-        return
-    if not isinstance(payload, dict):
-        return
-    reporter = MarkdownJsonReporter(report_path.parent)
-    payload["runtime_status"] = reporter._load_runtime_status()
-    report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    html_path = report_path.with_name("latest_dashboard.html")
-    html_path.write_text(reporter._build_html(payload), encoding="utf-8")

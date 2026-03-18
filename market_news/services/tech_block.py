@@ -8,24 +8,32 @@ import re
 from typing import Any
 
 from market_news.common import clamp, tokenize, unique_preserve, utcnow
-from market_news.domain.models import Direction, EventCluster, PipelineSnapshot, RankedEvent, RankedInstrument
+from market_news.domain.models import Direction, EventCluster, EventType, PipelineSnapshot, RankedEvent, RankedInstrument
 from market_news.services.tech_lexicon_store import VersionedTechLexiconStore
 
 
 SOURCE_CREDIBILITY_MULTIPLIER = {
     "cls": 1.20,
-    "gelonghui": 1.05,
-    "tmtpost": 0.95,
-    "xinhua-finance": 1.20,
-    "xinhua-tech": 1.20,
+    "eastmoney-724": 1.12,
+    "eastmoney-focus": 1.18,
     "eastmoney-ann": 1.15,
     "eastmoney-news": 1.05,
+    "xinhua-finance": 1.20,
+    "xinhua-tech": 1.20,
+    "csrc_home": 1.10,
+    "gov-miit": 1.15,
+    "gov-most": 1.12,
+    "gov-ndrc": 1.10,
     "36kr": 0.92,
-    "sina-tech": 1.00,
-    "huxiu": 0.98,
-    "ifeng-tech": 0.98,
-    "xueqiu": 0.92,
-    "weibo": 0.80,
+    "huxiu": 0.90,
+    "tmtpost": 0.88,
+    "gelonghui": 1.00,
+    "ifeng-tech": 0.90,
+    "reuters-tech": 1.05,
+    "sec_press": 1.00,
+    "hkex_news": 1.00,
+    "weibo": 0.72,
+    "xueqiu": 0.78,
 }
 
 
@@ -41,7 +49,9 @@ class AHShareTechFeatureBlock:
         theme_aliases: dict[str, list[str]],
         priority_themes: dict[str, float],
         graph_edges: list[dict[str, Any]],
+        frontier_map: list[dict[str, Any]] | None = None,
         lexicon_release: dict[str, Any] | None = None,
+        source_policy: dict[str, Any] | None = None,
         top_n: int = 8,
     ) -> None:
         self.universe = universe
@@ -50,9 +60,47 @@ class AHShareTechFeatureBlock:
         self.theme_aliases = theme_aliases
         self.priority_themes = priority_themes
         self.graph_edges = graph_edges
+        self.frontier_map = list(frontier_map or [])
         self.lexicon_release = dict(lexicon_release or {})
+        self.source_policy = dict(source_policy or {})
         self.top_n = top_n
         self._token_regex_cache: dict[str, re.Pattern[str]] = {}
+        self.evidence_source_ids = {
+            str(item).strip().lower()
+            for item in self.source_policy.get("evidence_source_ids", [])
+            if str(item).strip()
+        }
+        self.official_source_ids = {
+            str(item).strip().lower()
+            for item in self.source_policy.get("official_source_ids", [])
+            if str(item).strip()
+        }
+        self.social_source_ids = {
+            str(item).strip().lower()
+            for item in self.source_policy.get("social_source_ids", [])
+            if str(item).strip()
+        }
+        self.vetted_wire_source_ids = {
+            str(item).strip().lower()
+            for item in self.source_policy.get("vetted_wire_source_ids", [])
+            if str(item).strip()
+        }
+        self.excluded_source_ids = {
+            str(item).strip().lower()
+            for item in self.source_policy.get("excluded_source_ids", [])
+            if str(item).strip()
+        }
+        self.min_evidence_docs = int(self.source_policy.get("min_evidence_docs", 0))
+        self.min_evidence_source_trust = float(self.source_policy.get("min_evidence_source_trust", 0.0))
+        self.min_attention_if_single_evidence_doc = float(
+            self.source_policy.get("min_attention_if_single_evidence_doc", 0.0)
+        )
+        self.allowed_event_types = {
+            str(item).strip().lower()
+            for item in self.source_policy.get("allowed_event_types", [])
+            if str(item).strip()
+        }
+        self.require_candidate_assets = bool(self.source_policy.get("require_candidate_assets", False))
 
     @classmethod
     def from_files(
@@ -62,6 +110,8 @@ class AHShareTechFeatureBlock:
         lexicon_path: Path,
         lexicon_release_path: Path | None = None,
         graph_path: Path,
+        frontier_map_path: Path | None = None,
+        config_path: Path | None = None,
         top_n: int = 8,
     ) -> "AHShareTechFeatureBlock":
         universe = json.loads(universe_path.read_text(encoding="utf-8"))
@@ -82,6 +132,16 @@ class AHShareTechFeatureBlock:
             lexicon = json.loads(lexicon_path.read_text(encoding="utf-8"))
             lexicon_release_payload = {}
         graph_payload = json.loads(graph_path.read_text(encoding="utf-8"))
+        frontier_map: list[dict[str, Any]] = []
+        if frontier_map_path is not None and frontier_map_path.exists():
+            loaded_frontier_map = json.loads(frontier_map_path.read_text(encoding="utf-8"))
+            if isinstance(loaded_frontier_map, list):
+                frontier_map = loaded_frontier_map
+        source_policy = {}
+        if config_path is not None and config_path.exists():
+            config_payload = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(config_payload, dict):
+                source_policy = config_payload.get("source_policy", {})
         return cls(
             universe=universe,
             lexicon=lexicon,
@@ -89,7 +149,9 @@ class AHShareTechFeatureBlock:
             theme_aliases=graph_payload.get("theme_aliases", {}),
             priority_themes=graph_payload.get("priority_themes", {}),
             graph_edges=graph_payload.get("edges", []),
+            frontier_map=frontier_map,
             lexicon_release=lexicon_release_payload,
+            source_policy=source_policy if isinstance(source_policy, dict) else {},
             top_n=top_n,
         )
 
@@ -152,12 +214,45 @@ class AHShareTechFeatureBlock:
         event: RankedEvent,
         mapped_instruments: list[RankedInstrument],
     ) -> dict[str, Any] | None:
-        text = cluster.combined_text.lower()
-        cluster_entities = {item.lower() for item in cluster.entities}
+        # T4 = social-only sources; a cluster that consists *entirely* of T4 sources
+        # cannot produce an independent signal — it can only add heat weight to a
+        # signal that already has at least one evidence document.
+        # Use self.social_source_ids (from source_policy config) so that adding a new
+        # social source to config automatically extends the T4 guard without code changes.
+        # Fall back to a minimal hardcoded set when source_policy is not configured.
+        t4_sources = self.social_source_ids or {"weibo", "xueqiu", "guba"}
+        if cluster.source_ids and all(str(source_id).lower() in t4_sources for source_id in cluster.source_ids):
+            return None
+
+        is_unknown_event = event.impact.event_type is EventType.UNKNOWN
+        if self.allowed_event_types and event.impact.event_type.value not in self.allowed_event_types:
+            if not is_unknown_event:
+                return None
+
+        evidence_docs, social_docs = self._partition_documents(cluster)
+        if self.min_evidence_docs and len(evidence_docs) < self.min_evidence_docs:
+            return None
+
+        evidence_source_ids = unique_preserve([doc.source_id for doc in evidence_docs])
+        social_source_ids = unique_preserve([doc.source_id for doc in social_docs])
+        if self.evidence_source_ids and not evidence_source_ids:
+            return None
+
+        text_parts = [cluster.headline, cluster.summary]
+        text_parts.extend(document.combined_text for document in evidence_docs)
+        text = "\n".join(part for part in text_parts if part).lower()
+        cluster_entities = {
+            item.lower()
+            for item in (
+                list(cluster.entities)
+                + [entity for document in evidence_docs for entity in document.entities]
+            )
+        }
         cluster_sectors = {item.lower() for item in cluster.sectors}
         theme_scores: dict[str, float] = defaultdict(float)
         theme_drivers: dict[str, list[str]] = defaultdict(list)
         matched_terms: list[dict[str, Any]] = []
+        frontier_hits: list[dict[str, Any]] = []
         trigger_tags: list[str] = []
         positive_bias = 0.0
         negative_bias = 0.0
@@ -198,6 +293,31 @@ class AHShareTechFeatureBlock:
                 theme_scores[theme] += contribution
                 theme_drivers[theme].append(entry["canonical_text"])
 
+        for entry in self.frontier_map:
+            hit_terms = [
+                keyword
+                for keyword in entry.get("cn_breakthrough_keywords", [])
+                if self._contains(text, keyword)
+            ]
+            if not hit_terms:
+                continue
+            bonus = float(entry.get("breakthrough_bonus", 0.2))
+            for theme in entry.get("impact_themes", []):
+                theme_scores[theme] += bonus
+                theme_drivers[theme].append(f"frontier:{entry['frontier_id']}")
+            frontier_hits.append(
+                {
+                    "frontier_id": entry["frontier_id"],
+                    "cn_label": entry["cn_label"],
+                    "gap_level": entry.get("gap_level", "unknown"),
+                    "matched_keywords": hit_terms[:4],
+                    "bonus": round(bonus, 3),
+                }
+            )
+            positive_bias += bonus * 0.8
+            spec_raw += bonus * 1.2
+            importance_raw += bonus * 1.0
+
         for theme, alias_strength, driver in self._match_theme_aliases(cluster, text):
             theme_scores[theme] += alias_strength
             theme_drivers[theme].append(driver)
@@ -232,6 +352,8 @@ class AHShareTechFeatureBlock:
             base_event_score=event.final_score,
         )
 
+        if self.require_candidate_assets and not candidate_assets:
+            return None
         if not candidate_assets and len(active_themes) < 2:
             return None
 
@@ -250,7 +372,7 @@ class AHShareTechFeatureBlock:
         # (≈half-fill) so modest viral posts score well without needing tens of thousands.
         raw_discussion = sum(
             int(doc.metadata.get("discussion_count", 0))
-            for doc in cluster.documents
+            for doc in social_docs
         )
         social_signal = clamp(math.log1p(raw_discussion) / math.log1p(500))
 
@@ -261,7 +383,11 @@ class AHShareTechFeatureBlock:
         catalyst_density = clamp(spec_raw / 2.8)
         theme_focus = clamp(sum(min(score, 1.0) for score in propagated_scores.values()) / 5.0)
         propagation_breadth = clamp(len([score for score in propagated_scores.values() if score >= 0.2]) / 5.0)
-        small_signal_bonus = 1.0 if cluster.doc_count <= 2 and catalyst_density >= 0.35 else 0.45
+        evidence_doc_count = len(evidence_docs)
+        official_doc_count = sum(
+            1 for doc in evidence_docs if doc.source_id.lower() in self.official_source_ids
+        )
+        small_signal_bonus = 1.0 if evidence_doc_count <= 2 and catalyst_density >= 0.35 else 0.45
 
         spec_score = 100 * (
             0.34 * catalyst_density
@@ -278,7 +404,7 @@ class AHShareTechFeatureBlock:
             0.35 * event_heat
             + 0.17 * freshness
             + 0.13 * clamp(heat_raw / 2.4)
-            + 0.10 * clamp(cluster.doc_count / 3)
+            + 0.10 * clamp(evidence_doc_count / 3)
             + 0.15 * burst_freshness
             + 0.10 * social_signal
         )
@@ -292,10 +418,27 @@ class AHShareTechFeatureBlock:
             + 0.35 * heat_score
             + 0.25 * importance_score
         )
-        trading_attention_score *= clamp(self._source_multiplier(cluster), 0.7, 1.25)
+        source_multiplier = self._source_multiplier(evidence_source_ids)
+        confirmation_bonus = 1.0
+        if len(evidence_source_ids) >= 2:
+            confirmation_bonus += 0.06 * min(2, len(evidence_source_ids) - 1)
+        if official_doc_count:
+            confirmation_bonus += 0.06
+        trading_attention_score *= clamp(source_multiplier * confirmation_bonus, 0.7, 1.30)
 
         if trading_attention_score < 45 and not any(item["score"] >= 58 for item in candidate_assets):
             return None
+        if (
+            len(evidence_source_ids) <= 1
+            and official_doc_count == 0
+            and trading_attention_score < self.min_attention_if_single_evidence_doc
+        ):
+            return None
+        if is_unknown_event and official_doc_count == 0:
+            evidence_set = {source_id.lower() for source_id in evidence_source_ids}
+            vetted_only = bool(evidence_set) and evidence_set.issubset(self.vetted_wire_source_ids)
+            if not vetted_only or not candidate_assets:
+                return None
 
         rationale = unique_preserve(
             [
@@ -303,6 +446,16 @@ class AHShareTechFeatureBlock:
                 for item in matched_terms[:4]
             ]
             + [item["path"] for item in active_themes if item.get("path")]
+            + [
+                "primary evidence: " + ", ".join(evidence_source_ids)
+                if evidence_source_ids
+                else "primary evidence unavailable"
+            ]
+            + [
+                "social heat only: " + ", ".join(social_source_ids)
+                if social_source_ids
+                else ""
+            ]
             + [
                 f"top candidate assets: {', '.join(asset['symbol'] for asset in candidate_assets[:3])}"
                 if candidate_assets
@@ -317,6 +470,14 @@ class AHShareTechFeatureBlock:
             "event_type": event.impact.event_type.value,
             "doc_count": cluster.doc_count,
             "source_ids": cluster.source_ids,
+            "evidence_source_ids": evidence_source_ids,
+            "social_source_ids": social_source_ids,
+            "evidence_doc_count": evidence_doc_count,
+            "social_doc_count": len(social_docs),
+            "source_quality": self._source_quality(
+                official_doc_count=official_doc_count,
+                evidence_source_ids=evidence_source_ids,
+            ),
             "trading_attention_score": round(trading_attention_score, 2),
             "spec_score": round(spec_score, 2),
             "heat_score": round(heat_score, 2),
@@ -327,6 +488,7 @@ class AHShareTechFeatureBlock:
             "attention_tier": self._signal_tier(trading_attention_score),
             "trigger_tags": unique_preserve(trigger_tags)[:6],
             "matched_terms": matched_terms[:8],
+            "frontier_hits": frontier_hits,
             "activated_themes": active_themes,
             "candidate_assets": candidate_assets[:6],
             "rationale": rationale,
@@ -512,13 +674,48 @@ class AHShareTechFeatureBlock:
             return "warm"
         return "watch"
 
+    def _partition_documents(self, cluster: EventCluster) -> tuple[list[Any], list[Any]]:
+        evidence_docs: list[Any] = []
+        social_docs: list[Any] = []
+        for document in cluster.documents:
+            source_id = document.source_id.lower()
+            if source_id in self.excluded_source_ids:
+                continue
+            if source_id in self.social_source_ids:
+                social_docs.append(document)
+                continue
+            if self.evidence_source_ids:
+                if (
+                    source_id in self.evidence_source_ids
+                    and float(document.source_trust) >= self.min_evidence_source_trust
+                ):
+                    evidence_docs.append(document)
+                continue
+            evidence_docs.append(document)
+        return evidence_docs, social_docs
+
+    def _source_quality(self, *, official_doc_count: int, evidence_source_ids: list[str]) -> str:
+        evidence_source_count = len(evidence_source_ids)
+        if official_doc_count and evidence_source_count >= 2:
+            return "official-confirmed"
+        if official_doc_count:
+            return "official-led"
+        if evidence_source_count and all(
+            source_id.lower() in self.vetted_wire_source_ids
+            for source_id in evidence_source_ids
+        ):
+            return "vetted-wire"
+        if evidence_source_count >= 2:
+            return "multi-source"
+        return "single-wire"
+
     def _theme_label(self, theme: str) -> str:
         return self.theme_labels.get(theme, theme.replace("-", " ").title())
 
-    def _source_multiplier(self, cluster: EventCluster) -> float:
+    def _source_multiplier(self, source_ids: list[str]) -> float:
         multipliers = [
             SOURCE_CREDIBILITY_MULTIPLIER.get(source_id, 1.0)
-            for source_id in cluster.source_ids
+            for source_id in source_ids
         ]
         return max(multipliers) if multipliers else 1.0
 

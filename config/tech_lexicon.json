@@ -1502,5 +1502,674 @@
     "heat_weight": 0.6,
     "importance_weight": 0.65,
     "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "试点工作",
+    "term_type": "policy",
+    "synonyms": [
+      "试点工作"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "energy-storage": 0.41,
+      "new-materials": 0.31,
+      "domestic-substitution": 0.29,
+      "advanced-manufacturing": 0.275,
+      "model-applications": 0.2
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "信息化",
+    "term_type": "tech",
+    "synonyms": [
+      "信息化"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "energy-storage": 0.41,
+      "new-materials": 0.31,
+      "domestic-substitution": 0.29,
+      "advanced-manufacturing": 0.275,
+      "model-applications": 0.2
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "财政部",
+    "term_type": "policy",
+    "synonyms": [
+      "财政部"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "energy-storage": 0.41,
+      "new-materials": 0.31,
+      "domestic-substitution": 0.29,
+      "advanced-manufacturing": 0.275,
+      "model-applications": 0.2
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "黄仁勋",
+    "term_type": "tech",
+    "synonyms": [
+      "黄仁勋"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "ai-compute": 0.742,
+      "server-chain": 0.562,
+      "data-center": 0.42,
+      "optical-interconnect": 0.353,
+      "chip-design": 0.178
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "基础设施",
+    "term_type": "theme",
+    "synonyms": [
+      "基础设施"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "ai-compute": 0.389,
+      "server-chain": 0.291,
+      "chip-design": 0.23,
+      "optical-interconnect": 0.196,
+      "data-center": 0.187
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "党委",
+    "term_type": "policy",
+    "synonyms": [
+      "党委"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "domestic-substitution": 0.88,
+      "capital-support": 0.82,
+      "ai-compute": 0.55
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "投毒",
+    "term_type": "tech",
+    "synonyms": [
+      "投毒"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "model-applications": 0.577,
+      "ai-compute": 0.415,
+      "cloud-software": 0.348,
+      "robotics": 0.136,
+      "compliance-risk": 0.1
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "金融监管",
+    "term_type": "policy",
+    "synonyms": [
+      "金融监管"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "domestic-substitution": 0.425,
+      "capital-support": 0.392,
+      "ai-compute": 0.255,
+      "model-applications": 0.231,
+      "robotics": 0.132
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "袭击",
+    "term_type": "risk",
+    "synonyms": [
+      "袭击"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 1.0,
+      "new-materials": 0.683,
+      "chip-design": 0.497,
+      "advanced-manufacturing": 0.471
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "token",
+    "term_type": "tech",
+    "synonyms": [
+      "token"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "model-applications": 0.458,
+      "ai-compute": 0.262,
+      "cloud-software": 0.218,
+      "robotics": 0.154,
+      "order-momentum": 0.144
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "伊朗",
+    "term_type": "risk",
+    "synonyms": [
+      "伊朗"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 1.0,
+      "new-materials": 0.684,
+      "chip-design": 0.496,
+      "advanced-manufacturing": 0.44
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "存储芯片",
+    "term_type": "tech",
+    "synonyms": [
+      "存储芯片"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "ai-compute": 0.577,
+      "server-chain": 0.388,
+      "data-center": 0.288,
+      "optical-interconnect": 0.19,
+      "model-applications": 0.167
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "大宗",
+    "term_type": "theme",
+    "synonyms": [
+      "大宗"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "supply-overhang": 0.857,
+      "domestic-substitution": 0.126,
+      "capital-support": 0.117,
+      "ai-compute": 0.079
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "能源",
+    "term_type": "theme",
+    "synonyms": [
+      "能源"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.75,
+      "new-materials": 0.525,
+      "chip-design": 0.36,
+      "order-momentum": 0.18,
+      "model-applications": 0.06
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "中信",
+    "term_type": "company",
+    "synonyms": [
+      "中信"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.8,
+      "new-materials": 0.544,
+      "advanced-manufacturing": 0.44,
+      "chip-design": 0.4,
+      "domestic-substitution": 0.116
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "美国",
+    "term_type": "theme",
+    "synonyms": [
+      "美国"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.8,
+      "new-materials": 0.548,
+      "chip-design": 0.396,
+      "advanced-manufacturing": 0.33,
+      "autonomous-driving": 0.2
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "特朗普",
+    "term_type": "theme",
+    "synonyms": [
+      "特朗普"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 1.0,
+      "new-materials": 0.68,
+      "advanced-manufacturing": 0.55,
+      "chip-design": 0.5
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "总统",
+    "term_type": "theme",
+    "synonyms": [
+      "总统"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.75,
+      "new-materials": 0.51,
+      "advanced-manufacturing": 0.413,
+      "chip-design": 0.375,
+      "order-momentum": 0.18
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "以色列国防军",
+    "term_type": "theme",
+    "synonyms": [
+      "以色列国防军"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 1.0,
+      "new-materials": 0.68,
+      "advanced-manufacturing": 0.55,
+      "chip-design": 0.5
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "全国政协",
+    "term_type": "policy",
+    "synonyms": [
+      "全国政协"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "chip-design": 0.65,
+      "domestic-substitution": 0.6,
+      "advanced-process": 0.5,
+      "order-momentum": 0.45
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "港股",
+    "term_type": "theme",
+    "synonyms": [
+      "港股"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "model-applications": 0.611,
+      "cloud-software": 0.583,
+      "ai-compute": 0.439,
+      "robotics": 0.111,
+      "order-momentum": 0.109
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "恒生",
+    "term_type": "theme",
+    "synonyms": [
+      "恒生"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "model-applications": 0.611,
+      "cloud-software": 0.583,
+      "ai-compute": 0.439,
+      "robotics": 0.111,
+      "order-momentum": 0.109
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "指数",
+    "term_type": "theme",
+    "synonyms": [
+      "指数"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "model-applications": 0.611,
+      "cloud-software": 0.583,
+      "ai-compute": 0.439,
+      "robotics": 0.111,
+      "order-momentum": 0.109
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "国产化率提升",
+    "term_type": "localization_catalyst",
+    "synonyms": [
+      "国产化率",
+      "国产替代率",
+      "自主化比例",
+      "进口替代进展",
+      "供应链安全",
+      "卡脖子突破",
+      "断供替代",
+      "零部件国产",
+      "国产化率提升",
+      "自主可控比例"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "domestic-substitution": 1.0,
+      "order-momentum": 0.72,
+      "advanced-manufacturing": 0.55
+    },
+    "trigger_tags": [
+      "国产化催化",
+      "供应链安全"
+    ],
+    "base_confidence": 0.82,
+    "spec_weight": 0.92,
+    "heat_weight": 0.65,
+    "importance_weight": 0.9,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "光刻胶/半导体材料国产化",
+    "term_type": "localization_catalyst",
+    "synonyms": [
+      "光刻胶国产",
+      "电子特气国产",
+      "CMP材料国产",
+      "靶材国产",
+      "湿电子化学品",
+      "高纯试剂国产",
+      "掩模版国产",
+      "抛光液国产"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "semicap-equipment": 0.85,
+      "domestic-substitution": 1.0,
+      "chip-manufacturing": 0.65,
+      "new-materials": 0.55
+    },
+    "trigger_tags": [
+      "半导体材料",
+      "国产化催化"
+    ],
+    "base_confidence": 0.8,
+    "spec_weight": 0.9,
+    "heat_weight": 0.62,
+    "importance_weight": 0.88,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "大飞机零部件国产化",
+    "term_type": "localization_catalyst",
+    "synonyms": [
+      "C919国产化",
+      "机载设备国产",
+      "航电系统国产",
+      "飞控国产",
+      "起落架国产",
+      "APU国产",
+      "大飞机供应商",
+      "C929",
+      "国产大飞机配套",
+      "机体结构国产"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 1.0,
+      "domestic-substitution": 0.85,
+      "advanced-manufacturing": 0.72,
+      "order-momentum": 0.68
+    },
+    "trigger_tags": [
+      "大飞机催化",
+      "国产化"
+    ],
+    "base_confidence": 0.82,
+    "spec_weight": 0.88,
+    "heat_weight": 0.75,
+    "importance_weight": 0.85,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "工业软件/EDA国产化",
+    "term_type": "localization_catalyst",
+    "synonyms": [
+      "EDA国产",
+      "CAD国产",
+      "CAE国产",
+      "仿真软件国产",
+      "华大九天",
+      "广立微",
+      "概伦电子",
+      "中望软件",
+      "工业软件自主",
+      "全流程EDA"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "domestic-substitution": 1.0,
+      "cloud-software": 0.78,
+      "chip-design": 0.55,
+      "order-momentum": 0.5
+    },
+    "trigger_tags": [
+      "EDA催化",
+      "工业软件"
+    ],
+    "base_confidence": 0.8,
+    "spec_weight": 0.88,
+    "heat_weight": 0.6,
+    "importance_weight": 0.85,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "导弹",
+    "term_type": "risk",
+    "synonyms": [
+      "导弹"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.982,
+      "new-materials": 0.671,
+      "chip-design": 0.488,
+      "advanced-manufacturing": 0.458,
+      "autonomous-driving": 0.018
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
   }
 ]

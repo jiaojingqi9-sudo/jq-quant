@@ -80,14 +80,14 @@ class HtmlCollectorTest(unittest.TestCase):
         self.assertIn("weibo", names)
         self.assertIn("xueqiu", names)
         self.assertIn("cls", names)
-        self.assertIn("tmtpost", names)
-        self.assertIn("gelonghui-hk", names)
         self.assertIn("csrc-home-updates", names)
         self.assertIn("eastmoney", names)
         self.assertIn("cninfo-latest-announcements", names)
         self.assertIn("xinhua-tech-home", names)
-        self.assertIn("huxiu-tech-channel", names)
-        self.assertIn("ifeng-tech-home", names)
+        self.assertNotIn("tmtpost", names)
+        self.assertNotIn("gelonghui-hk", names)
+        self.assertNotIn("huxiu-tech-channel", names)
+        self.assertNotIn("ifeng-tech-home", names)
 
     def test_cls_collector_falls_back_to_html_page(self) -> None:
         pages = {
@@ -148,7 +148,7 @@ class HtmlCollectorTest(unittest.TestCase):
         self.assertIn("飞速创新", records[0].body)
         self.assertEqual(records[0].metadata["direct_codes"], ["03355"])
 
-    def test_eastmoney_collector_maps_announcements_and_news(self) -> None:
+    def test_eastmoney_collector_maps_announcements_news_and_focus(self) -> None:
         pages = {
             "https://np-anotice-stock.eastmoney.com/api/security/ann?page_index=1&page_size=50&ann_type=A&client_source=web": json.dumps(
                 {
@@ -171,25 +171,31 @@ class HtmlCollectorTest(unittest.TestCase):
                     }
                 }
             ),
-            "https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_1_.html": 'var ajaxResult={"LivesList":[{"id":"N1","newsid":"N1","title":"AI服务器景气度持续上行","digest":"多家厂商扩产，服务器链关注度提升。","url_w":"https://finance.eastmoney.com/a/202603150001.html","showtime":"2026-03-15 11:00:00","column":"100,102","newstype":"1"}]};'
+            "https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_1_.html": 'var ajaxResult={"LivesList":[{"id":"N1","newsid":"N1","title":"AI服务器景气度持续上行","digest":"多家厂商扩产，服务器链关注度提升。","url_w":"https://finance.eastmoney.com/a/202603150001.html","showtime":"2026-03-15 11:00:00","column":"100,102","newstype":"1"}]};',
+            "https://newsapi.eastmoney.com/kuaixun/v1/getlist_350_ajaxResult_50_1_.html": '{"LivesList":[{"id":"F1","newsid":"F1","title":"焦点板块：国产光刻胶突破带动半导体材料链活跃","digest":"ArF光刻胶量产预期升温。","url_w":"https://finance.eastmoney.com/a/202603150002.html","showtime":"2026-03-15 11:05:00","column":"350","newstype":"1"}]}var ajaxResult='
         }
 
         collector = EastmoneyCollector(
             _FakeHttpClient(pages),
-            endpoints=["ann-a", "news"],
+            endpoints=["ann-a", "news", "focus"],
             max_records_per_endpoint=5,
         )
 
         records = collector.collect()
 
-        self.assertEqual(len(records), 2)
+        self.assertEqual(len(records), 3)
         ann_record = next(item for item in records if item.source_id == "eastmoney-ann")
-        news_record = next(item for item in records if item.source_id == "eastmoney-news")
+        news_record = next(item for item in records if item.source_id == "eastmoney-724")
+        focus_record = next(item for item in records if item.source_id == "eastmoney-focus")
         self.assertEqual(ann_record.external_id, "AN123")
         self.assertEqual(ann_record.metadata["stock_code"], "300001")
         self.assertIn("重大合同", ann_record.metadata["column_names"])
         self.assertEqual(news_record.external_id, "N1")
         self.assertIn("服务器链", news_record.summary)
+        self.assertEqual(news_record.metadata["endpoint"], "news")
+        self.assertEqual(focus_record.external_id, "F1")
+        self.assertEqual(focus_record.metadata["endpoint"], "focus")
+        self.assertAlmostEqual(focus_record.source_trust, 0.88, places=2)
 
     def test_rss_collector_strips_html_from_summary(self) -> None:
         pages = {

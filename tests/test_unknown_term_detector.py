@@ -117,6 +117,22 @@ class UnknownTermDetectorTest(unittest.TestCase):
             pending = detector.list_pending(discovery_path, min_score=2.0, limit=10)
             self.assertEqual([row["text"] for row in pending], ["碳纤维"])
 
+    def test_preferred_sources_filter_out_social_and_small_media_records(self) -> None:
+        detector = UnknownTermDetector(
+            lexicon=[],
+            config={
+                "preferred_source_ids": ["cls", "eastmoney-news", "cninfo_latest"],
+                "exclude_source_ids": ["weibo", "xueqiu", "36kr"],
+            },
+        )
+        records = [
+            RawNewsRecord(source_id="weibo", title="热议AI算力", summary="", body=""),
+            RawNewsRecord(source_id="36kr", title="AI创业公司融资", summary="", body=""),
+            RawNewsRecord(source_id="cls", title="【财联社】算力链持续活跃", summary="", body=""),
+        ]
+        relevant = detector.select_relevant_records(records)
+        self.assertEqual([record.source_id for record in relevant], ["cls"])
+
 
 if __name__ == "__main__":
     unittest.main()

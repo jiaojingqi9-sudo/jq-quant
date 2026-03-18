@@ -776,6 +776,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reject_parser.add_argument("term", help="Discovered term text to reject.")
     reject_parser.add_argument(
+        "--lexicon",
+        type=Path,
+        default=project_root() / "config" / "tech_lexicon.json",
+        help="Current tech lexicon JSON file.",
+    )
+    reject_parser.add_argument(
+        "--discovery-file",
+        type=Path,
+        default=default_lexicon_discovery_path(),
+        help="JSONL file used to store unknown-term discoveries.",
+    )
+
+    remove_parser = lexicon_subparsers.add_parser(
+        "remove",
+        help="Remove an already accepted term from the formal tech lexicon.",
+    )
+    remove_parser.add_argument("term", help="Canonical term or synonym to remove from the lexicon.")
+    remove_parser.add_argument(
+        "--lexicon",
+        type=Path,
+        default=project_root() / "config" / "tech_lexicon.json",
+        help="Current tech lexicon JSON file.",
+    )
+    remove_parser.add_argument(
         "--discovery-file",
         type=Path,
         default=default_lexicon_discovery_path(),
@@ -967,6 +991,8 @@ def build_pipeline(
         lexicon_path=project_root() / "config" / "tech_lexicon.json",
         lexicon_release_path=project_root() / "config" / "tech_lexicon_release.json",
         graph_path=project_root() / "config" / "tech_impact_graph.json",
+        frontier_map_path=project_root() / "config" / "tech_frontier_map.json",
+        config_path=default_tech_block_config_path(),
         top_n=min(top, 8),
     )
     return MarketNewsPipeline(
@@ -1640,11 +1666,49 @@ def run_lexicon(args: argparse.Namespace) -> int:
         print(f"Discovery file: {args.discovery_file}")
         return 0
 
-    if args.lexicon_command in {"add", "reject"}:
-        lexicon_payload = _load_json(project_root() / "config" / "tech_lexicon.json")
+    if args.lexicon_command in {"add", "reject", "remove"}:
+        lexicon_payload = _load_json(args.lexicon)
         if not isinstance(lexicon_payload, list):
             raise SystemExit("Tech lexicon file must be a JSON array.")
         detector = UnknownTermDetector(lexicon=lexicon_payload, config=detector_config)
+
+        if args.lexicon_command == "reject":
+            candidates = detector.load(args.discovery_file)
+            candidate = next(
+                (
+                    item
+                    for item in candidates
+                    if str(item.get("text", "")).strip().lower() == args.term.strip().lower()
+                ),
+                None,
+            )
+            if candidate is None:
+                raise SystemExit(f"Candidate not found in discovery file: {args.term}")
+            if detector.set_status(args.discovery_file, args.term, "rejected"):
+                print(f"Rejected: {args.term}")
+                print(f"Discovery file: {args.discovery_file}")
+                return 0
+            raise SystemExit(f"Failed to reject candidate: {args.term}")
+
+        if args.lexicon_command == "remove":
+            lowered = args.term.strip().lower()
+            filtered = [
+                item
+                for item in lexicon_payload
+                if not (
+                    str(item.get("canonical_text", "")).strip().lower() == lowered
+                    or any(str(synonym).strip().lower() == lowered for synonym in item.get("synonyms", []))
+                )
+            ]
+            if len(filtered) == len(lexicon_payload):
+                raise SystemExit(f"Lexicon term not found: {args.term}")
+            _write_json(args.lexicon, filtered)
+            detector.set_status(args.discovery_file, args.term, "rejected")
+            print(f"Removed lexicon entry: {args.term}")
+            print(f"Lexicon: {args.lexicon}")
+            print(f"Discovery file: {args.discovery_file}")
+            return 0
+
         candidates = detector.load(args.discovery_file)
         candidate = next(
             (
@@ -1656,13 +1720,6 @@ def run_lexicon(args: argparse.Namespace) -> int:
         )
         if candidate is None:
             raise SystemExit(f"Candidate not found in discovery file: {args.term}")
-
-        if args.lexicon_command == "reject":
-            if detector.set_status(args.discovery_file, args.term, "rejected"):
-                print(f"Rejected: {args.term}")
-                print(f"Discovery file: {args.discovery_file}")
-                return 0
-            raise SystemExit(f"Failed to reject candidate: {args.term}")
 
         known_terms = {
             str(item.get("canonical_text", "")).strip().lower()

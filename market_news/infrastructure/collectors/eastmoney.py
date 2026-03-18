@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import json
 import logging
+import re
 from typing import Any
 
 from market_news.common import utcnow
@@ -11,6 +12,20 @@ from market_news.infrastructure.http import UrllibHttpClient
 
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_TECH_FOCUS_INCLUDE_PATTERNS = [
+    "AI|人工智能|算力|大模型|芯片|半导体|光模块|CPO|液冷|服务器|数据中心|智算|GPU|存储",
+    "机器人|人形机器人|工业AI|机器视觉|自动驾驶|智驾|低空经济|无人机|卫星",
+    "信创|网络安全|工业软件|云计算|量子|AR|VR|新材料|碳纤维|储能|固态电池|核电",
+]
+
+DEFAULT_TECH_FOCUS_BOOST_PATTERNS = [
+    "板块|异动|焦点|概念|热点|题材|产业链|催化|景气|涨停|领涨|放量|订单|中标|量产|突破"
+]
+
+DEFAULT_TECH_FOCUS_EXCLUDE_PATTERNS = [
+    "期货|原油|黄金|中东|航母|护航|足球|机场|海峡|农业|大米|咖啡|甲醇|伊朗|乌克兰|导弹|空袭|战事|冲突"
+]
 
 
 class EastmoneyCollector:
@@ -22,6 +37,7 @@ class EastmoneyCollector:
     }
     NEWS_ENDPOINTS = {
         "news": "https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_{page_size}_1_.html",
+        "focus": "https://newsapi.eastmoney.com/kuaixun/v1/getlist_350_ajaxResult_{page_size}_1_.html",
         "global": "https://globalnewsapi.eastmoney.com/api/News/GetNewsList?type=102&pageindex=1&pagesize={page_size}",
     }
 
@@ -33,12 +49,27 @@ class EastmoneyCollector:
         page_size: int = 50,
         global_page_size: int = 30,
         max_records_per_endpoint: int = 20,
+        tech_focus_include_patterns: list[str] | None = None,
+        tech_focus_boost_patterns: list[str] | None = None,
+        tech_focus_exclude_patterns: list[str] | None = None,
     ) -> None:
         self.http_client = http_client
-        self.endpoints = list(endpoints or ["ann-a", "ann-h", "news", "global"])
+        self.endpoints = list(endpoints or ["ann-a", "ann-h", "news", "focus", "global"])
         self.page_size = page_size
         self.global_page_size = global_page_size
         self.max_records_per_endpoint = max_records_per_endpoint
+        self.tech_focus_include_patterns = [
+            re.compile(pattern, flags=re.IGNORECASE)
+            for pattern in (tech_focus_include_patterns or DEFAULT_TECH_FOCUS_INCLUDE_PATTERNS)
+        ]
+        self.tech_focus_boost_patterns = [
+            re.compile(pattern, flags=re.IGNORECASE)
+            for pattern in (tech_focus_boost_patterns or DEFAULT_TECH_FOCUS_BOOST_PATTERNS)
+        ]
+        self.tech_focus_exclude_patterns = [
+            re.compile(pattern, flags=re.IGNORECASE)
+            for pattern in (tech_focus_exclude_patterns or DEFAULT_TECH_FOCUS_EXCLUDE_PATTERNS)
+        ]
 
     def collect(self) -> list[RawNewsRecord]:
         records: list[RawNewsRecord] = []
@@ -121,11 +152,17 @@ class EastmoneyCollector:
         )
         payload = self._parse_news_payload(endpoint, response.text)
         items = []
-        if endpoint == "news":
+        if endpoint in ("news", "focus"):
             items = payload.get("LivesList", [])
         else:
             items = payload.get("data", {}).get("list", []) or payload.get("list", [])
         records: list[RawNewsRecord] = []
+        source_id_map = {
+            "news": ("eastmoney-724", 0.82),
+            "focus": ("eastmoney-focus", 0.88),
+            "global": ("eastmoney-news", 0.82),
+        }
+        source_id, source_trust = source_id_map.get(endpoint, ("eastmoney-news", 0.82))
         for item in items[: self.max_records_per_endpoint]:
             title = str(item.get("title") or item.get("TITLE") or "").strip()
             if not title:
@@ -147,7 +184,7 @@ class EastmoneyCollector:
             )
             records.append(
                 RawNewsRecord(
-                    source_id="eastmoney-news",
+                    source_id=source_id,
                     external_id=article_id or title,
                     title=title,
                     summary=(body[:160].strip() if body else title),
@@ -155,7 +192,7 @@ class EastmoneyCollector:
                     url=url,
                     published_at=published_at,
                     language="zh",
-                    source_trust=0.82,
+                    source_trust=source_trust,
                     entities=[],
                     themes=[],
                     regions=["CN", "HK"],
@@ -168,10 +205,33 @@ class EastmoneyCollector:
             )
         return records
 
+    def _is_tech_focus(self, *, title: str, body: str) -> bool:
+        text = " ".join(part for part in [title, body] if part).strip()
+        if not text:
+            return False
+        if any(pattern.search(text) for pattern in self.tech_focus_exclude_patterns):
+            return False
+        include_hit = any(pattern.search(text) for pattern in self.tech_focus_include_patterns)
+        return include_hit
+
+    def _is_focus_boosted(self, *, title: str, body: str) -> bool:
+        text = " ".join(part for part in [title, body] if part).strip()
+        if not text:
+            return False
+        if any(pattern.search(text) for pattern in self.tech_focus_exclude_patterns):
+            return False
+        return any(pattern.search(text) for pattern in self.tech_focus_boost_patterns) or len(title) <= 24
+
     def _parse_news_payload(self, endpoint: str, text: str) -> dict[str, Any]:
         cleaned = text.strip().lstrip("\ufeff").strip()
-        if endpoint == "news" and cleaned.startswith("var ajaxResult="):
+        if endpoint in {"news", "focus"} and cleaned.startswith("var ajaxResult="):
             cleaned = cleaned[len("var ajaxResult="):]
+        if endpoint in {"news", "focus"} and "}var ajaxResult=" in cleaned:
+            cleaned = cleaned.split("}var ajaxResult=", 1)[0] + "}"
+        if endpoint == "global" and cleaned.lower().startswith("<!doctype html"):
+            return {}
+        if cleaned and cleaned[0] not in "{[":
+            return {}
         cleaned = cleaned.rstrip(";").strip()
         payload = json.loads(cleaned)
         if not isinstance(payload, dict):

@@ -500,6 +500,41 @@
       "relation": "adjacent-theme",
       "rationale": "手术机器人是AI医疗的硬件载体，技术路径高度重叠",
       "hop": 1
+    },
+    {
+      "source": "xinchuang",
+      "target": "industrial-ai",
+      "weight": 0.52,
+      "relation": "demand-chain",
+      "rationale": "信创推动国产工业软件替代，工业AI是核心落地场景"
+    },
+    {
+      "source": "nuclear-power",
+      "target": "domestic-substitution",
+      "weight": 0.68,
+      "relation": "policy-spillover",
+      "rationale": "核电核心设备（主泵、DCS、蒸汽发生器）国产化要求极高"
+    },
+    {
+      "source": "ai-healthcare",
+      "target": "order-momentum",
+      "weight": 0.55,
+      "relation": "demand-chain",
+      "rationale": "医疗器械注册证获批/集采中标直接带来大额订单"
+    },
+    {
+      "source": "quantum-computing",
+      "target": "cybersecurity",
+      "weight": 0.48,
+      "relation": "adjacent-theme",
+      "rationale": "量子通信/量子密钥是下一代网络安全基础设施"
+    },
+    {
+      "source": "energy-storage",
+      "target": "new-materials",
+      "weight": 0.52,
+      "relation": "supply-chain",
+      "rationale": "固态电解质、钠电正极、硅碳负极等需要新材料突破支撑"
     }
   ]
 }

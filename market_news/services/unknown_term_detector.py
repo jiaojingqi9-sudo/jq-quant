@@ -160,6 +160,16 @@ class UnknownTermDetector:
         self.token_min_length = int(self.config.get("token_min_length", 2))
         self.token_max_length = int(self.config.get("token_max_length", 10))
         self.min_top_impact_score = float(self.config.get("min_top_impact_score", 0.35))
+        self.preferred_source_ids = {
+            str(item).strip().lower()
+            for item in self.config.get("preferred_source_ids", [])
+            if str(item).strip()
+        }
+        self.exclude_source_ids = {
+            str(item).strip().lower()
+            for item in self.config.get("exclude_source_ids", [])
+            if str(item).strip()
+        }
         self._known_terms = self._build_known_term_index(self.lexicon)
         self._known_variants = sorted(self._known_terms, key=len, reverse=True)
         self._entry_lookup = self._build_entry_lookup(self.lexicon)
@@ -234,6 +244,10 @@ class UnknownTermDetector:
             if not text:
                 continue
             source_id = str(record.source_id).lower()
+            if source_id in self.exclude_source_ids:
+                continue
+            if self.preferred_source_ids and source_id not in self.preferred_source_ids:
+                continue
             theme_text = " ".join(str(theme).lower() for theme in record.themes)
             if any(hint in source_id for hint in TECH_DISCOVERY_SOURCE_HINTS):
                 relevant.append(record)
