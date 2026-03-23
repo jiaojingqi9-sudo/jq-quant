@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "taa-futu"
-version = "0.1.0"
+version = "2.0.0"
 description = "Reproduce a practical tactical asset allocation paper and route signals into Futu simulated trading."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"

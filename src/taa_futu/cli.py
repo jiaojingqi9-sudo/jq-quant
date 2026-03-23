@@ -18,12 +18,14 @@ from .cascade_sleeve import cascade_trade_symbols, fetch_cascade_daily_frames, g
 from .config import load_settings
 from .costs import build_trade_cost_model
 from .fusion_intraday import FusionIntradayStrategy
+from .ofim_intraday import OfimIntradayStrategy
 from .futu_gateway import FutuPaperTrader, FutuTradeError
 from .market_data import FutuQuoteDataProvider, HistoricalDataProvider, MarketDataError, YFinanceDataProvider
 from .research import (
     run_account_replay,
     run_cascade_replay,
     run_exact_execution_replay,
+    run_ofim_intraday_replay,
     run_fusion_intraday_replay,
     run_strategy_stack_replay,
 )
@@ -41,9 +43,9 @@ def _build_parser() -> argparse.ArgumentParser:
     backtest.add_argument("--end", default=None)
     backtest.add_argument(
         "--strategy",
-        choices=("baseline", "fusion", "cascade", "stack", "account", "exact"),
+        choices=("baseline", "fusion", "ofim", "cascade", "stack", "account", "exact"),
         default="baseline",
-        help="Choose baseline monthly, Fusion replay, Claude/Cascade replay, stack replay, account replay, or exact execution replay.",
+        help="Choose baseline monthly, Fusion replay, OFIM replay, Claude/Cascade replay, stack replay, account replay, or exact execution replay.",
     )
     backtest.add_argument("--initial-capital", type=float, default=1_000_000.0)
 
@@ -61,6 +63,9 @@ def _build_parser() -> argparse.ArgumentParser:
     fusion = subparsers.add_parser("fusion-intraday", help="Run the proprietary Futu intraday hybrid strategy.")
     fusion.add_argument("--submit", action="store_true", help="Actually submit Futu orders.")
 
+    ofim = subparsers.add_parser("ofim-intraday", help="Run the OFIM intraday order-flow strategy (L2 heavy).")
+    ofim.add_argument("--submit", action="store_true", help="Actually submit Futu orders.")
+
     cascade = subparsers.add_parser("cascade-strategy", help="Run the Claude/Cascade sleeve through the shared Futu routing.")
     cascade.add_argument("--submit", action="store_true", help="Actually submit Futu orders.")
 
@@ -69,6 +74,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("watchdog", help="Run the stability watchdog for the trading engine.")
     subparsers.add_parser("real-check", help="Check whether REAL trading is fully armed but do not submit any order.")
+    subparsers.add_parser("reset-simulate", help="Reset the Futu paper-trading account to initial state (zero positions, full starting cash). Only valid in SIMULATE mode.")
+    subparsers.add_parser("cancel-orders", help="Cancel all open (pending) orders on the account via Futu API.")
+    flatten = subparsers.add_parser("flatten-all", help="Cancel all open orders then sell all positions to cash. Dry-run by default; add --submit to place real orders.")
+    flatten.add_argument("--submit", action="store_true", help="Actually submit the SELL orders (default: dry-run only).")
 
     dashboard = subparsers.add_parser("dashboard", help="Launch the local monitoring and historical simulation dashboard.")
     dashboard.add_argument("--port", type=int, default=8501)
@@ -143,6 +152,104 @@ def cmd_real_check(_args: argparse.Namespace) -> None:
         print(f"SIMULATE account reachable. total_assets={float(account['total_assets']):.2f}")
 
 
+def cmd_reset_simulate(_args: argparse.Namespace) -> None:
+    """The Futu OpenAPI v10 SDK does not expose a programmatic reset endpoint.
+    Print instructions for resetting the simulated account manually in the Futu/Moomoo app.
+    """
+    print("=" * 60)
+    print("模拟账户重置 / Simulate Account Reset")
+    print("=" * 60)
+    print()
+    print("富途 OpenAPI v10 Python SDK 不支持通过 API 重置模拟账户。")
+    print("请在富途牛牛 / Moomoo 客户端中手动操作：")
+    print()
+    print("  1. 打开富途牛牛 / Moomoo App")
+    print("  2. 进入 「交易」→「模拟交易」")
+    print("  3. 右上角「设置」→「重置账户」")
+    print("  4. 确认重置（账户将恢复初始资金，持仓清零）")
+    print("  5. 重置完成后重启自动交易程序")
+    print()
+    print("The Futu OpenAPI v10 Python SDK does not support resetting the")
+    print("simulated account via API. Please reset manually in the Futu/Moomoo app:")
+    print("  Trade → Simulate Trading → Settings (top-right) → Reset Account")
+    print()
+
+
+def cmd_cancel_orders(_args: argparse.Namespace) -> None:
+    """Cancel every open (pending) order on the account via the Futu cancel_all_order API."""
+    settings = load_settings()
+    with FutuPaperTrader(settings) as trader:
+        acc_id = trader.resolve_trade_account()
+        n = trader.cancel_all_open_orders(acc_id)
+        if n == 0:
+            print("No open orders to cancel.")
+        else:
+            print(f"Cancelled {n} open order(s) successfully.")
+
+
+def cmd_flatten_all(args: argparse.Namespace) -> None:
+    """Cancel all open orders, then sell every current position to move the account to 100% cash.
+
+    Step 1: cancel_all_open_orders (unblocks the auto-trader)
+    Step 2: plan_rebalance({}) → SELL orders for every held symbol
+    Dry-run by default; use --submit to actually place the orders.
+    """
+    settings = load_settings()
+    with FutuPaperTrader(settings) as trader:
+        acc_id = trader.resolve_trade_account()
+
+        # Step 1: cancel any pending orders so plan_rebalance gets fresh state
+        open_orders = trader.get_open_orders(acc_id)
+        if not open_orders.empty:
+            print(f"Cancelling {len(open_orders)} open order(s) first...")
+            trader.cancel_all_open_orders(acc_id)
+            print("Open orders cancelled.")
+        else:
+            print("No open orders to cancel.")
+
+        positions = trader.get_positions(acc_id)
+        account = trader.get_account_info(acc_id)
+
+        if positions.empty:
+            print("No open positions — account is already in cash.")
+            return
+
+        print(f"\n{_trade_destination_label(settings)} account  total_assets={float(account['total_assets']):.2f}")
+        print(f"Open positions: {len(positions)}")
+        position_rows = [
+            [row["code"], int(float(row["qty"])), int(float(row.get("can_sell_qty", row["qty"]))),
+             float(row.get("cost_price", 0)), float(row.get("market_val", 0))]
+            for _, row in positions.iterrows()
+        ]
+        _print_table(position_rows, ["symbol", "qty", "can_sell_qty", "cost_price", "market_val"])
+        print()
+
+        # Step 2: sell everything
+        _account, orders = trader.plan_rebalance({})
+
+        if not orders:
+            print("plan_rebalance returned no orders (positions may be unsellable right now).")
+            return
+
+        order_rows = [
+            [o.code, o.side, o.quantity, o.limit_price, o.reference_price, o.current_qty, o.target_qty]
+            for o in orders
+        ]
+        _print_table(order_rows, ["symbol", "side", "qty", "limit_price", "last_price", "current_qty", "target_qty"])
+
+        if not args.submit:
+            print()
+            print(f"Dry run — {len(orders)} SELL order(s) planned but NOT submitted.")
+            print(f"Re-run with --submit to place {_trade_destination_label(settings)} orders.")
+            return
+
+        print()
+        print(f"Submitting {len(orders)} SELL order(s)...")
+        results = trader.submit_orders(orders)
+        _print_table(results.values.tolist(), list(results.columns))
+        print("Done. All positions submitted for liquidation.")
+
+
 def cmd_backtest(args: argparse.Namespace) -> None:
     settings = load_settings()
     start = args.start or settings.start_date
@@ -207,6 +314,23 @@ def cmd_backtest(args: argparse.Namespace) -> None:
                 _progress(f"[fusion replay] {index}/{len(unique_symbols)} fetched {code}: {len(frame)} rows")
             _progress("[fusion replay] running replay ...")
             replay = run_fusion_intraday_replay(price_frames, settings, initial_capital=initial_capital)
+        elif args.strategy == "ofim":
+            symbols = list(dict.fromkeys([settings.ofim_benchmark, *settings.ofim_universe]))
+            _progress(f"[ofim replay] loading minute bars for {len(symbols)} symbols ...")
+            price_frames = {}
+            for index, code in enumerate(symbols, start=1):
+                _progress(f"[ofim replay] {index}/{len(symbols)} fetching {code} K_1M ...")
+                frame = trader.request_history_klines(
+                    code,
+                    start=start,
+                    end=end,
+                    ktype="K_1M",
+                    session="RTH",
+                )
+                price_frames[code] = frame
+                _progress(f"[ofim replay] {index}/{len(symbols)} fetched {code}: {len(frame)} rows")
+            _progress("[ofim replay] running replay ...")
+            replay = run_ofim_intraday_replay(price_frames, settings, initial_capital=initial_capital)
         elif args.strategy == "cascade":
             symbols = list(dict.fromkeys(cascade_trade_symbols(settings)))
             _progress(f"[cascade replay] loading daily bars for {len(symbols)} symbols ...")
@@ -231,7 +355,7 @@ def cmd_backtest(args: argparse.Namespace) -> None:
             _progress("[cascade replay] running replay ...")
             replay = run_cascade_replay(price_frames, settings, initial_capital=initial_capital)
         elif args.strategy == "stack":
-            baseline_weight, fusion_weight, cascade_weight, reserve_weight = stack_allocations(settings)
+            baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = stack_allocations(settings)
             fusion_settings = effective_fusion_settings(settings)
             _progress(f"[stack replay] current stack: {stack_label(settings)}")
 
@@ -257,18 +381,19 @@ def cmd_backtest(args: argparse.Namespace) -> None:
                 baseline_prices = pd.DataFrame(daily_series).sort_index().dropna(how="all") if daily_series else pd.DataFrame()
 
             fusion_symbols = [fusion_settings.fusion_benchmark, *fusion_settings.fusion_universe]
-            unique_symbols = list(dict.fromkeys(fusion_symbols))
+            ofim_symbols = [settings.ofim_benchmark, *settings.ofim_universe] if ofim_weight > 0 else []
+            unique_symbols = list(dict.fromkeys([*fusion_symbols, *ofim_symbols]))
             start_date = _parse_iso_date(start)
             end_date = _parse_iso_date(end, fallback=datetime.now(ZoneInfo(settings.auto_trader_market_timezone)).date())
             if start_date and end_date:
                 span_days = (end_date - start_date).days + 1
                 _progress(
-                    f"[stack replay] loading fusion minute bars for {len(unique_symbols)} symbols "
+                    f"[stack replay] loading fusion/ofim minute bars for {len(unique_symbols)} symbols "
                     f"from {start_date.isoformat()} to {end_date.isoformat()} ({span_days} days)."
                 )
             fusion_frames = {}
             for index, code in enumerate(unique_symbols, start=1):
-                _progress(f"[stack replay] fusion {index}/{len(unique_symbols)} fetching {code} K_1M ...")
+                _progress(f"[stack replay] fusion/ofim {index}/{len(unique_symbols)} fetching {code} K_1M ...")
                 frame = trader.request_history_klines(
                     code,
                     start=start,
@@ -277,7 +402,7 @@ def cmd_backtest(args: argparse.Namespace) -> None:
                     session="RTH",
                 )
                 fusion_frames[code] = frame
-                _progress(f"[stack replay] fusion {index}/{len(unique_symbols)} fetched {code}: {len(frame)} rows")
+                _progress(f"[stack replay] fusion/ofim {index}/{len(unique_symbols)} fetched {code}: {len(frame)} rows")
 
             cascade_frames = {}
             if cascade_weight > 0:
@@ -532,6 +657,96 @@ def cmd_fusion_intraday(args: argparse.Namespace) -> None:
         _print_table(results.values.tolist(), list(results.columns))
 
 
+def cmd_ofim_intraday(args: argparse.Namespace) -> None:
+    settings = load_settings()
+    strategy = OfimIntradayStrategy(settings)
+
+    with FutuPaperTrader(settings) as trader:
+        acc_id = trader.resolve_trade_account()
+        positions = trader.get_positions(acc_id)
+        held_symbols = set(positions["code"].tolist()) if not positions.empty else set()
+
+        plan = strategy.generate_plan(trader, held_symbols)
+        print(f"Strategy: {plan.strategy}")
+        print(f"Target gross exposure: {plan.exposure:.4f}")
+
+        feature_rows = [
+            [
+                feature.code,
+                feature.score,
+                feature.ofi_tier_1,
+                feature.ofi_tier_2,
+                feature.ofi_tier_3,
+                feature.mom_3m,
+                feature.mom_10m,
+                feature.vol_accel,
+                feature.tick_agg,
+                feature.spread_bps,
+                feature.reason,
+            ]
+            for feature in plan.features
+        ]
+        _print_table(
+            feature_rows,
+            [
+                "symbol",
+                "score",
+                "ofi_1",
+                "ofi_2",
+                "ofi_3",
+                "mom_3m",
+                "mom_10m",
+                "vol_accel",
+                "tick_agg",
+                "spread_bps",
+                "status",
+            ],
+        )
+
+        if plan.target_weights:
+            print("Target weights:")
+            _print_table([[code, weight] for code, weight in plan.target_weights.items()], ["symbol", "target_weight"])
+        else:
+            print("Target weights: no new exposure, stay in cash or flatten.")
+        acc_id = trader.resolve_trade_account()
+        account = trader.get_account_info(acc_id)
+        print(f"{_trade_destination_label(settings)} account total assets: {float(account['total_assets']):.2f}")
+
+        if not plan.target_weights and not held_symbols:
+            print("No orders required. OFIM currently has no entry signal and there are no existing positions.")
+            return
+
+        _account, orders = trader.plan_rebalance(plan.target_weights)
+        if not orders:
+            print("No orders required. Current holdings already match the OFIM target.")
+            return
+
+        order_rows = [
+            [
+                order.code,
+                order.side,
+                order.quantity,
+                order.limit_price,
+                order.reference_price,
+                order.current_qty,
+                order.target_qty,
+                order.target_weight,
+            ]
+            for order in orders
+        ]
+        _print_table(
+            order_rows,
+            ["symbol", "side", "qty", "limit_price", "last_price", "current_qty", "target_qty", "target_weight"],
+        )
+
+        if not args.submit:
+            print(f"Dry run only. Re-run with --submit to place Futu {_trade_destination_label(settings)} orders.")
+            return
+
+        results = trader.submit_orders(orders)
+        _print_table(results.values.tolist(), list(results.columns))
+
+
 def cmd_cascade_strategy(args: argparse.Namespace) -> None:
     settings = load_settings()
 
@@ -633,10 +848,14 @@ def main() -> None:
         "signals": cmd_signals,
         "paper-trade": cmd_paper_trade,
         "fusion-intraday": cmd_fusion_intraday,
+        "ofim-intraday": cmd_ofim_intraday,
         "cascade-strategy": cmd_cascade_strategy,
         "auto-fusion": cmd_auto_fusion,
         "watchdog": cmd_watchdog,
         "real-check": cmd_real_check,
+        "reset-simulate": cmd_reset_simulate,
+        "cancel-orders": cmd_cancel_orders,
+        "flatten-all": cmd_flatten_all,
         "dashboard": cmd_dashboard,
     }
     try:

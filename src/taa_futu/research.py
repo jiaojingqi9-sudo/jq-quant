@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 import math
 
@@ -519,6 +519,42 @@ def run_fusion_intraday_replay(
     )
 
 
+def _ofim_proxy_settings(settings: Settings) -> Settings:
+    return replace(
+        settings,
+        fusion_universe=settings.ofim_universe,
+        fusion_benchmark=settings.ofim_benchmark,
+        fusion_lookback_bars=settings.ofim_lookback_bars,
+        fusion_entry_score=settings.ofim_entry_threshold,
+        fusion_exit_score=settings.ofim_exit_threshold,
+        fusion_max_position_weight=settings.ofim_max_position_weight,
+        fusion_max_gross_exposure=settings.ofim_max_gross_exposure,
+        fusion_max_spread_bps=settings.ofim_max_spread_bps,
+        fusion_tick_window=settings.ofim_tick_window,
+        fusion_order_book_depth=min(max(int(settings.ofim_order_book_depth), 1), 10),
+    )
+
+
+def run_ofim_intraday_replay(
+    price_frames: dict[str, pd.DataFrame],
+    settings: Settings,
+    *,
+    initial_capital: float,
+) -> ReplayResult:
+    replay = run_fusion_intraday_replay(price_frames, _ofim_proxy_settings(settings), initial_capital=initial_capital)
+    trade_log = replay.trade_log.copy()
+    if not trade_log.empty:
+        trade_log["strategy"] = "OFIM Intraday"
+    return ReplayResult(
+        name="OFIM Intraday",
+        portfolio_value_curve=replay.portfolio_value_curve,
+        benchmark_curve=replay.benchmark_curve,
+        trade_log=trade_log,
+        summary=replay.summary,
+        note="OFIM 回放目前复用 Fusion 近似回放引擎；后续会接入 OFIM 精确回放。",
+    )
+
+
 def run_cascade_replay(
     price_frames: dict[str, pd.DataFrame],
     settings: Settings,
@@ -613,11 +649,12 @@ def run_strategy_stack_replay(
     initial_capital: float,
     cascade_price_frames: dict[str, pd.DataFrame] | None = None,
 ) -> ReplayResult:
-    baseline_weight, fusion_weight, cascade_weight, reserve_weight = stack_allocations(settings)
+    baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = stack_allocations(settings)
     fusion_settings = effective_fusion_settings(settings)
 
     baseline_initial = float(initial_capital) * baseline_weight if settings.stack_baseline_enabled else 0.0
     fusion_initial = float(initial_capital) * fusion_weight
+    ofim_initial = float(initial_capital) * ofim_weight
     cascade_initial = float(initial_capital) * cascade_weight
     reserve_initial = float(initial_capital) * reserve_weight
 
@@ -632,11 +669,26 @@ def run_strategy_stack_replay(
         )
 
     fusion_replay = run_fusion_intraday_replay(
-        fusion_price_frames,
+        {
+            code: frame
+            for code, frame in fusion_price_frames.items()
+            if code in {fusion_settings.fusion_benchmark, *fusion_settings.fusion_universe}
+        },
         fusion_settings,
         initial_capital=fusion_initial,
     ) if fusion_initial > 0 else ReplayResult("Fusion Intraday", pd.Series(dtype=float), pd.Series(dtype=float), pd.DataFrame(), _period_summary(pd.Series(dtype=float), fusion_initial, pd.DataFrame()))
     fusion_curve = _daily_close_curve(fusion_replay.portfolio_value_curve)
+
+    ofim_replay = run_ofim_intraday_replay(
+        {
+            code: frame
+            for code, frame in fusion_price_frames.items()
+            if code in {settings.ofim_benchmark, *settings.ofim_universe}
+        },
+        settings,
+        initial_capital=ofim_initial,
+    ) if ofim_initial > 0 else ReplayResult("OFIM Intraday", pd.Series(dtype=float), pd.Series(dtype=float), pd.DataFrame(), _period_summary(pd.Series(dtype=float), ofim_initial, pd.DataFrame()))
+    ofim_curve = _daily_close_curve(ofim_replay.portfolio_value_curve)
 
     cascade_replay = run_cascade_replay(
         cascade_price_frames or {},
@@ -648,6 +700,7 @@ def run_strategy_stack_replay(
     daily_curves = {
         "baseline": _daily_close_curve(baseline_curve),
         "fusion": fusion_curve,
+        "ofim": ofim_curve,
         "cascade": cascade_curve,
         "reserve": pd.Series(dtype=float),
     }
@@ -655,6 +708,7 @@ def run_strategy_stack_replay(
         {
             *pd.to_datetime(daily_curves["baseline"].index).tolist(),
             *pd.to_datetime(daily_curves["fusion"].index).tolist(),
+            *pd.to_datetime(daily_curves["ofim"].index).tolist(),
             *pd.to_datetime(daily_curves["cascade"].index).tolist(),
             *pd.to_datetime(daily_curves["reserve"].index).tolist(),
         }
@@ -673,6 +727,7 @@ def run_strategy_stack_replay(
     combined_curve = (
         _reindex_curve(daily_curves["baseline"], master_index, baseline_initial)
         + _reindex_curve(daily_curves["fusion"], master_index, fusion_initial)
+        + _reindex_curve(daily_curves["ofim"], master_index, ofim_initial)
         + _reindex_curve(daily_curves["cascade"], master_index, cascade_initial)
         + _constant_curve(master_index, reserve_initial)
     )
@@ -690,16 +745,18 @@ def run_strategy_stack_replay(
         [
             baseline_log,
             fusion_replay.trade_log,
+            ofim_replay.trade_log,
             cascade_replay.trade_log,
         ],
         ignore_index=True,
-    ) if any(not frame.empty for frame in [baseline_log, fusion_replay.trade_log, cascade_replay.trade_log]) else pd.DataFrame()
+    ) if any(not frame.empty for frame in [baseline_log, fusion_replay.trade_log, ofim_replay.trade_log, cascade_replay.trade_log]) else pd.DataFrame()
     if not trade_log.empty:
         trade_log = trade_log.sort_values("timestamp").reset_index(drop=True)
 
     summary = _daily_summary(combined_curve, float(initial_capital), trade_log)
     summary["baseline_alloc"] = round(baseline_weight, 6)
     summary["fusion_alloc"] = round(fusion_weight, 6)
+    summary["ofim_alloc"] = round(ofim_weight, 6)
     summary["cascade_alloc"] = round(cascade_weight, 6)
     summary["reserve_alloc"] = round(reserve_weight, 6)
     return ReplayResult(
@@ -711,7 +768,8 @@ def run_strategy_stack_replay(
         note=(
             "组合回测按 sleeve 分仓运行："
             f"{stack_label(settings)}。Baseline 用月频趋势，Fusion 用分钟级近似回放，"
-            "Claude/Cascade 用 claude-trade 的级联日频逻辑，剩余未分配仓位保留为现金。"
+            "OFIM 复用分钟级近似回放代理，Claude/Cascade 用 claude-trade 的级联日频逻辑，"
+            "剩余未分配仓位保留为现金。"
         ),
     )
 

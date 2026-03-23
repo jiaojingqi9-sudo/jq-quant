@@ -9,17 +9,18 @@ from .config import Settings
 from .strategy import latest_completed_signal
 
 
-def stack_allocations(settings: Settings) -> tuple[float, float, float, float]:
+def stack_allocations(settings: Settings) -> tuple[float, float, float, float, float]:
     baseline_weight = settings.stack_baseline_weight if settings.stack_baseline_enabled else 0.0
     fusion_weight = settings.stack_fusion_weight
+    ofim_weight = settings.stack_ofim_weight
     cascade_weight = settings.stack_cascade_weight
-    if baseline_weight < 0 or fusion_weight < 0 or cascade_weight < 0:
+    if baseline_weight < 0 or fusion_weight < 0 or ofim_weight < 0 or cascade_weight < 0:
         raise ValueError("策略组合权重不能为负数 / Stack weights must be non-negative.")
-    total = baseline_weight + fusion_weight + cascade_weight
+    total = baseline_weight + fusion_weight + ofim_weight + cascade_weight
     if total > 1.0 + 1e-9:
-        raise ValueError("STACK_BASELINE_WEIGHT + STACK_FUSION_WEIGHT + STACK_CASCADE_WEIGHT 不能超过 1.0。")
+        raise ValueError("STACK_BASELINE_WEIGHT + STACK_FUSION_WEIGHT + STACK_OFIM_WEIGHT + STACK_CASCADE_WEIGHT 不能超过 1.0。")
     reserve_weight = max(0.0, 1.0 - total)
-    return baseline_weight, fusion_weight, cascade_weight, reserve_weight
+    return baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight
 
 
 def effective_fusion_universe(settings: Settings) -> tuple[str, ...]:
@@ -42,12 +43,14 @@ def stack_target_weights(*sleeve_weights: dict[str, float]) -> dict[str, float]:
 
 
 def stack_label(settings: Settings) -> str:
-    baseline_weight, fusion_weight, cascade_weight, reserve_weight = stack_allocations(settings)
+    baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = stack_allocations(settings)
     parts: list[str] = []
     if settings.stack_baseline_enabled and baseline_weight > 0:
         parts.append(f"Baseline {baseline_weight:.0%}")
     if fusion_weight > 0:
         parts.append(f"Fusion {fusion_weight:.0%}")
+    if ofim_weight > 0:
+        parts.append(f"OFIM {ofim_weight:.0%}")
     if cascade_weight > 0:
         parts.append(f"Claude/Cascade {cascade_weight:.0%}")
     if reserve_weight > 0:
@@ -89,7 +92,7 @@ def scaled_baseline_target_weights(
     *,
     reference_date: date,
 ) -> dict[str, float]:
-    baseline_weight, _, _, _ = stack_allocations(settings)
+    baseline_weight, _, _, _, _ = stack_allocations(settings)
     if not settings.stack_baseline_enabled or baseline_weight <= 0:
         return {}
     snapshot = latest_completed_signal(

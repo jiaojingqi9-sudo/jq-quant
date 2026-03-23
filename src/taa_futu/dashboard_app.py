@@ -34,6 +34,7 @@ from taa_futu.costs import (
     with_trade_costs,
 )
 from taa_futu.fusion_intraday import FusionIntradayStrategy
+from taa_futu.ofim_intraday import OfimIntradayStrategy
 from taa_futu.futu_gateway import FutuPaperTrader, FutuTradeError
 from taa_futu import market_logger
 from taa_futu.market_data import FutuQuoteDataProvider, HistoricalDataProvider, MarketDataError, YFinanceDataProvider
@@ -197,6 +198,7 @@ def _strategy_symbol_sets(settings) -> dict[str, set[str]]:
     return {
         "Baseline": set(settings.symbols),
         "Fusion": fusion_symbols,
+        "OFIM": set(settings.ofim_universe),
         "Claude/Cascade": cascade_symbols,
     }
 
@@ -205,8 +207,8 @@ def _owner_group_definitions(settings) -> dict[str, dict[str, object]]:
     strategy_sets = _strategy_symbol_sets(settings)
     return {
         "我的策略组 / Ours": {
-            "symbols": set(strategy_sets["Baseline"]) | set(strategy_sets["Fusion"]),
-            "sleeves": ("Baseline", "Fusion"),
+            "symbols": set(strategy_sets["Baseline"]) | set(strategy_sets["Fusion"]) | set(strategy_sets["OFIM"]),
+            "sleeves": ("Baseline", "Fusion", "OFIM"),
         },
         "Claude/Cascade": {
             "symbols": set(strategy_sets["Claude/Cascade"]),
@@ -219,10 +221,11 @@ def _owner_group_targets(
     *,
     baseline_targets: dict[str, float],
     fusion_targets: dict[str, float],
+    ofim_targets: dict[str, float],
     cascade_targets: dict[str, float],
 ) -> dict[str, dict[str, float]]:
     return {
-        "我的策略组 / Ours": stack_target_weights(baseline_targets, fusion_targets),
+        "我的策略组 / Ours": stack_target_weights(baseline_targets, fusion_targets, ofim_targets),
         "Claude/Cascade": dict(cascade_targets),
     }
 
@@ -259,6 +262,7 @@ def _current_strategy_breakdown(
     combined_targets: dict[str, float],
     baseline_targets: dict[str, float],
     fusion_targets: dict[str, float],
+    ofim_targets: dict[str, float],
     cascade_targets: dict[str, float],
     sleeve_allocations: dict[str, float],
 ) -> pd.DataFrame:
@@ -267,15 +271,20 @@ def _current_strategy_breakdown(
     owner_targets = _owner_group_targets(
         baseline_targets=baseline_targets,
         fusion_targets=fusion_targets,
+        ofim_targets=ofim_targets,
         cascade_targets=cascade_targets,
     )
     rows: dict[str, dict[str, object]] = {}
     group_weights = {
-        "我的策略组 / Ours": float(sleeve_allocations["baseline"]) + float(sleeve_allocations["fusion"]),
+        "我的策略组 / Ours": float(sleeve_allocations["baseline"]) + float(sleeve_allocations["fusion"]) + float(sleeve_allocations["ofim"]),
         "Claude/Cascade": float(sleeve_allocations["cascade"]),
     }
     group_components = {
-        "我的策略组 / Ours": f"Baseline {float(sleeve_allocations['baseline']):.0%} + Fusion {float(sleeve_allocations['fusion']):.0%}",
+        "我的策略组 / Ours": (
+            f"Baseline {float(sleeve_allocations['baseline']):.0%} + "
+            f"Fusion {float(sleeve_allocations['fusion']):.0%} + "
+            f"OFIM {float(sleeve_allocations['ofim']):.0%}"
+        ),
         "Claude/Cascade": f"Cascade {float(sleeve_allocations['cascade']):.0%}",
     }
     for name in ("我的策略组 / Ours", "Claude/Cascade"):
@@ -357,7 +366,7 @@ def _period_strategy_breakdown(*, filled_cost_view: pd.DataFrame, settings) -> p
 
     summary_rows: list[dict[str, object]] = []
     component_map = {
-        "我的策略组 / Ours": "Baseline + Fusion",
+        "我的策略组 / Ours": "Baseline + Fusion + OFIM",
         "Claude/Cascade": "Cascade",
         "Shared/Overlap": "跨组重叠 / cross-group overlap",
         "Unclassified": "未分类 / unclassified",
@@ -2970,6 +2979,11 @@ def _render_symbol_detail(
 def render_live_monitor(settings) -> None:
     _inject_terminal_css()
     st.subheader("高级实时监控 / Advanced Live Monitor")
+    def _current_settings():
+        return load_settings()
+
+    live_settings = _current_settings()
+
     auto_refresh_cols = st.columns([0.8, 0.8, 1.6])
     with auto_refresh_cols[0]:
         auto_refresh_enabled = st.toggle(
@@ -2996,12 +3010,12 @@ def render_live_monitor(settings) -> None:
 
     run_every = _live_monitor_run_every(auto_refresh_enabled, int(auto_refresh_seconds))
 
-    env_label = "真实盘 / REAL" if settings.futu_trd_env == "REAL" else "模拟盘 / SIMULATE"
+    env_label = "真实盘 / REAL" if live_settings.futu_trd_env == "REAL" else "模拟盘 / SIMULATE"
     st.caption(f"当前环境: {env_label}。页面已经收成总览、图表、订单三块；默认先给你看最必要的数据。")
 
     default_end = date.today()
     default_start = default_end - timedelta(days=7)
-    default_base_assets = float(st.session_state.get("live_base_assets", 1_000_000.0 if settings.futu_trd_env != "REAL" else 0.0))
+    default_base_assets = float(st.session_state.get("live_base_assets", live_settings.initial_capital))
     with st.expander("监控设置 / Filters & Base", expanded=False):
         st.caption("这里只控制订单筛选和净值基准，不会改变自动运行。")
         control_cols = st.columns([1, 1, 1, 1])
@@ -3040,32 +3054,33 @@ def render_live_monitor(settings) -> None:
     payload_key = f"{start.isoformat()}::{end.isoformat()}"
 
     def _load_live_payload() -> dict[str, object]:
-        with FutuPaperTrader(settings) as trader:
+        current_settings = _current_settings()
+        with FutuPaperTrader(current_settings) as trader:
             acc_id = trader.resolve_trade_account()
             account = trader.get_account_info(acc_id)
             positions = trader.get_positions(acc_id)
             open_orders = trader.get_open_orders(acc_id)
             order_history = trader.get_order_history(acc_id, start.isoformat(), end.isoformat())
-            market_now = datetime.now(ZoneInfo(settings.auto_trader_market_timezone))
+            market_now = datetime.now(ZoneInfo(current_settings.auto_trader_market_timezone))
             split_state = load_strategy_split_state()
             held_symbols = set(positions["code"].tolist()) if not positions.empty else set()
-            baseline_weight, fusion_weight, cascade_weight, reserve_weight = stack_allocations(settings)
-            fusion_settings = effective_fusion_settings(settings)
+            baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = stack_allocations(current_settings)
+            fusion_settings = effective_fusion_settings(current_settings)
 
             baseline_targets: dict[str, float] = {}
-            if settings.stack_baseline_enabled and baseline_weight > 0:
+            if current_settings.stack_baseline_enabled and baseline_weight > 0:
                 baseline_start = max(
-                    pd.Timestamp(settings.start_date).date(),
-                    (market_now.date() - timedelta(days=max(730, settings.lookback_months * 45))),
+                    pd.Timestamp(current_settings.start_date).date(),
+                    (market_now.date() - timedelta(days=max(730, current_settings.lookback_months * 45))),
                 ).isoformat()
                 baseline_prices = fetch_futu_daily_closes(
                     trader,
-                    settings.symbols,
+                    current_settings.symbols,
                     start=baseline_start,
                 )
                 baseline_targets = scaled_baseline_target_weights(
                     baseline_prices,
-                    settings,
+                    current_settings,
                     reference_date=market_now.date(),
                 )
 
@@ -3080,10 +3095,19 @@ def render_live_monitor(settings) -> None:
                 for code, weight in fusion_plan.target_weights.items()
             }
 
+            ofim_plan = None
+            ofim_scaled_targets: dict[str, float] = {}
+            if ofim_weight > 0:
+                ofim_plan = OfimIntradayStrategy(fusion_settings).generate_plan(trader, fusion_held_symbols)
+                ofim_scaled_targets = {
+                    code: round(weight * ofim_weight, 6)
+                    for code, weight in ofim_plan.target_weights.items()
+                }
+
             cascade_plan = None
             cascade_scaled_targets: dict[str, float] = {}
             if cascade_weight > 0:
-                cascade_plan = generate_live_cascade_plan(settings, trader)
+                cascade_plan = generate_live_cascade_plan(current_settings, trader)
                 cascade_scaled_targets = {
                     code: round(weight * cascade_weight, 6)
                     for code, weight in cascade_plan.target_weights.items()
@@ -3092,6 +3116,7 @@ def render_live_monitor(settings) -> None:
             combined_targets = stack_target_weights(
                 baseline_targets,
                 fusion_scaled_targets,
+                ofim_scaled_targets,
                 cascade_scaled_targets,
             )
             filled_order_history = order_history[
@@ -3099,33 +3124,33 @@ def render_live_monitor(settings) -> None:
             ].copy() if not order_history.empty else order_history
             filled_cost_view = with_trade_costs(
                 filled_order_history,
-                settings,
+                current_settings,
                 side_col="trd_side",
                 qty_col="dealt_qty",
                 price_col="dealt_avg_price",
                 timestamp_col="updated_time",
             ) if not filled_order_history.empty else filled_order_history
-            estimated_realized = estimate_realized_from_fills(filled_order_history, settings)
+            estimated_realized = estimate_realized_from_fills(filled_order_history, current_settings)
             estimated_fee_total = trade_log_total_fees(filled_cost_view)
             estimated_unrealized = _calculate_unrealized_from_positions(positions)
             broker_realized = _optional_float(account.get("realized_pl"))
             broker_unrealized = _optional_float(account.get("unrealized_pl"))
             experiment_filled_cost_view = pd.DataFrame()
             if split_state.get("reset_at"):
-                split_start = pd.Timestamp(split_state["reset_at"], tz="UTC").tz_convert(settings.auto_trader_market_timezone).date().isoformat()
+                split_start = pd.Timestamp(split_state["reset_at"], tz="UTC").tz_convert(current_settings.auto_trader_market_timezone).date().isoformat()
                 experiment_history = trader.get_order_history(acc_id, split_start, market_now.date().isoformat())
                 experiment_filled = experiment_history[
                     pd.to_numeric(experiment_history.get("dealt_qty"), errors="coerce").fillna(0) > 0
                 ].copy() if not experiment_history.empty else experiment_history
                 experiment_filled_cost_view = with_trade_costs(
                     experiment_filled,
-                    settings,
+                    current_settings,
                     side_col="trd_side",
                     qty_col="dealt_qty",
                     price_col="dealt_avg_price",
                     timestamp_col="updated_time",
                 ) if not experiment_filled.empty else experiment_filled
-                experiment_filled_cost_view = filter_fills_since_reset(experiment_filled_cost_view, split_state, settings)
+                experiment_filled_cost_view = filter_fills_since_reset(experiment_filled_cost_view, split_state, current_settings)
             position_view = _positions_view(positions)
             watchlist_view = _watchlist_view(fusion_plan, fusion_scaled_targets)
             feature_map = {feature.code: feature for feature in fusion_plan.features}
@@ -3135,7 +3160,7 @@ def render_live_monitor(settings) -> None:
                         *(positions["code"].tolist() if not positions.empty else []),
                         *combined_targets.keys(),
                         *(watchlist_view["标的 / Symbol"].tolist() if not watchlist_view.empty else []),
-                        settings.fusion_benchmark,
+                        current_settings.fusion_benchmark,
                     ]
                 )
             )
@@ -3167,15 +3192,19 @@ def render_live_monitor(settings) -> None:
                 "fusion_plan": fusion_plan,
                 "baseline_targets": baseline_targets,
                 "fusion_scaled_targets": fusion_scaled_targets,
+                "ofim_plan": ofim_plan,
+                "ofim_scaled_targets": ofim_scaled_targets,
                 "cascade_plan": cascade_plan,
                 "cascade_scaled_targets": cascade_scaled_targets,
                 "combined_targets": combined_targets,
                 "stack_allocations": {
                     "baseline": baseline_weight,
                     "fusion": fusion_weight,
+                    "ofim": ofim_weight,
                     "cascade": cascade_weight,
                     "reserve": reserve_weight,
                 },
+                "settings_snapshot": current_settings,
                 "feature_map": feature_map,
                 "all_symbols": all_symbols,
                 "terminal_watchlist": pd.DataFrame(watchlist_rows),
@@ -3199,6 +3228,7 @@ def render_live_monitor(settings) -> None:
 
     @st.fragment(run_every=run_every)
     def _render_status_and_metrics() -> None:
+        current_settings = _current_settings()
         watchdog_status_text = _watchdog_status_text()
         if "异常 / error" in watchdog_status_text:
             st.error(watchdog_status_text)
@@ -3234,10 +3264,19 @@ def render_live_monitor(settings) -> None:
         fusion_plan = payload["fusion_plan"]
         baseline_targets = payload["baseline_targets"]
         fusion_scaled_targets = payload["fusion_scaled_targets"]
+        ofim_plan = payload["ofim_plan"]
+        ofim_scaled_targets = payload["ofim_scaled_targets"]
         cascade_plan = payload["cascade_plan"]
         cascade_scaled_targets = payload["cascade_scaled_targets"]
-        sleeve_allocations = payload["stack_allocations"]
         split_state = payload["split_state"]
+        _cur_bw, _cur_fw, _cur_ow, _cur_cw, _cur_rw = stack_allocations(current_settings)
+        sleeve_allocations: dict[str, float] = {
+            "baseline": _cur_bw,
+            "fusion":   _cur_fw,
+            "ofim":     _cur_ow,
+            "cascade":  _cur_cw,
+            "reserve":  _cur_rw,
+        }
         experiment_filled_cost_view = payload["experiment_filled_cost_view"]
         total_assets = _safe_float(account.get("total_assets"))
         base_assets_value = float(st.session_state.get("live_base_assets", base_assets))
@@ -3247,9 +3286,9 @@ def render_live_monitor(settings) -> None:
         filled_trade_count = len(filled_order_history)
         displayed_unrealized = broker_unrealized if broker_unrealized is not None else estimated_unrealized
         displayed_realized = broker_realized if broker_realized is not None else estimated_realized
-        st.markdown("**当前三策略 / Three Strategies**")
-        st.caption("这里直接拆成三套：Baseline、Fusion、Claude/Cascade。清仓重置后，这三套会从各自的起始现金重新开始记账。")
-        strategy_cols = st.columns(3)
+        st.markdown("**当前四策略 / Four Strategies**")
+        st.caption("这里直接拆成四套：Baseline、Fusion、OFIM、Claude/Cascade。清仓重置后，这四套会从各自的起始现金重新开始记账。")
+        strategy_cols = st.columns(4)
 
         baseline_runtime, baseline_note = _strategy_runtime_display(float(sleeve_allocations["baseline"]), auto_status_text)
         with strategy_cols[0]:
@@ -3270,8 +3309,36 @@ def render_live_monitor(settings) -> None:
             st.caption(f"基准分数 / Benchmark: {float(getattr(fusion_plan, 'benchmark_score', 0.0)):+.4f}")
             st.caption(fusion_note)
 
-        cascade_runtime, cascade_note = _strategy_runtime_display(float(sleeve_allocations["cascade"]), auto_status_text)
+        ofim_runtime, ofim_note = _strategy_runtime_display(float(sleeve_allocations["ofim"]), auto_status_text)
         with strategy_cols[2]:
+            st.markdown("**OFIM** *(Order Flow Imbalance)*")
+            st.write(f"配置 / Config: {'已启用 / enabled' if float(sleeve_allocations['ofim']) > 0 else '未启用 / disabled'}")
+            st.write(f"执行 / Runtime: {ofim_runtime}")
+            st.write(f"占比 / Weight: {float(sleeve_allocations['ofim']):.0%}")
+            st.caption(f"当前目标 / Targets: {_top_target_summary(ofim_scaled_targets)}")
+            if ofim_plan is None:
+                st.caption("OFIM 信号: 暂无 (权重=0) / N/A")
+            else:
+                bm_score = float(getattr(ofim_plan, "benchmark_score", 0.0))
+                bm_label = f"{ofim_plan.benchmark.replace('US.', '')} {bm_score:+.4f}"
+                regime_emoji = "🟢" if bm_score > 0.05 else ("🔴" if bm_score < -0.10 else "🟡")
+                st.caption(f"基准信号 / Benchmark: {regime_emoji} {bm_label}")
+                # Show top 3 candidates with scores
+                if ofim_plan.features:
+                    top_features = [f for f in ofim_plan.features[:5] if f.score > 0]
+                    if top_features:
+                        rows_txt = " | ".join(
+                            f"{f.code.replace('US.', '')} {f.score:+.3f}"
+                            + (" ✓" if f.eligible else "")
+                            for f in top_features[:4]
+                        )
+                        st.caption(f"📊 Top 候选: {rows_txt}")
+                    else:
+                        st.caption("📊 候选: 暂无符合条件的标的")
+            st.caption(ofim_note)
+
+        cascade_runtime, cascade_note = _strategy_runtime_display(float(sleeve_allocations["cascade"]), auto_status_text)
+        with strategy_cols[3]:
             st.markdown("**Claude/Cascade**")
             st.write(f"配置 / Config: {'已启用 / enabled' if float(sleeve_allocations['cascade']) > 0 else '未启用 / disabled'}")
             st.write(f"执行 / Runtime: {cascade_runtime}")
@@ -3283,55 +3350,65 @@ def render_live_monitor(settings) -> None:
                 st.caption("Regime / 状态: 暂无 / N/A")
             st.caption(cascade_note)
 
+        gross_change = net_change + (estimated_fee_total or 0.0)
+        gross_change_pct = (gross_change / base_assets_value) if base_assets_value > 0 else None
+
         metrics_top = st.columns(4)
         metrics_top[0].metric("总资产 / Assets", _format_currency(total_assets))
         metrics_top[1].metric(
-            "总盈亏 / Net PnL",
+            "净盈亏(扣费后) / Net PnL",
             _format_currency(net_change),
             f"{net_change_pct:+.2%}" if net_change_pct is not None else None,
         )
         metrics_top[2].metric("现金 / Cash", _format_currency(account.get("cash")))
         metrics_top[3].metric("持仓市值 / Market Value", _format_currency(account.get("market_val")))
 
-        metrics_bottom = st.columns(3)
+        metrics_bottom = st.columns(4)
         metrics_bottom[0].metric("当前浮盈 / Unrealized", _format_currency(displayed_unrealized))
-        metrics_bottom[1].metric("交易成本 / Fees", _format_currency(estimated_fee_total))
-        metrics_bottom[2].metric("成交笔数 / Trades", str(filled_trade_count))
+        metrics_bottom[1].metric(
+            "毛盈亏(费前) / Gross PnL",
+            _format_currency(gross_change),
+            f"{gross_change_pct:+.2%}" if gross_change_pct is not None else None,
+        )
+        metrics_bottom[2].metric("交易成本 / Fees", _format_currency(estimated_fee_total))
+        metrics_bottom[3].metric("成交笔数 / Trades", str(filled_trade_count))
 
         compact_summary = st.columns([1.15, 1.0])
         compact_summary[0].info(
             "当前分配 / Current Split: "
             f"Baseline {float(sleeve_allocations['baseline']):.0%} + Fusion {float(sleeve_allocations['fusion']):.0%} + "
+            f"OFIM {float(sleeve_allocations['ofim']):.0%} + "
             f"Claude/Cascade {float(sleeve_allocations['cascade']):.0%}"
         )
         compact_summary[1].info(f"目标仓位 Top / Top Targets: {_top_target_summary(combined_targets)}")
 
         current_breakdown = current_strategy_holdings(
-            settings=settings,
+            settings=current_settings,
             positions=positions,
             total_assets=total_assets,
             combined_targets=combined_targets,
             baseline_targets=baseline_targets,
             fusion_targets=fusion_scaled_targets,
+            ofim_targets=ofim_scaled_targets,
             cascade_targets=cascade_scaled_targets,
         )
         period_breakdown = period_strategy_performance(
             filled_cost_view=experiment_filled_cost_view,
-            settings=settings,
+            settings=current_settings,
         )
         strategy_ledger, overlap_breakdown = build_strategy_ledger(
-            settings=settings,
+            settings=current_settings,
             split_state=split_state,
             total_assets=total_assets,
             current_holdings=current_breakdown,
             period_performance=period_breakdown,
         )
 
-        st.markdown("**三策略独立账本 / Three-Strategy Ledger**")
+        st.markdown("**四策略独立账本 / Four-Strategy Ledger**")
         reset_caption = ""
         if split_state.get("reset_at"):
             reset_caption = f"本次独立记账起点 / Reset At: {split_state['reset_at']}"
-        st.caption(f"这里看三套策略各自当前允许操作总现金、市值、预算余量、收益、成本和成交笔数。{reset_caption}")
+        st.caption(f"这里看四套策略（Baseline / Fusion / OFIM / Cascade）各自当前允许操作总现金、市值、预算余量、收益、成本和成交笔数。{reset_caption}")
         st.info(
             f"账户余留现金 / Account Remaining Cash: {_format_currency(account.get('cash'))}。"
             " 这张表里的“当前允许操作总现金”会直接跟着控制台当前权重变化。"
@@ -3342,9 +3419,16 @@ def render_live_monitor(settings) -> None:
                 "说明：预算列按你现在的控制台配置实时显示；"
                 " 收益列仍按最近一次清仓重置后的起点累计。"
                 f" 上次重置时是 Baseline {reset_weights['Baseline']:.0%} / Fusion {reset_weights['Fusion']:.0%} / Claude {reset_weights['Claude/Cascade']:.0%}；"
-                f" 现在配置是 Baseline {float(sleeve_allocations['baseline']):.0%} / Fusion {float(sleeve_allocations['fusion']):.0%} / Claude {float(sleeve_allocations['cascade']):.0%}。"
+                f" 现在配置是 Baseline {float(sleeve_allocations['baseline']):.0%} / Fusion {float(sleeve_allocations['fusion']):.0%} / OFIM {float(sleeve_allocations['ofim']):.0%} / Claude {float(sleeve_allocations['cascade']):.0%}。"
             )
-        st.dataframe(strategy_ledger, use_container_width=True, hide_index=True)
+        st.dataframe(
+            strategy_ledger,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "当前目标 / Targets": st.column_config.TextColumn(width="large"),
+            },
+        )
         if not overlap_breakdown.empty:
             st.caption("另有部分成交属于重叠标的 / Shared-Overlap。为了不误导，这些单子没有硬塞给某一套策略。")
             st.dataframe(overlap_breakdown, use_container_width=True, hide_index=True)
@@ -3648,6 +3732,7 @@ def render_live_monitor(settings) -> None:
         fusion_plan = payload["fusion_plan"]
         baseline_targets = payload["baseline_targets"]
         fusion_scaled_targets = payload["fusion_scaled_targets"]
+        ofim_scaled_targets = payload["ofim_scaled_targets"]
         cascade_plan = payload["cascade_plan"]
         cascade_scaled_targets = payload["cascade_scaled_targets"]
         combined_targets = payload["combined_targets"]
@@ -3767,24 +3852,32 @@ def render_live_monitor(settings) -> None:
                 return
 
         with overview_tab:
-            our_weight = float(sleeve_allocations["baseline"]) + float(sleeve_allocations["fusion"])
-            our_targets = stack_target_weights(baseline_targets, fusion_scaled_targets)
+            our_weight = float(sleeve_allocations["baseline"]) + float(sleeve_allocations["fusion"]) + float(sleeve_allocations["ofim"])
+            our_targets = stack_target_weights(baseline_targets, fusion_scaled_targets, ofim_scaled_targets)
+            _bw = float(sleeve_allocations['baseline'])
+            _fw = float(sleeve_allocations['fusion'])
+            _ow = float(sleeve_allocations['ofim'])
+            _cw = float(sleeve_allocations['cascade'])
+            _our_parts = []
+            if _bw > 0: _our_parts.append(f"Baseline {_bw:.0%}")
+            if _fw > 0: _our_parts.append(f"Fusion {_fw:.0%}")
+            if _ow > 0: _our_parts.append(f"OFIM {_ow:.0%}")
+            _our_breakdown = " + ".join(_our_parts) if _our_parts else "无 / none"
             st.info(
                 "当前比较模式 / Current comparison mode: "
-                f"我的策略组 {our_weight:.0%} (Baseline {float(sleeve_allocations['baseline']):.0%} + Fusion {float(sleeve_allocations['fusion']):.0%}) "
-                f"vs Claude/Cascade {float(sleeve_allocations['cascade']):.0%}。"
+                f"我的策略组 {our_weight:.0%} ({_our_breakdown}) "
+                f"vs Claude/Cascade {_cw:.0%}。"
             )
             strategy_cols = st.columns(2)
+            _extra_parts = [_our_breakdown]
+            if _fw > 0:
+                _extra_parts.append(f"Fusion 基准 {float(getattr(fusion_plan, 'benchmark_score', 0.0)):+.4f}")
             strategy_cols[0].info(
                 _strategy_live_summary(
                     "我的策略组 / Ours",
                     our_weight,
                     f"当前目标: {_top_target_summary(our_targets)}",
-                    extra=(
-                        f"内部构成 Baseline {float(sleeve_allocations['baseline']):.0%} + "
-                        f"Fusion {float(sleeve_allocations['fusion']):.0%} | "
-                        f"Fusion 基准 {float(getattr(fusion_plan, 'benchmark_score', 0.0)):+.4f}"
-                    ),
+                    extra=" | ".join(_extra_parts),
                 )
             )
             cascade_extra = None
@@ -3882,7 +3975,7 @@ def render_live_monitor(settings) -> None:
             order_summary[3].metric("未完成订单 / Open Orders", str(len(open_orders)))
 
             st.markdown("**两家策略成交分账 / Two-Group Trade Breakdown**")
-            st.caption("这里按两家来拆：我的策略组 = Baseline + Fusion，另一边是 Claude/Cascade。")
+            st.caption("这里按两家来拆：我的策略组 = Baseline + Fusion + OFIM，另一边是 Claude/Cascade。")
             trade_group_cols = st.columns(2)
             for column, group_name in zip(trade_group_cols, ["我的策略组 / Ours", "Claude/Cascade"]):
                 with column:
@@ -4095,7 +4188,7 @@ def render_historical_simulation(settings) -> None:
         return
 
     if mode == "策略组合回测 / Strategy Stack Replay":
-        baseline_weight, fusion_weight, cascade_weight, reserve_weight = stack_allocations(settings)
+        baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = stack_allocations(settings)
         st.info(
             "组合回测按当前 stack 配置运行。"
             f"当前组合 / Current Stack: {stack_label(settings)}。"
@@ -4123,6 +4216,8 @@ def render_historical_simulation(settings) -> None:
 
                 fusion_settings = effective_fusion_settings(settings)
                 fusion_symbols = [fusion_settings.fusion_benchmark, *fusion_settings.fusion_universe]
+                ofim_symbols = [settings.ofim_benchmark, *settings.ofim_universe] if ofim_weight > 0 else []
+                minute_symbols = list(dict.fromkeys([*fusion_symbols, *ofim_symbols]))
                 fusion_frames = {
                     code: _normalize_kline(
                         trader.request_history_klines(
@@ -4133,7 +4228,7 @@ def render_historical_simulation(settings) -> None:
                             session="RTH",
                         )
                     )
-                    for code in fusion_symbols
+                    for code in minute_symbols
                 }
                 cascade_frames = {}
                 if cascade_weight > 0:

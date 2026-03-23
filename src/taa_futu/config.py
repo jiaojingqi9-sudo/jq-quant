@@ -55,6 +55,20 @@ class Settings:
     fusion_max_spread_bps: float
     fusion_order_book_depth: int
     fusion_tick_window: int
+    ofim_universe: tuple[str, ...]
+    ofim_benchmark: str
+    ofim_lookback_bars: int
+    ofim_depth_tiers: tuple[tuple[int, int], ...]
+    ofim_entry_threshold: float
+    ofim_exit_threshold: float
+    ofim_max_score: float
+    ofim_min_vol_acceleration: float
+    ofim_max_spread_bps: float
+    ofim_tick_window: int
+    ofim_order_book_depth: int
+    ofim_max_position_weight: float
+    ofim_max_gross_exposure: float
+    ofim_max_positions: int
     futu_host: str
     futu_port: int
     futu_trd_market: str
@@ -72,15 +86,20 @@ class Settings:
     auto_trader_start_time: str
     auto_trader_end_time: str
     auto_trader_order_cooldown_seconds: int
+    auto_trader_order_stale_minutes: int = 5
+    auto_trader_min_order_value_usd: float = 500.0
+    auto_trader_min_hold_minutes: int = 10
     watchdog_min_interval_seconds: int = 240
     watchdog_max_interval_seconds: int = 540
     watchdog_outside_window_min_interval_seconds: int = 900
     watchdog_outside_window_max_interval_seconds: int = 1800
     watchdog_stale_status_seconds: int = 240
     watchdog_restart_cooldown_seconds: int = 120
+    initial_capital: float = 1_000_000.0
     stack_baseline_enabled: bool = False
     stack_baseline_weight: float = 0.55
     stack_fusion_weight: float = 0.90
+    stack_ofim_weight: float = 0.0
     stack_cascade_weight: float = 0.0
     stack_isolate_baseline_symbols: bool = True
     cascade_env_file: str = "claude-trade/.env"
@@ -107,6 +126,18 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
     # The local .env file is the source of truth for this desktop app.
     # Use override=True so runtime processes pick up the latest values after UI changes.
     load_dotenv(dotenv_path=env_file, override=True)
+    ofim_depth_raw = os.getenv("OFIM_DEPTH_TIERS", "1-5,6-20,21-60")
+    ofim_depth_tiers: tuple[tuple[int, int], ...] = tuple(
+        (
+            int(part.split("-")[0]),
+            int(part.split("-")[1]),
+        )
+        for part in [item.strip() for item in ofim_depth_raw.split(",") if item.strip()]
+        if "-" in part
+    )
+    if not ofim_depth_tiers:
+        ofim_depth_tiers = ((1, 5), (6, 20), (21, 60))
+
     return Settings(
         symbols=_parse_symbols(os.getenv("TAA_SYMBOLS")),
         benchmark=os.getenv("TAA_BENCHMARK", "US.SPY"),
@@ -126,6 +157,20 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
         fusion_max_spread_bps=float(os.getenv("FUSION_MAX_SPREAD_BPS", "15")),
         fusion_order_book_depth=int(os.getenv("FUSION_ORDER_BOOK_DEPTH", "3")),
         fusion_tick_window=int(os.getenv("FUSION_TICK_WINDOW", "50")),
+        ofim_universe=_parse_symbols(os.getenv("OFIM_UNIVERSE")),
+        ofim_benchmark=os.getenv("OFIM_BENCHMARK", "US.QQQ"),
+        ofim_lookback_bars=int(os.getenv("OFIM_LOOKBACK_BARS", "60")),
+        ofim_depth_tiers=ofim_depth_tiers,
+        ofim_entry_threshold=float(os.getenv("OFIM_ENTRY_THRESHOLD", "0.20")),
+        ofim_exit_threshold=float(os.getenv("OFIM_EXIT_THRESHOLD", "0.05")),
+        ofim_max_score=float(os.getenv("OFIM_MAX_SCORE", "0.60")),
+        ofim_min_vol_acceleration=float(os.getenv("OFIM_MIN_VOL_ACCELERATION", "1.20")),
+        ofim_max_spread_bps=float(os.getenv("OFIM_MAX_SPREAD_BPS", "15")),
+        ofim_tick_window=int(os.getenv("OFIM_TICK_WINDOW", "100")),
+        ofim_order_book_depth=int(os.getenv("OFIM_ORDER_BOOK_DEPTH", "60")),
+        ofim_max_position_weight=float(os.getenv("OFIM_MAX_POSITION_WEIGHT", "0.15")),
+        ofim_max_gross_exposure=float(os.getenv("OFIM_MAX_GROSS_EXPOSURE", "0.80")),
+        ofim_max_positions=int(os.getenv("OFIM_MAX_POSITIONS", "5")),
         futu_host=os.getenv("FUTU_HOST", "127.0.0.1"),
         futu_port=int(os.getenv("FUTU_PORT", "11111")),
         futu_trd_market=os.getenv("FUTU_TRD_MARKET", "US"),
@@ -143,15 +188,20 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
         auto_trader_start_time=os.getenv("AUTO_TRADER_START_TIME", "09:45"),
         auto_trader_end_time=os.getenv("AUTO_TRADER_END_TIME", "15:55"),
         auto_trader_order_cooldown_seconds=int(os.getenv("AUTO_TRADER_ORDER_COOLDOWN_SECONDS", "300")),
+        auto_trader_order_stale_minutes=int(os.getenv("AUTO_TRADER_ORDER_STALE_MINUTES", "5")),
+        auto_trader_min_order_value_usd=float(os.getenv("AUTO_TRADER_MIN_ORDER_VALUE_USD", "500.0")),
+        auto_trader_min_hold_minutes=int(os.getenv("AUTO_TRADER_MIN_HOLD_MINUTES", "10")),
         watchdog_min_interval_seconds=int(os.getenv("WATCHDOG_MIN_INTERVAL_SECONDS", "240")),
         watchdog_max_interval_seconds=int(os.getenv("WATCHDOG_MAX_INTERVAL_SECONDS", "540")),
         watchdog_outside_window_min_interval_seconds=int(os.getenv("WATCHDOG_OUTSIDE_WINDOW_MIN_INTERVAL_SECONDS", "900")),
         watchdog_outside_window_max_interval_seconds=int(os.getenv("WATCHDOG_OUTSIDE_WINDOW_MAX_INTERVAL_SECONDS", "1800")),
         watchdog_stale_status_seconds=int(os.getenv("WATCHDOG_STALE_STATUS_SECONDS", "240")),
         watchdog_restart_cooldown_seconds=int(os.getenv("WATCHDOG_RESTART_COOLDOWN_SECONDS", "120")),
+        initial_capital=float(os.getenv("INITIAL_CAPITAL", "1000000.0")),
         stack_baseline_enabled=_parse_bool(os.getenv("STACK_BASELINE_ENABLED"), default=False),
         stack_baseline_weight=float(os.getenv("STACK_BASELINE_WEIGHT", "0.55")),
         stack_fusion_weight=float(os.getenv("STACK_FUSION_WEIGHT", "0.90")),
+        stack_ofim_weight=float(os.getenv("STACK_OFIM_WEIGHT", "0.00")),
         stack_cascade_weight=float(os.getenv("STACK_CASCADE_WEIGHT", "0.00")),
         stack_isolate_baseline_symbols=_parse_bool(os.getenv("STACK_ISOLATE_BASELINE_SYMBOLS"), default=True),
         cascade_env_file=os.getenv("CASCADE_ENV_FILE", "claude-trade/.env"),

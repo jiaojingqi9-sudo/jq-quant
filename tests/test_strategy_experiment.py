@@ -24,6 +24,21 @@ def _settings() -> Settings:
         fusion_max_spread_bps=15.0,
         fusion_order_book_depth=3,
         fusion_tick_window=50,
+        ofim_universe=("US.AAPL",),
+        ofim_benchmark="US.QQQ",
+        ofim_lookback_bars=60,
+        ofim_depth_tiers=((1, 5), (6, 20), (21, 60)),
+        ofim_entry_threshold=0.20,
+        ofim_exit_threshold=0.05,
+        ofim_max_score=0.60,
+        ofim_min_vol_acceleration=1.20,
+        ofim_max_spread_bps=15.0,
+        ofim_tick_window=100,
+        ofim_order_book_depth=60,
+        ofim_max_position_weight=0.15,
+        ofim_max_gross_exposure=0.80,
+        ofim_max_positions=5,
+        stack_ofim_weight=0.0,
         futu_host="127.0.0.1",
         futu_port=11111,
         futu_trd_market="US",
@@ -83,12 +98,13 @@ def test_build_strategy_ledger_uses_current_allowed_capital_columns() -> None:
         "当前允许操作总现金 / Allowed Capital",
         "当前市值 / Holdings",
         "预算余量 / Budget Left",
-        "自重置收益 / PnL Since Reset",
+        "净表现 / Net Performance",
         "当前浮盈 / Unrealized",
         "交易成本 / Fees",
         "成交笔数 / Trades",
         "当前目标 / Targets",
     ]
+    assert set(ledger["策略 / Strategy"]) == {"Baseline", "Fusion", "OFIM", "Claude/Cascade"}
     assert overlap.empty
 
 

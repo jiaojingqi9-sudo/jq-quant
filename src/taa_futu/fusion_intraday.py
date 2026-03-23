@@ -199,18 +199,15 @@ def compute_symbol_feature(
     score = sum(components.values()) * max(0.0, benchmark_score + 0.25)
 
     reasons: list[str] = []
-    if benchmark_score <= 0:
+    # Hard-block only when benchmark is clearly bearish (matches gate in build_target_weights)
+    if benchmark_score <= -0.15:
         reasons.append("market_regime_off")
+    # Hard-block on execution-quality filters only — score components already penalise
+    # below-VWAP, weak momentum, and below-opening-range positions via their weighted terms
     if spread_bps > settings.fusion_max_spread_bps:
         reasons.append("spread_too_wide")
     if rel_volume < settings.fusion_min_rel_volume:
         reasons.append("rel_volume_too_low")
-    if vwap_distance <= 0:
-        reasons.append("below_vwap")
-    if momentum_5m <= 0:
-        reasons.append("weak_5m_momentum")
-    if breakout_pct < -0.001:
-        reasons.append("below_opening_range")
 
     return FusionFeature(
         code=code,
@@ -236,7 +233,8 @@ def build_target_weights(
     held_symbols: set[str],
     settings: Settings,
 ) -> tuple[float, dict[str, float]]:
-    if benchmark_score <= 0:
+    if benchmark_score <= -0.15:
+        # Only fully block when market is clearly bearish; mild weakness → reduced exposure via formula below
         return 0.0, {}
 
     exposure = settings.fusion_max_gross_exposure * min(1.0, max(0.0, 0.5 + benchmark_score / 1.5))

@@ -50,6 +50,11 @@ CT_RUNTIME_DIR  = CT_REPO_ROOT / "runtime"
 CT_SRC_ROOT     = CT_REPO_ROOT / "src"
 CT_DASHBOARD_PORT = 8051
 
+# ── Market data permissions (OpenAPI) ────────────────────────────────────────
+NASDAQ_BASIC_URL = "https://qtcardfthk.futufin.com/intro/nasdaq-basic?clientlang=0&is_support_buy=1&type=12"
+NASDAQ_TOTALVIEW_URL = "https://qtcardfthk.futufin.com/intro/nasdaq-basic?clientlang=0&is_support_buy=1&type=18"
+OPRA_URL = "https://qtcardfthk.futufin.com/intro/api-usoption-realtime?clientlang=0&is_support_buy=1&type=16"
+
 
 def is_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
     try:
@@ -140,6 +145,7 @@ def _study_mode_label(mode: str) -> str:
     mapping = {
         "baseline": "基线月频回测",
         "fusion": "Fusion 日内回放",
+        "ofim": "OFIM 订单流回放",
         "cascade": "Claude/Cascade 回放",
         "stack": "组合整体回测",
         "account": "账户真实复盘",
@@ -152,6 +158,7 @@ def _manual_strategy_label(mode: str) -> str:
     mapping = {
         "baseline": "Baseline 月频手动下单",
         "fusion": "Fusion 日内手动下单",
+        "ofim": "OFIM 订单流手动下单",
         "cascade": "Claude/Cascade 手动下单",
     }
     return mapping.get(mode, mode)
@@ -185,18 +192,30 @@ def _fusion_summary(settings) -> str:
     )
 
 
+def _ofim_summary(settings) -> str:
+    universe = _short_symbols(settings.ofim_universe, limit=8)
+    return (
+        "OFIM策略: 盘口失衡 + 逐笔订单流。"
+        f"基准 {settings.ofim_benchmark.replace('US.', '')}，"
+        f"回看 {settings.ofim_lookback_bars} 根 1分钟K，"
+        f"观察池 {universe}。"
+    )
+
+
 def _cascade_summary(settings) -> str:
     return cascade_summary_line(settings)
 
 
 def _auto_stack_summary(settings) -> str:
-    baseline_weight, fusion_weight, cascade_weight, reserve_weight = stack_allocations(settings)
+    baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = stack_allocations(settings)
     sleeves: list[tuple[str, float, str | None]] = []
 
     if settings.stack_baseline_enabled and baseline_weight > 0:
         sleeves.append(("基线 Baseline", baseline_weight, None))
     if fusion_weight > 0:
         sleeves.append(("Fusion 日内", fusion_weight, None))
+    if ofim_weight > 0:
+        sleeves.append(("OFIM 订单流", ofim_weight, None))
     if cascade_weight > 0:
         sleeves.append(("Claude/Cascade", cascade_weight, "只执行 Futu 可交易部分；crypto 预算保留现金。"))
     if reserve_weight > 0:
@@ -208,14 +227,30 @@ def _auto_stack_summary(settings) -> str:
     mode_label = "自定义组合"
     if len(sleeves) == 1 and sleeves[0][0] == "Fusion 日内" and abs(fusion_weight - 1.0) <= 1e-9:
         mode_label = "Fusion Only"
+    elif len(sleeves) == 1 and sleeves[0][0] == "OFIM 订单流" and abs(ofim_weight - 1.0) <= 1e-9:
+        mode_label = "OFIM Only"
     elif len(sleeves) == 1 and sleeves[0][0] == "基线 Baseline" and abs(baseline_weight - 1.0) <= 1e-9:
         mode_label = "Baseline Only"
     elif len(sleeves) == 1 and sleeves[0][0] == "Claude/Cascade" and abs(cascade_weight - 1.0) <= 1e-9:
         mode_label = "Cascade Only"
-    elif settings.stack_baseline_enabled and abs(baseline_weight - 0.55) <= 1e-9 and abs(fusion_weight - 0.35) <= 1e-9 and abs(cascade_weight) <= 1e-9 and abs(reserve_weight - 0.10) <= 1e-9:
-        mode_label = "Full Stack"
-    elif settings.stack_baseline_enabled and abs(baseline_weight - 0.25) <= 1e-9 and abs(fusion_weight - 0.25) <= 1e-9 and abs(cascade_weight - 0.50) <= 1e-9 and abs(reserve_weight) <= 1e-9:
+    elif (
+        settings.stack_baseline_enabled
+        and abs(baseline_weight - 0.25) <= 1e-9
+        and abs(fusion_weight) <= 1e-9
+        and abs(ofim_weight - 0.25) <= 1e-9
+        and abs(cascade_weight - 0.50) <= 1e-9
+        and abs(reserve_weight) <= 1e-9
+    ):
         mode_label = "我的策略组 50% + Claude 50%"
+    elif (
+        settings.stack_baseline_enabled
+        and abs(baseline_weight - 0.25) <= 1e-9
+        and abs(fusion_weight - 0.25) <= 1e-9
+        and abs(ofim_weight - 0.25) <= 1e-9
+        and abs(cascade_weight - 0.25) <= 1e-9
+        and abs(reserve_weight) <= 1e-9
+    ):
+        mode_label = "Full Stack (四策略均衡)"
 
     if len(sleeves) == 1:
         headline = f"现在后台自动运行: 只跑 1 个模块，即 {sleeves[0][0]}。"
@@ -324,6 +359,7 @@ class ControlPanel:
         self.stack_baseline_enabled = tk.BooleanVar(value=initial_settings.stack_baseline_enabled)
         self.stack_baseline_weight = tk.StringVar(value=f"{initial_settings.stack_baseline_weight:.2f}")
         self.stack_fusion_weight = tk.StringVar(value=f"{initial_settings.stack_fusion_weight:.2f}")
+        self.stack_ofim_weight = tk.StringVar(value=f"{initial_settings.stack_ofim_weight:.2f}")
         self.stack_cascade_weight = tk.StringVar(value=f"{initial_settings.stack_cascade_weight:.2f}")
 
         self.opend_status = tk.StringVar(value="OpenD 状态 / Status: 检查中 / checking...")
@@ -409,6 +445,8 @@ class ControlPanel:
         service_buttons = [
             ("一键启动 / One-Click Start", self.one_click_start),
             ("一键重启 / Restart All", self.restart_console_and_dashboard),
+            ("启动全局自动运行 / Start Auto Run", self.start_auto_fusion),
+            ("停止全局自动运行 / Stop Auto Run", self.stop_auto_fusion),
             ("打开监控页 / Open Dashboard", self.start_dashboard),
             ("停止监控页 / Stop Dashboard", self.stop_dashboard),
             ("打开 OpenD / Open FutuOpenD", self.open_futu_opend),
@@ -428,26 +466,50 @@ class ControlPanel:
         ttk.Entry(config_inner, textvariable=self.dashboard_port).grid(row=2, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
         ttk.Label(config_inner, text="常用组合 / Quick Stack").grid(row=3, column=0, sticky="w", pady=(14, 0))
         ttk.Button(config_inner, text="单跑 Fusion / Fusion Only", command=self.use_fusion_only).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="我的策略组 50% + Claude 50%", command=self.use_fusion_cascade_split).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="三策略组合 / Full Stack", command=self.use_full_stack).grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Label(config_inner, text="交易环境 / Trade Mode").grid(row=7, column=0, sticky="w", pady=(14, 0))
-        ttk.Button(config_inner, text="切到模拟盘 / Use SIMULATE", command=self.arm_simulate_mode).grid(row=8, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="切到实盘手动 / Arm REAL Manual", command=self.arm_real_manual_mode).grid(row=9, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="切到实盘自动 / Arm REAL Auto", command=self.arm_real_auto_mode).grid(row=10, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Label(config_inner, text="实用工具 / Utilities").grid(row=11, column=0, sticky="w", pady=(14, 0))
-        ttk.Button(config_inner, text="实盘就绪检查 / Check REAL Readiness", command=self.check_real_readiness).grid(row=12, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="设置交易密码MD5 / Set Trade Pwd MD5", command=self.set_trade_password_md5).grid(row=13, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="安装开机自启 / Install Login Auto Start", command=self.install_login_auto_start).grid(row=14, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="关闭开机自启 / Remove Login Auto Start", command=self.uninstall_login_auto_start).grid(row=15, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Label(config_inner, text="高级组合 / Advanced Stack").grid(row=16, column=0, sticky="w", pady=(14, 0))
-        ttk.Checkbutton(config_inner, text="启用基线 sleeve / Enable Baseline Sleeve", variable=self.stack_baseline_enabled).grid(row=16, column=1, sticky="w", padx=(10, 0), pady=(14, 0))
-        ttk.Label(config_inner, text="基线权重 / Baseline Weight").grid(row=17, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(config_inner, textvariable=self.stack_baseline_weight).grid(row=17, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
-        ttk.Label(config_inner, text="Fusion 权重 / Fusion Weight").grid(row=18, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(config_inner, textvariable=self.stack_fusion_weight).grid(row=18, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
-        ttk.Label(config_inner, text="Cascade 权重 / Cascade Weight").grid(row=19, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(config_inner, textvariable=self.stack_cascade_weight).grid(row=19, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
-        ttk.Button(config_inner, text="应用组合配置 / Apply Stack Config", command=self.apply_stack_config).grid(row=20, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ttk.Button(config_inner, text="单跑 OFIM / OFIM Only", command=self.use_ofim_only).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="我的策略组 50% + Claude 50%", command=self.use_fusion_cascade_split).grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="四策略均衡 25/25/25/25", command=self.use_full_stack).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(config_inner, text="交易环境 / Trade Mode").grid(row=8, column=0, sticky="w", pady=(14, 0))
+        ttk.Button(config_inner, text="切到模拟盘 / Use SIMULATE", command=self.arm_simulate_mode).grid(row=9, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="⚠️ 重置模拟账户 / Reset Simulate Account", command=self.reset_simulate_account).grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        ttk.Button(config_inner, text="切到实盘手动 / Arm REAL Manual", command=self.arm_real_manual_mode).grid(row=11, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="切到实盘自动 / Arm REAL Auto", command=self.arm_real_auto_mode).grid(row=12, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(config_inner, text="实用工具 / Utilities").grid(row=13, column=0, sticky="w", pady=(14, 0))
+        ttk.Button(config_inner, text="撤销全部挂单 / Cancel All Open Orders", command=self.cancel_all_orders).grid(row=14, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="⚠️ 清空全部持仓 / Flatten All Positions", command=self.flatten_all_positions).grid(row=15, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="实盘就绪检查 / Check REAL Readiness", command=self.check_real_readiness).grid(row=17, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="设置交易密码MD5 / Set Trade Pwd MD5", command=self.set_trade_password_md5).grid(row=18, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="安装开机自启 / Install Login Auto Start", command=self.install_login_auto_start).grid(row=19, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="关闭开机自启 / Remove Login Auto Start", command=self.uninstall_login_auto_start).grid(row=20, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(config_inner, text="高级组合 / Advanced Stack").grid(row=21, column=0, sticky="w", pady=(14, 0))
+        ttk.Checkbutton(config_inner, text="启用基线 sleeve / Enable Baseline Sleeve", variable=self.stack_baseline_enabled).grid(row=21, column=1, sticky="w", padx=(10, 0), pady=(14, 0))
+        ttk.Label(config_inner, text="基线权重 / Baseline Weight").grid(row=22, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.stack_baseline_weight).grid(row=22, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Label(config_inner, text="Fusion 权重 / Fusion Weight").grid(row=23, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.stack_fusion_weight).grid(row=23, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Label(config_inner, text="OFIM 权重 / OFIM Weight").grid(row=24, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.stack_ofim_weight).grid(row=24, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Label(config_inner, text="Cascade 权重 / Cascade Weight").grid(row=25, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.stack_cascade_weight).grid(row=25, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Button(config_inner, text="应用组合配置 / Apply Stack Config", command=self.apply_stack_config).grid(row=26, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+
+        ttk.Separator(config_inner, orient="horizontal").grid(row=27, column=0, columnspan=2, sticky="ew", pady=(14, 6))
+        ttk.Label(config_inner, text="行情权限 / Market Data").grid(row=28, column=0, columnspan=2, sticky="w")
+        ttk.Button(
+            config_inner,
+            text="开通 Nasdaq Basic / Open Nasdaq Basic",
+            command=lambda: webbrowser.open(NASDAQ_BASIC_URL),
+        ).grid(row=27, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Button(
+            config_inner,
+            text="开通 TotalView / Open TotalView",
+            command=lambda: webbrowser.open(NASDAQ_TOTALVIEW_URL),
+        ).grid(row=28, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Button(
+            config_inner,
+            text="开通 OPRA / Open OPRA",
+            command=lambda: webbrowser.open(OPRA_URL),
+        ).grid(row=29, column=0, columnspan=2, sticky="ew", pady=(6, 0))
 
         middle_pane = tk.PanedWindow(
             self.content_vertical_pane,
@@ -480,6 +542,7 @@ class ControlPanel:
             values=[
                 "baseline",
                 "fusion",
+                "ofim",
                 "cascade",
                 "stack",
                 "account",
@@ -502,20 +565,31 @@ class ControlPanel:
         )
         baseline_note.grid(row=2, column=0, sticky="ew", pady=(12, 0))
 
-        fusion_frame, fusion_inner = self._create_section(middle_pane, "专属日内策略 / Fusion Intraday")
+        fusion_frame, fusion_inner = self._create_section(middle_pane, "Fusion 策略 / Fusion Intraday")
         middle_pane.add(fusion_frame, minsize=300, stretch="always")
         ttk.Button(fusion_inner, text="试运行 / Run Dry-Run", command=self.run_fusion).grid(row=0, column=0, sticky="ew")
         ttk.Button(fusion_inner, text="提交订单 / Submit Orders", command=self.submit_fusion).grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        ttk.Button(fusion_inner, text="启动自动运行 / Start Auto Run", command=self.start_auto_fusion).grid(row=2, column=0, sticky="ew", pady=(8, 0))
-        ttk.Button(fusion_inner, text="停止自动运行 / Stop Auto Run", command=self.stop_auto_fusion).grid(row=3, column=0, sticky="ew", pady=(8, 0))
         fusion_note = ttk.Label(
             fusion_inner,
-            text="这是我这边的日内策略。需要信号才会下单；没信号时会等，不会为了凑交易去乱动。",
+            text="这里负责 Fusion 的手动试运行和提交；全局自动运行开关已经挪到上面的“一键服务”。",
             justify="left",
             anchor="w",
             wraplength=340,
         )
-        fusion_note.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+        fusion_note.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+
+        ofim_frame, ofim_inner = self._create_section(middle_pane, "OFIM 策略 / OFIM Order Flow")
+        middle_pane.add(ofim_frame, minsize=300, stretch="always")
+        ttk.Button(ofim_inner, text="试运行 / Run Dry-Run", command=self.run_ofim_only).grid(row=0, column=0, sticky="ew")
+        ttk.Button(ofim_inner, text="提交订单 / Submit Orders", command=self.submit_ofim_only).grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        ofim_note = ttk.Label(
+            ofim_inner,
+            text="这里负责 OFIM 订单流策略的手动试运行和提交；它现在和 Fusion 已经完全分开。",
+            justify="left",
+            anchor="w",
+            wraplength=340,
+        )
+        ofim_note.grid(row=2, column=0, sticky="ew", pady=(12, 0))
 
         cascade_frame, cascade_inner = self._create_section(middle_pane, "Claude 策略 / Claude-Cascade")
         middle_pane.add(cascade_frame, minsize=300, stretch="always")
@@ -790,61 +864,90 @@ class ControlPanel:
         self.root.after(300, self._drain_log_queue)
 
     def refresh_status(self) -> None:
+        # Snapshot UI-only values on the main thread before handing off to the worker
         host = self.opend_host.get().strip() or "127.0.0.1"
         port = int(self.opend_port.get().strip() or "11111")
         dashboard_port = int(self.dashboard_port.get().strip() or "8501")
-        settings = self._current_settings()
+        dash_proc_alive = self.dashboard_process is not None and self.dashboard_process.poll() is None
 
-        if is_port_open(host, port):
-            self.opend_status.set(f"OpenD 状态 / Status: 已连接 / connected ({host}:{port})")
-        else:
-            self.opend_status.set(f"OpenD 状态 / Status: 未连接 / offline ({host}:{port})")
+        def _background_work() -> None:
+            # ── all blocking I/O happens here (off the main thread) ──────────
+            opend_connected = is_port_open(host, port)
+            dash_port_open = is_port_open("127.0.0.1", dashboard_port)
+            try:
+                settings = load_settings(REPO_ROOT / ".env")
+            except Exception:
+                settings = None
 
-        dashboard_running = self.dashboard_process is not None and self.dashboard_process.poll() is None
-        if dashboard_running or is_port_open("127.0.0.1", dashboard_port):
-            self.dashboard_status.set(f"监控页 / Dashboard: 运行中 / running (http://localhost:{dashboard_port})")
-        else:
-            self.dashboard_status.set("监控页 / Dashboard: 已停止 / stopped")
+            if settings is not None:
+                unlock_ready = "已配置 / set" if settings.futu_unlock_trade_password_md5 else "未配置 / missing"
+                auto_real = "打开 / on" if settings.futu_allow_auto_real else "关闭 / off"
+                try:
+                    baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = stack_allocations(settings)
+                    stack_text = stack_label(settings)
+                except ValueError as exc:
+                    baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = 0.0, 0.0, 0.0, 0.0, 0.0
+                    stack_text = f"配置错误 / invalid ({exc})"
+                trade_mode_text = (
+                    f"交易模式 / Trade Mode: {settings.futu_trd_env} | 实盘下单 / REAL Submit: "
+                    f"{'打开 / on' if settings.futu_enable_real_trading else '关闭 / off'} | "
+                    f"实盘自动 / REAL Auto: {auto_real} | 交易密码MD5: {unlock_ready}\n"
+                    f"组合 / Stack: {stack_text} | 基线开关 / Baseline: "
+                    f"{'开 / on' if settings.stack_baseline_enabled else '关 / off'} "
+                    f"({baseline_weight:.0%}) | Fusion ({fusion_weight:.0%}) | OFIM ({ofim_weight:.0%}) | "
+                    f"Cascade ({cascade_weight:.0%}) | 预留 / Reserve ({reserve_weight:.0%})"
+                )
+                strategy_text = self._strategy_status_text(settings)
+            else:
+                trade_mode_text = "交易模式 / Trade Mode: 配置读取失败 / config error"
+                strategy_text = "当前策略 / Strategy: 配置读取失败 / config error"
 
-        unlock_ready = "已配置 / set" if settings.futu_unlock_trade_password_md5 else "未配置 / missing"
-        auto_real = "打开 / on" if settings.futu_allow_auto_real else "关闭 / off"
-        try:
-            baseline_weight, fusion_weight, cascade_weight, reserve_weight = stack_allocations(settings)
-            stack_text = stack_label(settings)
-        except ValueError as exc:
-            baseline_weight, fusion_weight, cascade_weight, reserve_weight = 0.0, 0.0, 0.0, 0.0
-            stack_text = f"配置错误 / invalid ({exc})"
-        self.trade_mode_status.set(
-            f"交易模式 / Trade Mode: {settings.futu_trd_env} | 实盘下单 / REAL Submit: "
-            f"{'打开 / on' if settings.futu_enable_real_trading else '关闭 / off'} | "
-            f"实盘自动 / REAL Auto: {auto_real} | 交易密码MD5: {unlock_ready}\n"
-            f"组合 / Stack: {stack_text} | 基线开关 / Baseline: "
-            f"{'开 / on' if settings.stack_baseline_enabled else '关 / off'} "
-            f"({baseline_weight:.0%}) | Fusion ({fusion_weight:.0%}) | "
-            f"Cascade ({cascade_weight:.0%}) | 预留 / Reserve ({reserve_weight:.0%})"
-        )
-        self.strategy_status.set(self._strategy_status_text(settings))
-        self.auto_status.set(self._auto_status_text())
-        self.watchdog_status.set(self._watchdog_status_text())
-        self.ct_engine_status.set(_ct_status_text())
-        self._schedule_status_refresh()
+            auto_text = self._auto_status_text()
+            watchdog_text = self._watchdog_status_text()
+            ct_text = _ct_status_text()
+
+            # ── schedule UI updates back on the main thread ───────────────────
+            def _apply_ui() -> None:
+                if opend_connected:
+                    self.opend_status.set(f"OpenD 状态 / Status: 已连接 / connected ({host}:{port})")
+                else:
+                    self.opend_status.set(f"OpenD 状态 / Status: 未连接 / offline ({host}:{port})")
+
+                if dash_proc_alive or dash_port_open:
+                    self.dashboard_status.set(f"监控页 / Dashboard: 运行中 / running (http://localhost:{dashboard_port})")
+                else:
+                    self.dashboard_status.set("监控页 / Dashboard: 已停止 / stopped")
+
+                self.trade_mode_status.set(trade_mode_text)
+                self.strategy_status.set(strategy_text)
+                self.auto_status.set(auto_text)
+                self.watchdog_status.set(watchdog_text)
+                self.ct_engine_status.set(ct_text)
+                self._schedule_status_refresh()
+
+            try:
+                self.root.after(0, _apply_ui)
+            except RuntimeError:
+                pass  # window was destroyed
+
+        threading.Thread(target=_background_work, daemon=True).start()
 
     def _strategy_status_text(self, settings) -> str:
         study_mode = self.backtest_strategy.get().strip() or "baseline"
-        manual_mode = self.manual_strategy.get().strip() or "fusion"
         current_backtest = f"现在点“运行回测”会测: {_study_mode_label(study_mode)}。"
-        current_manual = f"现在点“预演 / 提交订单”会操作: {_manual_strategy_label(manual_mode)}。"
+        current_manual = "现在点各个策略框里的“预演 / 提交订单”，会分别只操作对应那一套策略。"
         return (
             f"{current_backtest}\n"
             f"{current_manual}\n"
             f"{_auto_stack_summary(settings)}\n"
             f"{_baseline_summary(settings)}\n"
             f"{_fusion_summary(settings)}\n"
+            f"{_ofim_summary(settings)}\n"
             f"{_cascade_summary(settings)}\n"
             f"{_cost_summary(settings)}"
         )
 
-    def _schedule_status_refresh(self, delay_ms: int = 5_000) -> None:
+    def _schedule_status_refresh(self, delay_ms: int = 8_000) -> None:
         if self._status_refresh_after_id is not None:
             try:
                 self.root.after_cancel(self._status_refresh_after_id)
@@ -1079,15 +1182,23 @@ class ControlPanel:
         baseline_enabled: bool,
         baseline_weight: float,
         fusion_weight: float,
+        ofim_weight: float,
         cascade_weight: float,
     ) -> None:
-        total = (baseline_weight if baseline_enabled else 0.0) + fusion_weight + cascade_weight
+        effective_baseline = baseline_weight if baseline_enabled else 0.0
+        total = effective_baseline + fusion_weight + ofim_weight + cascade_weight
         if total > 1.0 + 1e-9:
-            raise ValueError("基线权重 + Fusion 权重 + Cascade 权重不能超过 1.00。")
+            raise ValueError(
+                f"四策略权重之和 {total:.4f} 不能超过 1.00。"
+                " 请减少 Baseline / Fusion / OFIM / Cascade 的权重。"
+            )
+        if ofim_weight < 0:
+            raise ValueError("OFIM 权重不能为负数 / OFIM weight must be ≥ 0.")
         updates = {
             "STACK_BASELINE_ENABLED": str(baseline_enabled).lower(),
             "STACK_BASELINE_WEIGHT": f"{baseline_weight:.4f}",
             "STACK_FUSION_WEIGHT": f"{fusion_weight:.4f}",
+            "STACK_OFIM_WEIGHT": f"{ofim_weight:.4f}",
             "STACK_CASCADE_WEIGHT": f"{cascade_weight:.4f}",
             "STACK_ISOLATE_BASELINE_SYMBOLS": "true",
         }
@@ -1095,17 +1206,20 @@ class ControlPanel:
         self.stack_baseline_enabled.set(baseline_enabled)
         self.stack_baseline_weight.set(f"{baseline_weight:.2f}")
         self.stack_fusion_weight.set(f"{fusion_weight:.2f}")
+        self.stack_ofim_weight.set(f"{ofim_weight:.2f}")
         self.stack_cascade_weight.set(f"{cascade_weight:.2f}")
 
     def apply_stack_config(self) -> None:
         try:
             baseline_weight = float(self.stack_baseline_weight.get().strip() or "0")
             fusion_weight = float(self.stack_fusion_weight.get().strip() or "0")
+            ofim_weight = float(self.stack_ofim_weight.get().strip() or "0")
             cascade_weight = float(self.stack_cascade_weight.get().strip() or "0")
             self._apply_stack_env(
                 baseline_enabled=bool(self.stack_baseline_enabled.get()),
                 baseline_weight=baseline_weight,
                 fusion_weight=fusion_weight,
+                ofim_weight=ofim_weight,
                 cascade_weight=cascade_weight,
             )
         except ValueError as exc:
@@ -1116,21 +1230,52 @@ class ControlPanel:
         self.refresh_status()
 
     def use_fusion_only(self) -> None:
-        self._apply_stack_env(baseline_enabled=False, baseline_weight=0.0, fusion_weight=1.0, cascade_weight=0.0)
+        self._apply_stack_env(
+            baseline_enabled=False,
+            baseline_weight=0.0,
+            fusion_weight=1.0,
+            ofim_weight=0.0,
+            cascade_weight=0.0,
+        )
         self.log("已切到单跑 Fusion / Switched to Fusion-only stack.")
         self._restart_auto_runtime_if_running("已切到 Fusion Only")
         self.refresh_status()
 
+    def use_ofim_only(self) -> None:
+        self._apply_stack_env(
+            baseline_enabled=False,
+            baseline_weight=0.0,
+            fusion_weight=0.0,
+            ofim_weight=1.0,
+            cascade_weight=0.0,
+        )
+        self.log("已切到单跑 OFIM / Switched to OFIM-only stack.")
+        self._restart_auto_runtime_if_running("已切到 OFIM Only")
+        self.refresh_status()
+
     def use_fusion_cascade_split(self) -> None:
-        self._apply_stack_env(baseline_enabled=True, baseline_weight=0.25, fusion_weight=0.25, cascade_weight=0.5)
-        self.log("已切到我的策略组 50% + Claude 50% / Switched to Ours 50% + Claude 50%.")
+        self._apply_stack_env(
+            baseline_enabled=True,
+            baseline_weight=0.25,
+            fusion_weight=0.25,
+            ofim_weight=0.0,
+            cascade_weight=0.5,
+        )
+        self.log("已切到我的策略组 50% + Claude 50% (Baseline 25% + Fusion 25% + Cascade 50%).")
         self._restart_auto_runtime_if_running("已切到我的策略组 50% + Claude 50%")
         self.refresh_status()
 
     def use_full_stack(self) -> None:
-        self._apply_stack_env(baseline_enabled=True, baseline_weight=0.55, fusion_weight=0.35, cascade_weight=0.0)
-        self.log("已切到三策略组合 / Switched to the full stack.")
-        self._restart_auto_runtime_if_running("已切到三策略组合")
+        # 四策略均衡: Baseline 25% + Fusion 25% + OFIM 25% + Cascade 25%
+        self._apply_stack_env(
+            baseline_enabled=True,
+            baseline_weight=0.25,
+            fusion_weight=0.25,
+            ofim_weight=0.25,
+            cascade_weight=0.25,
+        )
+        self.log("已切到四策略均衡 25/25/25/25 / Switched to full four-strategy stack.")
+        self._restart_auto_runtime_if_running("已切到四策略均衡")
         self.refresh_status()
 
     def arm_simulate_mode(self) -> None:
@@ -1144,6 +1289,69 @@ class ControlPanel:
         self.log("已切到模拟盘模式 / Switched to SIMULATE mode.")
         self._restart_auto_runtime_if_running("交易环境已切到 SIMULATE")
         self.refresh_status()
+
+    def reset_simulate_account(self) -> None:
+        # Futu OpenAPI v10 Python SDK does not expose a programmatic reset endpoint.
+        # Guide the user to do it manually in the Futu/Moomoo app, then offer to
+        # stop + restart the auto-trader so it picks up the clean account state.
+        messagebox.showinfo(
+            "重置模拟账户 / Reset Simulate Account",
+            "富途 OpenAPI 不支持通过 API 重置模拟账户，请在客户端手动操作：\n\n"
+            "  1. 打开富途牛牛 / Moomoo App\n"
+            "  2. 进入「交易」→「模拟交易」\n"
+            "  3. 右上角「设置」→「重置账户」\n"
+            "  4. 确认重置（持仓清零，恢复初始资金）\n\n"
+            "完成后点「确定」，程序会自动重启自动交易引擎。\n\n"
+            "── English ──\n"
+            "The Futu OpenAPI does not support programmatic account reset.\n"
+            "In the Moomoo app: Trade → Simulate Trading → ⚙️ → Reset Account.\n"
+            "Click OK after resetting — the auto-trader will restart automatically.",
+        )
+        # User clicked OK — restart the auto-trader to load the fresh account state
+        if self._runtime_processes_running():
+            self.log("重启自动交易引擎以加载重置后的账户 / Restarting auto-trader to load reset account...")
+            self._stop_auto_runtime_processes(log_when_idle=False)
+            self.root.after(2000, self._start_auto_runtime_no_prompt)
+        else:
+            self.log("模拟账户重置指引已显示。自动交易未在运行，无需重启。")
+
+    def cancel_all_orders(self) -> None:
+        """Cancel all open orders in the current trading account via API."""
+        confirmed = messagebox.askyesno(
+            "撤销全部挂单 / Cancel All Open Orders",
+            "这会通过 API 撤销当前账户所有未成交挂单。\n"
+            "This will cancel ALL open/pending orders in the current account via API.\n\n"
+            "确认撤销？/ Confirm cancel all orders?",
+        )
+        if not confirmed:
+            return
+        self.log("撤销全部挂单中... / Cancelling all open orders...")
+        self._run_command_async(
+            "cancel-orders",
+            self._python_cli("cancel-orders"),
+        )
+
+    def flatten_all_positions(self) -> None:
+        settings = load_settings()
+        env_label = settings.futu_trd_env
+        confirmed = messagebox.askyesno(
+            "清空全部持仓 / Flatten All Positions",
+            f"这会对当前 {env_label} 账户所有持仓各提交一笔市价卖单，全部平仓至现金。\n"
+            "自动交易程序会先停止，平仓后重启（从空仓开始按当前策略建仓）。\n\n"
+            f"This will sell ALL open positions in the {env_label} account to cash.\n"
+            "The auto-trader will stop, flatten, then restart from a clean slate.\n\n"
+            "确认清仓？ / Confirm flatten all?",
+        )
+        if not confirmed:
+            return
+        was_running = self._runtime_processes_running()
+        if was_running:
+            self.log("停止自动交易程序... / Stopping auto-trader before flatten...")
+            self._stop_auto_runtime_processes(log_when_idle=False)
+        self.log("提交清仓订单... / Submitting flatten orders (--submit)...")
+        self._run_command_async("flatten-all", self._python_cli("flatten-all", "--submit"))
+        if was_running:
+            self.root.after(5000, self._start_auto_runtime_no_prompt)
 
     def arm_real_manual_mode(self) -> None:
         if not messagebox.askyesno(
@@ -1375,6 +1583,21 @@ class ControlPanel:
             self.log(f"已发送停止信号 / Sent stop signal to {' and '.join(stop_messages)}.")
         else:
             self.log("自动运行和守护监控都未运行 / Auto run and watchdog are both stopped.")
+
+        # Hard-kill any lingering auto-trader or watchdog processes that escaped
+        # PID-file tracking (e.g. started via a stale watchdog with old config).
+        for pattern in ("taa_futu.auto_trader", "taa_futu.watchdog"):
+            try:
+                result = subprocess.run(
+                    ["pkill", "-f", pattern],
+                    check=False,
+                    capture_output=True,
+                )
+                if result.returncode == 0:
+                    self.log(f"强制清理残留进程 / Force-killed stray processes matching: {pattern}")
+            except Exception:
+                pass
+
         self.root.after(1500, self.refresh_status)
 
     def one_click_start(self) -> None:
@@ -1474,10 +1697,17 @@ class ControlPanel:
     def _confirm_standalone_override(self, strategy_name: str) -> bool:
         settings = self._current_settings()
         try:
-            baseline_weight, fusion_weight, cascade_weight, reserve_weight = stack_allocations(settings)
+            baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = stack_allocations(settings)
         except ValueError:
             return True
-        stack_active = settings.stack_baseline_enabled or reserve_weight > 0 or fusion_weight < 0.999 or cascade_weight > 0.001 or baseline_weight > 0.001
+        stack_active = (
+            settings.stack_baseline_enabled
+            or reserve_weight > 0
+            or fusion_weight > 0.001
+            or ofim_weight > 0.001
+            or cascade_weight > 0.001
+            or baseline_weight > 0.001
+        )
         if not stack_active:
             return True
         return messagebox.askyesno(
@@ -1504,6 +1734,11 @@ class ControlPanel:
             self.log(
                 f"Fusion 日内回放会抓分钟级数据。当前区间 {span_days} 天，可能需要较长时间；下面日志会逐只股票显示进度。"
             )
+        if strategy == "ofim" and start_date and end_date:
+            span_days = (end_date - start_date).days + 1
+            self.log(
+                f"OFIM 回放会抓分钟级数据，并读取 L2/逐笔。当前区间 {span_days} 天，日志会按标的显示进度。"
+            )
         if strategy == "cascade" and start_date and end_date:
             span_days = (end_date - start_date).days + 1
             self.log(
@@ -1512,7 +1747,7 @@ class ControlPanel:
         if strategy == "stack" and start_date and end_date:
             span_days = (end_date - start_date).days + 1
             self.log(
-                f"组合回测会同时抓 Baseline 日线、Fusion 分钟线和 Claude/Cascade 日线。当前区间 {span_days} 天，日志会按组件显示进度。"
+                f"组合回测会同时抓 Baseline 日线、Fusion 分钟线、OFIM 分钟线和 Claude/Cascade 日线。当前区间 {span_days} 天，日志会按组件显示进度。"
             )
         self._run_command_async(
             "backtest",
@@ -1538,6 +1773,9 @@ class ControlPanel:
         if strategy == "baseline":
             self.run_paper_trade()
             return
+        if strategy == "ofim":
+            self.run_ofim_only()
+            return
         if strategy == "cascade":
             self.run_cascade()
             return
@@ -1547,6 +1785,9 @@ class ControlPanel:
         strategy = self.manual_strategy.get().strip() or "fusion"
         if strategy == "baseline":
             self.submit_paper_trade()
+            return
+        if strategy == "ofim":
+            self.submit_ofim_only()
             return
         if strategy == "cascade":
             self.submit_cascade()
@@ -1566,12 +1807,22 @@ class ControlPanel:
     def run_fusion(self) -> None:
         self._run_command_async("fusion-intraday", self._python_cli("fusion-intraday"))
 
+    def run_ofim_only(self) -> None:
+        self._run_command_async("ofim-intraday", self._python_cli("ofim-intraday"))
+
     def submit_fusion(self) -> None:
-        if not self._confirm_standalone_override("Fusion Intraday"):
+        if not self._confirm_standalone_override("Fusion"):
             return
-        if not self._confirm_submit("Fusion Intraday"):
+        if not self._confirm_submit("Fusion"):
             return
         self._run_command_async("fusion-intraday-submit", self._python_cli("fusion-intraday", "--submit"))
+
+    def submit_ofim_only(self) -> None:
+        if not self._confirm_standalone_override("OFIM"):
+            return
+        if not self._confirm_submit("OFIM"):
+            return
+        self._run_command_async("ofim-intraday-submit", self._python_cli("ofim-intraday", "--submit"))
 
     def run_cascade(self) -> None:
         self._run_command_async("cascade-strategy", self._python_cli("cascade-strategy"))

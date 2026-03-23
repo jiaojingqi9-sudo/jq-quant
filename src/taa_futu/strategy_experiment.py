@@ -12,10 +12,11 @@ from .strategy_stack import effective_fusion_settings, stack_allocations
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SPLIT_STATE_FILE = REPO_ROOT / "runtime" / "strategy_split_state.json"
-STRATEGY_NAMES = ("Baseline", "Fusion", "Claude/Cascade")
+STRATEGY_NAMES = ("Baseline", "Fusion", "OFIM", "Claude/Cascade")
 STRATEGY_STATE_KEYS = {
     "Baseline": "baseline",
     "Fusion": "fusion",
+    "OFIM": "ofim",
     "Claude/Cascade": "cascade",
 }
 
@@ -49,10 +50,11 @@ def filter_fills_since_reset(filled_cost_view: pd.DataFrame, split_state: dict[s
 
 
 def strategy_allocation_map(settings) -> dict[str, float]:
-    baseline_weight, fusion_weight, cascade_weight, _reserve_weight = stack_allocations(settings)
+    baseline_weight, fusion_weight, ofim_weight, cascade_weight, _reserve_weight = stack_allocations(settings)
     return {
         "Baseline": float(baseline_weight),
         "Fusion": float(fusion_weight),
+        "OFIM": float(ofim_weight),
         "Claude/Cascade": float(cascade_weight),
     }
 
@@ -62,6 +64,7 @@ def split_state_weight_map(split_state: dict[str, object]) -> dict[str, float]:
     return {
         "Baseline": float(((strategies.get("baseline") or {}).get("weight")) or 0.0),
         "Fusion": float(((strategies.get("fusion") or {}).get("weight")) or 0.0),
+        "OFIM": float(((strategies.get("ofim") or {}).get("weight")) or 0.0),
         "Claude/Cascade": float(((strategies.get("cascade") or {}).get("weight")) or 0.0),
     }
 
@@ -77,6 +80,7 @@ def strategy_symbol_sets(settings) -> dict[str, set[str]]:
     return {
         "Baseline": set(settings.symbols),
         "Fusion": set(fusion_settings.fusion_universe) | {settings.fusion_benchmark},
+        "OFIM": set(fusion_settings.ofim_universe),
         "Claude/Cascade": set(cascade_trade_symbols(settings)),
     }
 
@@ -85,11 +89,13 @@ def strategy_targets_map(
     *,
     baseline_targets: dict[str, float],
     fusion_targets: dict[str, float],
+    ofim_targets: dict[str, float],
     cascade_targets: dict[str, float],
 ) -> dict[str, dict[str, float]]:
     return {
         "Baseline": dict(baseline_targets),
         "Fusion": dict(fusion_targets),
+        "OFIM": dict(ofim_targets),
         "Claude/Cascade": dict(cascade_targets),
     }
 
@@ -145,12 +151,14 @@ def current_strategy_holdings(
     combined_targets: dict[str, float],
     baseline_targets: dict[str, float],
     fusion_targets: dict[str, float],
+    ofim_targets: dict[str, float],
     cascade_targets: dict[str, float],
 ) -> pd.DataFrame:
     strategy_sets = strategy_symbol_sets(settings)
     strategy_targets = strategy_targets_map(
         baseline_targets=baseline_targets,
         fusion_targets=fusion_targets,
+        ofim_targets=ofim_targets,
         cascade_targets=cascade_targets,
     )
     allocation_map = strategy_allocation_map(settings)
@@ -272,7 +280,7 @@ def build_strategy_ledger(
                 "当前允许操作总现金 / Allowed Capital": allowed_capital,
                 "当前市值 / Holdings": holdings,
                 "预算余量 / Budget Left": budget_left,
-                "自重置收益 / PnL Since Reset": current_value - start_cash,
+                "净表现 / Net Performance": current_value - start_cash,
                 "当前浮盈 / Unrealized": unrealized,
                 "交易成本 / Fees": fees,
                 "成交笔数 / Trades": trades,

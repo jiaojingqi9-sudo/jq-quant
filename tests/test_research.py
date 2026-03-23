@@ -35,6 +35,21 @@ def _settings() -> Settings:
         fusion_max_spread_bps=15.0,
         fusion_order_book_depth=3,
         fusion_tick_window=50,
+        ofim_universe=("US.AAPL",),
+        ofim_benchmark="US.QQQ",
+        ofim_lookback_bars=60,
+        ofim_depth_tiers=((1, 5), (6, 20), (21, 60)),
+        ofim_entry_threshold=0.20,
+        ofim_exit_threshold=0.05,
+        ofim_max_score=0.60,
+        ofim_min_vol_acceleration=1.20,
+        ofim_max_spread_bps=15.0,
+        ofim_tick_window=100,
+        ofim_order_book_depth=60,
+        ofim_max_position_weight=0.15,
+        ofim_max_gross_exposure=0.80,
+        ofim_max_positions=5,
+        stack_ofim_weight=0.0,
         futu_host="127.0.0.1",
         futu_port=11111,
         futu_trd_market="US",
@@ -109,6 +124,7 @@ def test_run_strategy_stack_replay_combines_sleeves() -> None:
             "stack_baseline_enabled": True,
             "stack_baseline_weight": 0.5,
             "stack_fusion_weight": 0.4,
+            "stack_ofim_weight": 0.0,
         }
     )
 
@@ -143,6 +159,7 @@ def test_run_strategy_stack_replay_combines_sleeves() -> None:
 
     assert result.summary["baseline_alloc"] == 0.5
     assert result.summary["fusion_alloc"] == 0.4
+    assert result.summary["ofim_alloc"] == 0.0
     assert result.summary["reserve_alloc"] == 0.1
     assert result.portfolio_value_curve.iloc[-1] > 0
     assert "Baseline Strategy" in set(result.trade_log["strategy"])

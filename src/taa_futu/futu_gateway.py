@@ -247,6 +247,40 @@ class FutuPaperTrader:
     def resolve_sim_account(self) -> int:
         return self.resolve_trade_account()
 
+    def cancel_all_open_orders(self, acc_id: int) -> int:
+        """Cancel every open order on the account one-by-one via modify_order(CANCEL).
+
+        ``cancel_all_order`` is not supported in SIMULATE mode, so we iterate
+        over the live open-order list and cancel each order individually.
+
+        Returns the number of orders that were cancelled.
+        """
+        open_orders = self.get_open_orders(acc_id)
+        if open_orders.empty:
+            return 0
+        if "order_id" not in open_orders.columns:
+            raise FutuTradeError("cancel_all_open_orders: order_id column missing from order list")
+        cancelled = 0
+        errors: list[str] = []
+        for order_id in open_orders["order_id"].tolist():
+            ret, data = self._call_with_retry(
+                f"modify_order[cancel][{order_id}]",
+                self.trade_ctx.modify_order,
+                modify_order_op=self._futu.ModifyOrderOp.CANCEL,
+                order_id=order_id,
+                qty=0,
+                price=0,
+                trd_env=self._trade_env(),
+                acc_id=acc_id,
+            )
+            if ret != self._futu.RET_OK:
+                errors.append(f"order_id={order_id}: {data}")
+            else:
+                cancelled += 1
+        if errors and cancelled == 0:
+            raise FutuTradeError(f"cancel_all_open_orders: all cancellations failed: {'; '.join(errors)}")
+        return cancelled
+
     @staticmethod
     def _account_cash_available(account: pd.Series, positions: pd.DataFrame | None = None) -> float:
         for column in ("cash", "cash_balance", "available_funds"):
@@ -614,6 +648,14 @@ class FutuPaperTrader:
             side = "BUY" if delta_qty > 0 else "SELL"
             order_qty = delta_qty if delta_qty > 0 else min(abs(delta_qty), can_sell_qty)
             if order_qty <= 0:
+                continue
+
+            # Skip orders below the minimum notional threshold to avoid churning
+            # tiny fractional-share adjustments (e.g. 1-share DBC @ $29).
+            # Full exits (target_weight == 0) are always allowed regardless of size.
+            min_notional = getattr(self.settings, "auto_trader_min_order_value_usd", 0.0)
+            order_notional = order_qty * reference_price
+            if min_notional > 0 and order_notional < min_notional and target_weight > 0:
                 continue
 
             raw_price = float(snapshot["ask_price"] if side == "BUY" and snapshot["ask_price"] > 0 else snapshot["bid_price"])

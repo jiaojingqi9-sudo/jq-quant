@@ -16,6 +16,7 @@ import pandas as pd
 from .config import Settings, load_settings
 from .cascade_sleeve import generate_live_cascade_plan
 from .fusion_intraday import FusionIntradayStrategy
+from .ofim_intraday import OfimIntradayStrategy
 from .futu_gateway import FutuPaperTrader, FutuTradeError, FutuTransientError, PlannedOrder
 from . import market_logger
 from .strategy_stack import (
@@ -34,11 +35,27 @@ AUTO_TRADER_STATUS_FILE = RUNTIME_DIR / "auto_trader_status.json"
 AUTO_TRADER_PID_FILE = RUNTIME_DIR / "auto_trader.pid"
 AUTO_TRADER_LOG_FILE = RUNTIME_DIR / "auto_trader.log"
 
+# Module-level OFIM strategy instance — persists prev_order_books across polling cycles
+# so the OFI delta is computed against the *previous* LOB snapshot, not against empty.
+_ofim_strategy: OfimIntradayStrategy | None = None
+
 
 @dataclass
 class AutoTraderState:
     last_signature: str = ""
     last_submit_at: datetime | None = None
+    # Cascade is a daily strategy — cache its plan so it only recomputes once per
+    # trading day instead of every 60-second cycle.  Reusing the plan also prevents
+    # intraday oscillation caused by incomplete daily bars returned by Futu K-lines.
+    cascade_plan: object = None   # CascadeSleevePlan | None
+    cascade_plan_date: str = ""   # "YYYY-MM-DD" in market timezone
+    # Track when each symbol was last bought so we can enforce a minimum hold time.
+    # This prevents OFIM from entering a position and exiting it 60 seconds later.
+    position_entry_times: dict = None  # code → datetime (UTC) of last BUY submission
+
+    def __post_init__(self):
+        if self.position_entry_times is None:
+            object.__setattr__(self, "position_entry_times", {})
 
 
 def _is_transient_runtime_error(message: object) -> bool:
@@ -105,13 +122,34 @@ def _order_signature(orders: list[PlannedOrder]) -> str:
     return ";".join(sorted(normalized))
 
 
+def _oldest_open_order_age(open_orders: pd.DataFrame, now_utc: datetime) -> timedelta | None:
+    """Return the age of the oldest open order, or None if timestamps are unavailable.
+
+    Falls back from ``create_time`` to ``updated_time`` if the first column is
+    absent or entirely unparseable.  Returns ``None`` only when no usable
+    timestamp exists at all — callers treat that as "assume stale".
+    """
+    for col in ("create_time", "updated_time"):
+        if col not in open_orders.columns:
+            continue
+        try:
+            times = pd.to_datetime(open_orders[col], errors="coerce", utc=True)
+            oldest = times.dropna().min()
+            if not pd.isna(oldest):
+                return now_utc - oldest.to_pydatetime()
+        except Exception:
+            continue
+    return None
+
+
 def _strategy_stack_target_weights(
     settings: Settings,
     trader: FutuPaperTrader,
     now_utc: datetime,
     positions: pd.DataFrame,
+    state: "AutoTraderState | None" = None,
 ) -> tuple[dict[str, float], dict[str, object]]:
-    baseline_weight, fusion_weight, cascade_weight, _reserve_weight = stack_allocations(settings)
+    baseline_weight, fusion_weight, ofim_weight, cascade_weight, _reserve_weight = stack_allocations(settings)
     fusion_settings = effective_fusion_settings(settings)
 
     baseline_weights: dict[str, float] = {}
@@ -142,13 +180,50 @@ def _strategy_stack_target_weights(
         fusion_plan = FusionIntradayStrategy(fusion_settings).generate_plan(trader, held_symbols)
         diagnostics["fusion_benchmark_score"] = round(float(fusion_plan.benchmark_score), 6)
         diagnostics["fusion_targets"] = tuple(sorted(fusion_plan.target_weights))
-        scaled_fusion_weights = {
-            code: round(weight * fusion_weight, 6) for code, weight in fusion_plan.target_weights.items()
-        }
+        scaled_fusion_weights = {code: round(weight * fusion_weight, 6) for code, weight in fusion_plan.target_weights.items()}
+
+    scaled_ofim_weights: dict[str, float] = {}
+    if ofim_weight > 0 and fusion_settings.ofim_universe:
+        global _ofim_strategy  # noqa: PLW0603
+        ofim_positions = positions
+        ofim_symbols = set(fusion_settings.ofim_universe)
+        if not ofim_positions.empty and ofim_symbols:
+            ofim_positions = ofim_positions[ofim_positions["code"].isin(ofim_symbols)].copy()
+        ofim_held_symbols = set(ofim_positions["code"].tolist()) if not ofim_positions.empty else set()
+        # Reuse the persistent instance so prev_order_books is maintained across cycles
+        if _ofim_strategy is None:
+            _ofim_strategy = OfimIntradayStrategy(fusion_settings)
+        else:
+            # Settings may change between cycles (e.g. after a weight edit) — update them
+            object.__setattr__(_ofim_strategy, "settings", fusion_settings)
+        ofim_plan = _ofim_strategy.generate_plan(trader, ofim_held_symbols)
+        diagnostics["ofim_benchmark_score"] = round(float(ofim_plan.benchmark_score), 6)
+        diagnostics["ofim_targets"] = tuple(sorted(ofim_plan.target_weights))
+        diagnostics["ofim_top"] = tuple(sorted(ofim_plan.target_weights, key=ofim_plan.target_weights.get, reverse=True)[:3])
+        scaled_ofim_weights = {code: round(weight * ofim_weight, 6) for code, weight in ofim_plan.target_weights.items()}
 
     scaled_cascade_weights: dict[str, float] = {}
     if cascade_weight > 0:
-        cascade_plan = generate_live_cascade_plan(settings, trader)
+        market_date = _market_now(now_utc, settings).date().isoformat()
+        # Daily caching: Cascade is a daily strategy — reuse the same plan all day.
+        # This prevents intraday churn from incomplete K-line bars re-running every 60 s.
+        if (
+            state is not None
+            and state.cascade_plan is not None
+            and state.cascade_plan_date == market_date
+        ):
+            cascade_plan = state.cascade_plan
+            diagnostics["cascade_cached"] = True
+        else:
+            cascade_plan = generate_live_cascade_plan(settings, trader)
+            if state is not None:
+                state.cascade_plan = cascade_plan
+                state.cascade_plan_date = market_date
+            _log(
+                f"cascade: generated new daily plan "
+                f"(date={market_date}, regime={cascade_plan.regime_label}, "
+                f"score={cascade_plan.regime_score:+.3f})"
+            )
         diagnostics["cascade_regime"] = cascade_plan.regime_label
         diagnostics["cascade_score"] = round(float(cascade_plan.regime_score), 6)
         diagnostics["cascade_targets"] = tuple(sorted(cascade_plan.target_weights))
@@ -158,14 +233,20 @@ def _strategy_stack_target_weights(
             code: round(weight * cascade_weight, 6) for code, weight in cascade_plan.target_weights.items()
         }
 
-    return stack_target_weights(baseline_weights, scaled_fusion_weights, scaled_cascade_weights), diagnostics
+    return stack_target_weights(baseline_weights, scaled_fusion_weights, scaled_ofim_weights, scaled_cascade_weights), diagnostics
 
 
 def _stack_monitoring_detail(settings: Settings, diagnostics: dict[str, object]) -> str:
     detail_parts = [f"stack={stack_label(settings)}"]
     fusion_score = diagnostics.get("fusion_benchmark_score")
     if fusion_score is not None:
-        detail_parts.append(f"fusion_benchmark_score={float(fusion_score):.4f}")
+        detail_parts.append(f"fusion_bm={float(fusion_score):.4f}")
+    ofim_score = diagnostics.get("ofim_benchmark_score")
+    if ofim_score is not None:
+        detail_parts.append(f"ofim_bm={float(ofim_score):.4f}")
+    ofim_top = diagnostics.get("ofim_top")
+    if ofim_top:
+        detail_parts.append(f"ofim_top={','.join(str(s).replace('US.', '') for s in ofim_top)}")
     cascade_regime = diagnostics.get("cascade_regime")
     if cascade_regime:
         cascade_score = diagnostics.get("cascade_score")
@@ -258,13 +339,55 @@ def run_cycle(settings: Settings, state: AutoTraderState, *, submit: bool) -> tu
         acc_id = trader.resolve_trade_account()
         open_orders = trader.get_open_orders(acc_id)
         if not open_orders.empty:
-            detail = f"existing_open_orders={len(open_orders)}"
-            return "waiting", detail
+            stale_threshold = timedelta(minutes=settings.auto_trader_order_stale_minutes)
+            oldest_age = _oldest_open_order_age(open_orders, now_utc)
+            # Treat unreadable timestamps as stale so we never get stuck permanently.
+            is_stale = oldest_age is None or oldest_age >= stale_threshold
+            if is_stale:
+                age_desc = f"{oldest_age.total_seconds():.0f}s" if oldest_age else "unknown"
+                n_cancelled = trader.cancel_all_open_orders(acc_id)
+                _log(
+                    f"auto-cancelled {n_cancelled} stale open order(s) "
+                    f"(oldest_age={age_desc}, threshold={settings.auto_trader_order_stale_minutes}min) "
+                    "— proceeding with fresh cycle"
+                )
+                # Fall through: recompute targets with fresh prices immediately.
+            else:
+                age_s = int(oldest_age.total_seconds())
+                threshold_s = int(stale_threshold.total_seconds())
+                return "waiting", (
+                    f"waiting_for_fill: open_orders={len(open_orders)} "
+                    f"oldest={age_s}s/{threshold_s}s"
+                )
 
         positions = trader.get_positions(acc_id)
         ignored_symbols: set[str] = set()
 
-        stack_target_map, diagnostics = _strategy_stack_target_weights(settings, trader, now_utc, positions)
+        stack_target_map, diagnostics = _strategy_stack_target_weights(settings, trader, now_utc, positions, state)
+
+        # Minimum hold time: prevent exiting a recently entered position.
+        # If a BUY was submitted within AUTO_TRADER_MIN_HOLD_MINUTES minutes,
+        # add that symbol to ignored_symbols so plan_rebalance cannot generate
+        # a SELL for it. Full exits (target_weight already 0 AND no held position)
+        # are unaffected because ignored_symbols only skips sell-side rebalancing.
+        min_hold = timedelta(minutes=settings.auto_trader_min_hold_minutes)
+        if min_hold.total_seconds() > 0 and state is not None:
+            for code, entry_time in list(state.position_entry_times.items()):
+                age = now_utc - entry_time
+                if age < min_hold:
+                    # Only protect if we still hold a position
+                    if _position_quantity(positions, code) > 0 and code not in stack_target_map:
+                        ignored_symbols.add(code)
+                        remaining_s = int((min_hold - age).total_seconds())
+                        _log(
+                            f"hold-protect: keeping {code} position "
+                            f"(entered {int(age.total_seconds())}s ago, "
+                            f"hold={settings.auto_trader_min_hold_minutes}min, "
+                            f"exits in {remaining_s}s)"
+                        )
+                else:
+                    # Expired — clean up so the dict doesn't grow unbounded
+                    state.position_entry_times.pop(code, None)
 
         planned_orders: list[PlannedOrder] = []
         strategy_orders: list[PlannedOrder] = []
@@ -306,6 +429,13 @@ def run_cycle(settings: Settings, state: AutoTraderState, *, submit: bool) -> tu
         errored = int((result["status"] == "error").sum()) if not result.empty else 0
         state.last_signature = signature
         state.last_submit_at = now_utc
+        # Record entry times for BUY orders so the hold-time guard can protect them.
+        # Clear entry times for SELL orders (position closed, protection no longer needed).
+        for order in planned_orders:
+            if order.side == "BUY":
+                state.position_entry_times[order.code] = now_utc
+            elif order.side == "SELL":
+                state.position_entry_times.pop(order.code, None)
         action_name = "submitted_with_errors" if errored else "submitted"
         transient_only = False
         if errored:

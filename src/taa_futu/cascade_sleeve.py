@@ -291,7 +291,14 @@ class _LiveCascadeExchange:
                 ktype="K_DAY",
                 session="RTH",
             )
-            self._history_cache[cache_key] = _normalize_history(frame).tail(limit).reset_index(drop=True)
+            normalized = _normalize_history(frame)
+            # Exclude today's incomplete intraday bar — Cascade is a daily strategy
+            # and must compute momentum from confirmed previous-day closes only.
+            # Without this, signals re-run every 60 s and churn positions on tiny
+            # intraday ticks, generating excessive fees.
+            today = datetime.now(UTC).date()
+            normalized = normalized[normalized["timestamp"].dt.date < today]
+            self._history_cache[cache_key] = normalized.tail(limit).reset_index(drop=True)
         return self._history_cache[cache_key].copy()
 
     def get_price(self, symbol: str) -> float:
