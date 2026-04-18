@@ -76,12 +76,19 @@ def split_state_matches_current(split_state: dict[str, object], settings) -> boo
 
 
 def strategy_symbol_sets(settings) -> dict[str, set[str]]:
+    """Return the set of symbols "owned" by each strategy for attribution purposes.
+
+    Strategies with 0% allocation are excluded from ownership so that their
+    universe symbols don't create spurious "Shared/Overlap" conflicts when a
+    sibling strategy (e.g. OFIM replacing Fusion) shares the same universe.
+    """
     fusion_settings = effective_fusion_settings(settings)
+    baseline_w, fusion_w, ofim_w, cascade_w, _ = stack_allocations(settings)
     return {
-        "Baseline": set(settings.symbols),
-        "Fusion": set(fusion_settings.fusion_universe) | {settings.fusion_benchmark},
-        "OFIM": set(fusion_settings.ofim_universe),
-        "Claude/Cascade": set(cascade_trade_symbols(settings)),
+        "Baseline": set(settings.symbols) if baseline_w > 0 else set(),
+        "Fusion": (set(fusion_settings.fusion_universe) | {settings.fusion_benchmark}) if fusion_w > 0 else set(),
+        "OFIM": set(fusion_settings.ofim_universe) if ofim_w > 0 else set(),
+        "Claude/Cascade": set(cascade_trade_symbols(settings)) if cascade_w > 0 else set(),
     }
 
 

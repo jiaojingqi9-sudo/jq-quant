@@ -52,6 +52,13 @@ class DualMomentumStrategy(BaseStrategy):
                 metadata={"error": "empty_universe"},
             )
 
+        if len(universe) < 2:
+            logger.warning(
+                "Dual momentum universe has only %d symbol(s); need at least 2 "
+                "for meaningful relative momentum ranking.",
+                len(universe),
+            )
+
         # Fetch daily OHLCV for ~370 days to compute monthly returns
         lookback_days = int(lookback_months * 30.5) + 30
         prices_by_symbol: dict[str, pd.DataFrame] = {}
@@ -126,9 +133,14 @@ class DualMomentumStrategy(BaseStrategy):
                 metadata={"error": "no_valid_data"},
             )
 
-        # Relative momentum: rank by trailing return
+        # Relative momentum: rank by trailing return.
+        # top_k is configurable; default 2 (top 2 assets) but capped to available
+        # symbols so a small universe never causes an empty selection.
+        relative_momentum_count = max(1, min(
+            getattr(self.settings, "dm_top_k", 2),
+            len(trailing_returns),
+        ))
         ranked = sorted(trailing_returns.items(), key=lambda x: x[1], reverse=True)
-        relative_momentum_count = 2  # Top 2 assets
         relative_momentum_symbols = [sym for sym, _ in ranked[:relative_momentum_count]]
 
         logger.info(

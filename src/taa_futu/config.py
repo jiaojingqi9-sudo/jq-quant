@@ -16,6 +16,30 @@ def _parse_symbols(raw: str | None) -> tuple[str, ...]:
     return symbols or DEFAULT_SYMBOLS
 
 
+def _parse_symbols_optional(raw: str | None) -> tuple[str, ...]:
+    """Like _parse_symbols but returns an empty tuple when the env var is unset."""
+    if not raw:
+        return ()
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _parse_crypto_proxy_map(raw: str | None) -> tuple[tuple[str, str], ...]:
+    """Parse OFIM_CRYPTO_TO_PROXY='BTC/USDT:US.IBIT,ETH/USDT:US.ETHA' into a tuple of pairs."""
+    if not raw:
+        return ()
+    pairs: list[tuple[str, str]] = []
+    for item in raw.split(","):
+        item = item.strip()
+        if ":" not in item:
+            continue
+        crypto, proxy = item.split(":", 1)
+        crypto = crypto.strip()
+        proxy = proxy.strip()
+        if crypto and proxy:
+            pairs.append((crypto, proxy))
+    return tuple(pairs)
+
+
 def _parse_optional_int(raw: str | None) -> int | None:
     if raw is None or raw == "":
         return None
@@ -69,6 +93,18 @@ class Settings:
     ofim_max_position_weight: float
     ofim_max_gross_exposure: float
     ofim_max_positions: int
+    # ── OFIM crypto extension ─────────────────────────────────────────────────
+    # Direct crypto symbols scored by OFIM using Binance LOB data.
+    # Empty tuple = feature disabled (default).
+    ofim_crypto_universe: tuple[str, ...]
+    # Maps crypto symbols → Futu-tradeable proxy ETFs for execution.
+    # Format: (("BTC/USDT", "US.IBIT"), ("ETH/USDT", "US.ETHA"), ...)
+    ofim_crypto_to_proxy: tuple[tuple[str, str], ...]
+    # Binance (or other ccxt-compatible) exchange credentials for crypto LOB data.
+    ofim_crypto_exchange: str
+    ofim_crypto_api_key: str | None
+    ofim_crypto_api_secret: str | None
+    ofim_crypto_sandbox: bool
     futu_host: str
     futu_port: int
     futu_trd_market: str
@@ -89,6 +125,7 @@ class Settings:
     auto_trader_order_stale_minutes: int = 5
     auto_trader_min_order_value_usd: float = 500.0
     auto_trader_min_hold_minutes: int = 10
+    auto_trader_rebalance_drift_pct: float = 1.0
     watchdog_min_interval_seconds: int = 240
     watchdog_max_interval_seconds: int = 540
     watchdog_outside_window_min_interval_seconds: int = 900
@@ -122,6 +159,34 @@ class Settings:
     trade_cost_taf_sell_max: float = 8.30
 
 
+def _validate_settings(s: "Settings") -> None:
+    """Raise ValueError for obviously invalid configurations caught at load time."""
+    total_stack = (
+        (s.stack_baseline_weight if s.stack_baseline_enabled else 0.0)
+        + s.stack_fusion_weight
+        + s.stack_ofim_weight
+        + s.stack_cascade_weight
+    )
+    if total_stack > 1.0 + 1e-6:
+        raise ValueError(
+            f"Strategy weights sum to {total_stack:.4f} which exceeds 1.0. "
+            "Check STACK_BASELINE_WEIGHT / STACK_FUSION_WEIGHT / STACK_OFIM_WEIGHT / STACK_CASCADE_WEIGHT."
+        )
+    for name, val in (
+        ("stack_baseline_weight", s.stack_baseline_weight),
+        ("stack_fusion_weight", s.stack_fusion_weight),
+        ("stack_ofim_weight", s.stack_ofim_weight),
+        ("stack_cascade_weight", s.stack_cascade_weight),
+    ):
+        if val < 0:
+            raise ValueError(f"{name} must be >= 0, got {val}.")
+    try:
+        from datetime import date as _date
+        _date.fromisoformat(s.start_date)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"TAA_START_DATE='{s.start_date}' is not a valid ISO date: {exc}") from exc
+
+
 def load_settings(env_file: str | Path = ".env") -> Settings:
     # The local .env file is the source of truth for this desktop app.
     # Use override=True so runtime processes pick up the latest values after UI changes.
@@ -138,7 +203,7 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
     if not ofim_depth_tiers:
         ofim_depth_tiers = ((1, 5), (6, 20), (21, 60))
 
-    return Settings(
+    settings = Settings(
         symbols=_parse_symbols(os.getenv("TAA_SYMBOLS")),
         benchmark=os.getenv("TAA_BENCHMARK", "US.SPY"),
         start_date=os.getenv("TAA_START_DATE", "2005-01-01"),
@@ -171,6 +236,12 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
         ofim_max_position_weight=float(os.getenv("OFIM_MAX_POSITION_WEIGHT", "0.15")),
         ofim_max_gross_exposure=float(os.getenv("OFIM_MAX_GROSS_EXPOSURE", "0.80")),
         ofim_max_positions=int(os.getenv("OFIM_MAX_POSITIONS", "5")),
+        ofim_crypto_universe=_parse_symbols_optional(os.getenv("OFIM_CRYPTO_UNIVERSE")),
+        ofim_crypto_to_proxy=_parse_crypto_proxy_map(os.getenv("OFIM_CRYPTO_TO_PROXY")),
+        ofim_crypto_exchange=os.getenv("OFIM_CRYPTO_EXCHANGE", "binance"),
+        ofim_crypto_api_key=_parse_optional_str(os.getenv("OFIM_CRYPTO_API_KEY")),
+        ofim_crypto_api_secret=_parse_optional_str(os.getenv("OFIM_CRYPTO_API_SECRET")),
+        ofim_crypto_sandbox=_parse_bool(os.getenv("OFIM_CRYPTO_SANDBOX"), default=False),
         futu_host=os.getenv("FUTU_HOST", "127.0.0.1"),
         futu_port=int(os.getenv("FUTU_PORT", "11111")),
         futu_trd_market=os.getenv("FUTU_TRD_MARKET", "US"),
@@ -191,6 +262,7 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
         auto_trader_order_stale_minutes=int(os.getenv("AUTO_TRADER_ORDER_STALE_MINUTES", "5")),
         auto_trader_min_order_value_usd=float(os.getenv("AUTO_TRADER_MIN_ORDER_VALUE_USD", "500.0")),
         auto_trader_min_hold_minutes=int(os.getenv("AUTO_TRADER_MIN_HOLD_MINUTES", "10")),
+        auto_trader_rebalance_drift_pct=float(os.getenv("AUTO_TRADER_REBALANCE_DRIFT_PCT", "1.0")),
         watchdog_min_interval_seconds=int(os.getenv("WATCHDOG_MIN_INTERVAL_SECONDS", "240")),
         watchdog_max_interval_seconds=int(os.getenv("WATCHDOG_MAX_INTERVAL_SECONDS", "540")),
         watchdog_outside_window_min_interval_seconds=int(os.getenv("WATCHDOG_OUTSIDE_WINDOW_MIN_INTERVAL_SECONDS", "900")),
@@ -223,3 +295,5 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
         trade_cost_taf_sell_min=float(os.getenv("TRADE_COST_TAF_SELL_MIN", "0.01")),
         trade_cost_taf_sell_max=float(os.getenv("TRADE_COST_TAF_SELL_MAX", "8.30")),
     )
+    _validate_settings(settings)
+    return settings

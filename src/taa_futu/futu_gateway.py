@@ -64,6 +64,11 @@ class FutuPaperTrader:
         "timeout",
         "timed out",
         "temporarily unavailable",
+        "此数据暂时还未准备好",
+        "网络中断",
+        "连接中断",
+        "请求超时",
+        "接口超时",
         "connection reset",
         "connection aborted",
         "connection closed",
@@ -649,6 +654,15 @@ class FutuPaperTrader:
             order_qty = delta_qty if delta_qty > 0 else min(abs(delta_qty), can_sell_qty)
             if order_qty <= 0:
                 continue
+
+            # Skip if position weight is already within the drift tolerance of the target.
+            # This prevents perpetual micro-rebalancing when prices drift slightly each minute.
+            # Full exits (target_weight == 0) always bypass this check.
+            drift_threshold = getattr(self.settings, "auto_trader_rebalance_drift_pct", 0.0) / 100.0
+            if drift_threshold > 0 and target_weight > 0 and total_assets > 0:
+                current_weight = (current_qty * reference_price) / total_assets
+                if abs(target_weight - current_weight) < drift_threshold:
+                    continue
 
             # Skip orders below the minimum notional threshold to avoid churning
             # tiny fractional-share adjustments (e.g. 1-share DBC @ $29).

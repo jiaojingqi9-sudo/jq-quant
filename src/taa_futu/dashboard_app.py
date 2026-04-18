@@ -19,10 +19,16 @@ if str(SRC_ROOT) not in sys.path:
 
 from taa_futu.backtest import run_backtest
 try:
-    from taa_futu.cascade_sleeve import cascade_trade_symbols, fetch_cascade_daily_frames, generate_live_cascade_plan
+    from taa_futu.cascade_sleeve import (
+        CascadeSleevePlan,
+        cascade_trade_symbols,
+        fetch_cascade_daily_frames,
+        generate_live_cascade_plan,
+    )
 except ImportError:
     import taa_futu.cascade_sleeve as _cascade_sleeve
 
+    CascadeSleevePlan = _cascade_sleeve.CascadeSleevePlan
     cascade_trade_symbols = _cascade_sleeve.cascade_trade_symbols
     fetch_cascade_daily_frames = getattr(_cascade_sleeve, "fetch_cascade_daily_frames", None)
     generate_live_cascade_plan = _cascade_sleeve.generate_live_cascade_plan
@@ -33,9 +39,9 @@ from taa_futu.costs import (
     trade_log_total_fees,
     with_trade_costs,
 )
-from taa_futu.fusion_intraday import FusionIntradayStrategy
-from taa_futu.ofim_intraday import OfimIntradayStrategy
-from taa_futu.futu_gateway import FutuPaperTrader, FutuTradeError
+from taa_futu.fusion_intraday import FusionIntradayStrategy, FusionPlan
+from taa_futu.ofim_intraday import OfimIntradayStrategy, OfimPlan
+from taa_futu.futu_gateway import FutuPaperTrader, FutuTradeError, FutuTransientError
 from taa_futu import market_logger
 from taa_futu.market_data import FutuQuoteDataProvider, HistoricalDataProvider, MarketDataError, YFinanceDataProvider
 try:
@@ -56,6 +62,15 @@ except ImportError:
     run_exact_execution_replay = _research.run_exact_execution_replay
     run_fusion_intraday_replay = _research.run_fusion_intraday_replay
     run_strategy_stack_replay = _research.run_strategy_stack_replay
+# LOB-exact replay engine (uses stored 40-level order-book data)
+try:
+    from taa_futu.intraday_replay import (
+        run_fusion_replay as _run_fusion_lob_replay,
+        run_ofim_replay as _run_ofim_lob_replay,
+    )
+except Exception:
+    _run_fusion_lob_replay = None
+    _run_ofim_lob_replay = None
 from taa_futu.strategy_stack import (
     effective_fusion_settings,
     fetch_futu_daily_closes,
@@ -442,6 +457,10 @@ def _is_transient_status_message(message: object) -> bool:
         "connection closed",
         "查询未完成订单请求超时",
         "请求超时",
+        "此数据暂时还未准备好",
+        "网络中断",
+        "连接中断",
+        "接口超时",
         "transient_error",
     )
     return any(marker in text for marker in markers)
@@ -528,6 +547,52 @@ def _watchdog_status_text() -> str:
     next_text = f" | 下次检查 / Next ~{next_check}s" if isinstance(next_check, (int, float)) else ""
     updated_text = f" | 更新时间 / Updated {updated_at}" if updated_at else ""
     return f"守护监控 / Watchdog: {running} | {health} | {action_label} | {detail_label}{next_text}{updated_text}"
+
+
+def _cached_live_value(cached_payload: object, key: str, default):
+    if isinstance(cached_payload, dict):
+        cached_value = cached_payload.get(key)
+        if cached_value is not None:
+            return cached_value
+    return default
+
+
+def _safe_live_fetch(cached_payload: object, key: str, fn, default):
+    try:
+        return fn()
+    except FutuTransientError:
+        return _cached_live_value(cached_payload, key, default)
+
+
+def _empty_fusion_plan(settings) -> FusionPlan:
+    return FusionPlan(
+        benchmark=settings.fusion_benchmark,
+        benchmark_score=0.0,
+        exposure=0.0,
+        target_weights={},
+        features=[],
+    )
+
+
+def _empty_ofim_plan(settings) -> OfimPlan:
+    return OfimPlan(
+        strategy="OFIM",
+        benchmark=settings.ofim_benchmark,
+        benchmark_score=0.0,
+        exposure=0.0,
+        target_weights={},
+        features=[],
+    )
+
+
+def _empty_cascade_plan() -> CascadeSleevePlan:
+    return CascadeSleevePlan(
+        target_weights={},
+        total_exposure=0.0,
+        regime_label="N/A",
+        regime_score=0.0,
+        note="",
+    )
 
 
 @dataclass(frozen=True)
@@ -1315,7 +1380,7 @@ def _lightweight_chart_html(
 
     payload_json = json.dumps(payload, ensure_ascii=False)
     chart_dom_id = chart_id.replace(".", "-").replace(" ", "-")
-    height = 660
+    height = 736
     template = """
 <style>
   html, body {
@@ -1328,54 +1393,62 @@ def _lightweight_chart_html(
   #shell-__ID__ {
     width: 100%;
     height: __HEIGHT__px;
-    background: linear-gradient(180deg, #090f15 0%, #0f1720 100%);
-    border: 1px solid #1a2833;
-    border-radius: 18px;
+    background:
+      radial-gradient(circle at top, rgba(40, 67, 91, 0.22), transparent 34%),
+      linear-gradient(180deg, #0b1118 0%, #0f1721 100%);
+    border: 1px solid #213243;
+    border-radius: 20px;
     overflow: hidden;
     color: #e6edf3;
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+    box-shadow:
+      0 18px 42px rgba(5, 10, 17, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.02);
   }
   #top-__ID__ {
     display: flex;
     justify-content: space-between;
     gap: 12px;
-    padding: 7px 12px 6px 12px;
-    border-bottom: 1px solid #16242e;
-    background: rgba(8, 12, 17, 0.94);
+    padding: 8px 12px 6px 12px;
+    border-bottom: 1px solid #192836;
+    background: rgba(10, 15, 22, 0.96);
   }
   #title-__ID__ {
     font-size: 13px;
     font-weight: 700;
     color: #f3f7fb;
+    letter-spacing: 0.01em;
   }
   #subtitle-__ID__ {
-    margin-top: 1px;
+    margin-top: 2px;
     font-size: 9px;
-    color: #7f95aa;
+    color: #86a0b5;
   }
   #meta-__ID__ {
     display: flex;
     flex-wrap: wrap;
     justify-content: flex-end;
-    gap: 4px;
+    gap: 5px;
     align-content: flex-start;
   }
   .chip-__ID__ {
-    padding: 2px 6px;
+    padding: 2px 7px;
     border-radius: 999px;
-    background: rgba(35, 50, 65, 0.86);
-    color: #a9bfd0;
+    background: rgba(35, 50, 65, 0.90);
+    color: #b9ccda;
     font-size: 8px;
     line-height: 1.2;
     white-space: nowrap;
+    border: 1px solid rgba(95, 125, 152, 0.26);
   }
   #legend-__ID__ {
-    padding: 5px 10px 4px 10px;
-    border-bottom: 1px solid #14212c;
-    background: rgba(9, 15, 21, 0.9);
-    font: 500 9px ui-monospace, SFMono-Regular, Menlo, monospace;
-    line-height: 1.35;
-    color: #c5d3df;
+    padding: 6px 10px 5px 10px;
+    border-bottom: 1px solid #172532;
+    background: rgba(9, 15, 21, 0.92);
+    font: 500 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+    line-height: 1.4;
+    color: #cddae5;
+    min-height: 48px;
   }
   #chart-__ID__ {
     width: 100%;
@@ -1523,38 +1596,42 @@ def _lightweight_chart_html(
     const chart = window.LightweightCharts.createChart(chartNode, {
       autoSize: true,
       layout: {
-        background: { color: "#0b1016" },
-        textColor: "#c5d3df",
+        background: { color: "#0d141c" },
+        textColor: "#d4e0ea",
         attributionLogo: false,
         panes: {
-          separatorColor: "#20303c",
-          separatorHoverColor: "#476583",
+          separatorColor: "#233646",
+          separatorHoverColor: "#5e7d99",
           enableResize: true,
         },
       },
       grid: {
-        vertLines: { color: "#14212c", visible: true },
-        horzLines: { color: "#14212c", visible: true },
+        vertLines: { color: "rgba(40, 58, 73, 0.55)", visible: true },
+        horzLines: { color: "rgba(40, 58, 73, 0.55)", visible: true },
       },
       crosshair: {
         mode: crosshairMode,
-        vertLine: { color: "#617688", width: 1, labelBackgroundColor: "#243645" },
-        horzLine: { color: "#617688", width: 1, labelBackgroundColor: "#243645" },
+        vertLine: { color: "#7d91a2", width: 1, labelBackgroundColor: "#314759" },
+        horzLine: { color: "#7d91a2", width: 1, labelBackgroundColor: "#314759" },
       },
       rightPriceScale: {
-        borderColor: "#223241",
-        scaleMargins: { top: 0.08, bottom: 0.12 },
+        borderColor: "#2b4052",
+        scaleMargins: { top: 0.04, bottom: 0.08 },
       },
       leftPriceScale: { visible: false },
       timeScale: {
-        borderColor: "#223241",
+        borderColor: "#2b4052",
         timeVisible: payload.hasIntraday,
         secondsVisible: false,
-        rightOffset: 10,
-        barSpacing: payload.hasIntraday ? 7 : 11,
-        minBarSpacing: 0.35,
+        rightOffset: 2,
+        barSpacing: payload.hasIntraday ? 8.8 : 12.5,
+        minBarSpacing: 1.15,
         lockVisibleTimeRangeOnResize: true,
         allowBoldLabels: true,
+        fixLeftEdge: true,
+        fixRightEdge: true,
+        rightBarStaysOnScroll: true,
+        shiftVisibleRangeOnNewBar: false,
         tickMarkFormatter: (time) => formatTimeLabel(time, payload.hasIntraday),
       },
       handleScroll: {
@@ -1575,21 +1652,21 @@ def _lightweight_chart_html(
     const candleByTime = new Map(payload.candles.map((bar) => [Number(bar.time), bar]));
     const mainSeries = payload.mainSeries === "line"
       ? addSeriesCompat(chart, "area", {
-          lineColor: "#4c78a8",
+          lineColor: "#57a6ff",
           lineWidth: 2,
-          topColor: "rgba(76, 120, 168, 0.38)",
-          bottomColor: "rgba(76, 120, 168, 0.02)",
+          topColor: "rgba(87, 166, 255, 0.28)",
+          bottomColor: "rgba(87, 166, 255, 0.01)",
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerRadius: 4,
         }, 0)
       : addSeriesCompat(chart, "candlestick", {
-          upColor: "#ff5b6e",
-          downColor: "#1fc8a5",
-          borderUpColor: "#ff5b6e",
-          borderDownColor: "#1fc8a5",
-          wickUpColor: "#ff5b6e",
-          wickDownColor: "#1fc8a5",
+          upColor: "#ff5f73",
+          downColor: "#16c39a",
+          borderUpColor: "#ff6d7f",
+          borderDownColor: "#1ec8a1",
+          wickUpColor: "#ff8896",
+          wickDownColor: "#49d1b0",
           priceLineVisible: false,
           lastValueVisible: false,
         }, 0);
@@ -1598,6 +1675,12 @@ def _lightweight_chart_html(
         ? payload.candles.map((bar) => ({ time: bar.time, value: bar.close }))
         : payload.candles
     );
+    if (typeof mainSeries.priceScale === "function") {
+      mainSeries.priceScale().applyOptions({
+        autoScale: true,
+        scaleMargins: { top: 0.06, bottom: 0.10 },
+      });
+    }
     if (typeof mainSeries.createPriceLine === "function") {
       mainSeries.createPriceLine({
         price: payload.lastPrice,
@@ -1613,11 +1696,12 @@ def _lightweight_chart_html(
     payload.overlays.forEach((overlay) => {
       const lineSeries = addSeriesCompat(chart, "line", {
         color: overlay.color,
-        lineWidth: overlay.name.includes("VWAP") ? 2 : 1.5,
+        lineWidth: overlay.name.includes("VWAP") ? 2.2 : (overlay.name.includes("MA") ? 1.55 : 1.7),
         lineStyle: lineStyle(overlay.style || "solid"),
         crosshairMarkerVisible: false,
         lastValueVisible: false,
         priceLineVisible: false,
+        autoscaleInfoProvider: () => null,
       }, 0);
       lineSeries.setData(overlay.data);
       overlayRefs.push({ label: overlay.name, series: lineSeries });
@@ -1674,8 +1758,8 @@ def _lightweight_chart_html(
 
     if (typeof chart.panes === "function") {
       const panes = chart.panes();
-      if (panes[0] && typeof panes[0].setHeight === "function") panes[0].setHeight(395);
-      if (panes[1] && typeof panes[1].setHeight === "function") panes[1].setHeight(95);
+      if (panes[0] && typeof panes[0].setHeight === "function") panes[0].setHeight(496);
+      if (panes[1] && typeof panes[1].setHeight === "function") panes[1].setHeight(112);
     }
 
     const lastBar = payload.candles[payload.candles.length - 1];
@@ -1715,12 +1799,73 @@ def _lightweight_chart_html(
 
     chartNode.addEventListener("dblclick", () => {
       if (chart && chart.timeScale && typeof chart.timeScale().fitContent === "function") {
-        chart.timeScale().fitContent();
+        applyInitialView();
       }
     });
 
     const observer = new ResizeObserver(() => chart.resize());
     observer.observe(shellNode);
+
+    const totalBars = payload.candles.length;
+    const minLogical = -0.35;
+    const maxLogical = totalBars - 1 + 2.25;
+    const minVisibleBars = payload.hasIntraday ? 36 : 40;
+    const maxVisibleBars = Math.max(totalBars + 2.6, minVisibleBars + 2);
+    let isAdjustingRange = false;
+
+    function normaliseRange(range) {
+      if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to)) return null;
+      let span = Math.max(range.to - range.from, minVisibleBars);
+      span = Math.min(span, maxVisibleBars);
+      let from = range.from;
+      let to = from + span;
+      if (from < minLogical) {
+        from = minLogical;
+        to = from + span;
+      }
+      if (to > maxLogical) {
+        to = maxLogical;
+        from = to - span;
+      }
+      if (from < minLogical) {
+        from = minLogical;
+      }
+      return { from, to };
+    }
+
+    function setVisibleRangeSafely(range) {
+      if (!range) return;
+      const timeScale = chart.timeScale();
+      if (!timeScale || typeof timeScale.setVisibleLogicalRange !== "function") return;
+      isAdjustingRange = true;
+      timeScale.setVisibleLogicalRange(range);
+      window.requestAnimationFrame(() => {
+        isAdjustingRange = false;
+      });
+    }
+
+    function applyInitialView() {
+      const timeScale = chart.timeScale();
+      if (!timeScale || typeof timeScale.setVisibleLogicalRange !== "function") return;
+      const desiredBars = payload.hasIntraday
+        ? Math.min(Math.max(Math.round(totalBars * 0.10), 120), 300)
+        : Math.min(Math.max(Math.round(totalBars * 0.55), 90), 260);
+      setVisibleRangeSafely(normaliseRange({ from: maxLogical - desiredBars, to: maxLogical }));
+    }
+
+    if (typeof chart.timeScale().subscribeVisibleLogicalRangeChange === "function") {
+      chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (isAdjustingRange) return;
+        const nextRange = normaliseRange(range);
+        if (!nextRange || !range) return;
+        const changed =
+          Math.abs(nextRange.from - range.from) > 0.001 ||
+          Math.abs(nextRange.to - range.to) > 0.001;
+        if (changed) {
+          setVisibleRangeSafely(nextRange);
+        }
+      });
+    }
 
     function logicalRange() {
       const timeScale = chart && typeof chart.timeScale === "function" ? chart.timeScale() : null;
@@ -1753,7 +1898,7 @@ def _lightweight_chart_html(
       const zoomFactor = Math.max(0.25, Math.min(4.0, factor));
       let nextSpan = span / zoomFactor;
       const minSpan = payload.hasIntraday ? 12 : 24;
-      const maxSpan = Math.max(payload.candles.length * 3, minSpan * 2);
+      const maxSpan = Math.max(Math.min(payload.candles.length + 2.6, 680), minSpan * 2);
       nextSpan = Math.max(minSpan, Math.min(maxSpan, nextSpan));
 
       const leftRatio = (anchorLogical - range.from) / span;
@@ -1761,8 +1906,8 @@ def _lightweight_chart_html(
       let nextFrom = anchorLogical - nextSpan * leftRatio;
       let nextTo = anchorLogical + nextSpan * rightRatio;
 
-      const lowerBound = -8;
-      const upperBound = payload.candles.length + 12;
+      const lowerBound = minLogical;
+      const upperBound = maxLogical;
       if (nextFrom < lowerBound) {
         nextTo += lowerBound - nextFrom;
         nextFrom = lowerBound;
@@ -1775,6 +1920,11 @@ def _lightweight_chart_html(
         timeScale.setVisibleLogicalRange({ from: nextFrom, to: nextTo });
       }
     }
+
+    window.requestAnimationFrame(() => {
+      applyInitialView();
+      window.setTimeout(applyInitialView, 80);
+    });
 
     chartNode.addEventListener("wheel", (event) => {
       if (!(event.ctrlKey || event.metaKey)) return;
@@ -1876,7 +2026,7 @@ def _lightweight_chart_component(
             lower_panel=lower_panel,
             main_series=main_series,
         ),
-        height=740,
+        height=816,
     )
 
 
@@ -2584,9 +2734,9 @@ def _render_terminal_chart_panel(
                     title=f"{intraday_interval_label} 图",
                     subtitle=f"{intraday_start.isoformat()} ~ {intraday_end.isoformat()}",
                     overlays=[
-                        ("MA10", "ma10", "#9dd866"),
-                        ("VWAP", "vwap", "#4c78a8"),
-                        ("开盘区间高点 / OR High", "opening_range_high", "#f58518"),
+                        ("MA10", "ma10", "#8fd27f"),
+                        ("VWAP", "vwap", "#57a6ff"),
+                        ("开盘区间高点 / OR High", "opening_range_high", "#ff9f40"),
                     ],
                     order_markers=context.buy_sell_points,
                     action_marker=action_marker,
@@ -2655,8 +2805,8 @@ def _render_terminal_chart_panel(
                     title="日线图",
                     subtitle=f"{daily_start.isoformat()} ~ {daily_end.isoformat()}",
                     overlays=[
-                        ("MA20", "ma20", "#4c78a8"),
-                        ("MA60", "ma60", "#54a24b"),
+                        ("MA20", "ma20", "#6ea8ff"),
+                        ("MA60", "ma60", "#4cb26e"),
                     ],
                     order_markers=context.buy_sell_points,
                     price_line_label="日线现价 / Last",
@@ -2846,11 +2996,11 @@ def _render_symbol_detail(
                 title=f"{intraday_interval_label} 专业看盘图",
                 subtitle=f"历史范围 {intraday_start.isoformat()} ~ {intraday_end.isoformat()} | 右键/滚轮缩放更稳定",
                 overlays=[
-                    ("MA5", "ma5", "#f6c85f"),
-                    ("MA10", "ma10", "#9dd866"),
-                    ("MA20", "ma20", "#d06fd1"),
-                    ("VWAP", "vwap", "#4c78a8"),
-                    ("开盘区间高点 / OR High", "opening_range_high", "#f58518"),
+                    ("MA5", "ma5", "rgba(246, 200, 95, 0.82)"),
+                    ("MA10", "ma10", "#8fd27f"),
+                    ("MA20", "ma20", "#6ea8ff"),
+                    ("VWAP", "vwap", "#57a6ff"),
+                    ("开盘区间高点 / OR High", "opening_range_high", "#ff9f40"),
                 ],
                 order_markers=buy_sell_points,
                 action_marker=action_marker,
@@ -2927,10 +3077,10 @@ def _render_symbol_detail(
                 title="日线历史 K 线",
                 subtitle=f"历史范围 {daily_start.isoformat()} ~ {daily_end.isoformat()} | 支持长期历史查看",
                 overlays=[
-                    ("MA5", "ma5", "#f6c85f"),
-                    ("MA10", "ma10", "#9dd866"),
-                    ("MA20", "ma20", "#4c78a8"),
-                    ("MA60", "ma60", "#54a24b"),
+                    ("MA5", "ma5", "rgba(246, 200, 95, 0.82)"),
+                    ("MA10", "ma10", "#8fd27f"),
+                    ("MA20", "ma20", "#6ea8ff"),
+                    ("MA60", "ma60", "#4cb26e"),
                 ],
                 order_markers=buy_sell_points,
                 price_line_label="日线现价 / Last",
@@ -3055,12 +3205,27 @@ def render_live_monitor(settings) -> None:
 
     def _load_live_payload() -> dict[str, object]:
         current_settings = _current_settings()
+        cached_payload = st.session_state.get("live_payload")
         with FutuPaperTrader(current_settings) as trader:
-            acc_id = trader.resolve_trade_account()
-            account = trader.get_account_info(acc_id)
-            positions = trader.get_positions(acc_id)
-            open_orders = trader.get_open_orders(acc_id)
-            order_history = trader.get_order_history(acc_id, start.isoformat(), end.isoformat())
+            # resolve_trade_account can fail if FutuOpenD connection drops mid-session.
+            # Fall back to the cached acc_id so the rest of _safe_live_fetch calls
+            # can still return stale data instead of letting the whole load explode.
+            try:
+                acc_id = trader.resolve_trade_account()
+            except FutuTransientError:
+                cached_acc_id = _cached_live_value(cached_payload, "acc_id", None)
+                if cached_acc_id is None:
+                    raise  # no cache yet — let the fragment's error handler show the warning
+                acc_id = cached_acc_id
+            account = _safe_live_fetch(cached_payload, "account", lambda: trader.get_account_info(acc_id), pd.Series(dtype=object))
+            positions = _safe_live_fetch(cached_payload, "positions", lambda: trader.get_positions(acc_id), pd.DataFrame())
+            open_orders = _safe_live_fetch(cached_payload, "open_orders", lambda: trader.get_open_orders(acc_id), pd.DataFrame())
+            order_history = _safe_live_fetch(
+                cached_payload,
+                "order_history",
+                lambda: trader.get_order_history(acc_id, start.isoformat(), end.isoformat()),
+                pd.DataFrame(),
+            )
             market_now = datetime.now(ZoneInfo(current_settings.auto_trader_market_timezone))
             split_state = load_strategy_split_state()
             held_symbols = set(positions["code"].tolist()) if not positions.empty else set()
@@ -3089,7 +3254,12 @@ def render_live_monitor(settings) -> None:
             if not fusion_positions.empty and fusion_symbols:
                 fusion_positions = fusion_positions[fusion_positions["code"].isin(fusion_symbols)].copy()
             fusion_held_symbols = set(fusion_positions["code"].tolist()) if not fusion_positions.empty else set()
-            fusion_plan = FusionIntradayStrategy(fusion_settings).generate_plan(trader, fusion_held_symbols)
+            fusion_plan = _safe_live_fetch(
+                cached_payload,
+                "fusion_plan",
+                lambda: FusionIntradayStrategy(fusion_settings).generate_plan(trader, fusion_held_symbols),
+                _empty_fusion_plan(fusion_settings),
+            )
             fusion_scaled_targets = {
                 code: round(weight * fusion_weight, 6)
                 for code, weight in fusion_plan.target_weights.items()
@@ -3098,7 +3268,12 @@ def render_live_monitor(settings) -> None:
             ofim_plan = None
             ofim_scaled_targets: dict[str, float] = {}
             if ofim_weight > 0:
-                ofim_plan = OfimIntradayStrategy(fusion_settings).generate_plan(trader, fusion_held_symbols)
+                ofim_plan = _safe_live_fetch(
+                    cached_payload,
+                    "ofim_plan",
+                    lambda: OfimIntradayStrategy(fusion_settings).generate_plan(trader, fusion_held_symbols),
+                    _empty_ofim_plan(fusion_settings),
+                )
                 ofim_scaled_targets = {
                     code: round(weight * ofim_weight, 6)
                     for code, weight in ofim_plan.target_weights.items()
@@ -3107,7 +3282,12 @@ def render_live_monitor(settings) -> None:
             cascade_plan = None
             cascade_scaled_targets: dict[str, float] = {}
             if cascade_weight > 0:
-                cascade_plan = generate_live_cascade_plan(current_settings, trader)
+                cascade_plan = _safe_live_fetch(
+                    cached_payload,
+                    "cascade_plan",
+                    lambda: generate_live_cascade_plan(current_settings, trader),
+                    _empty_cascade_plan(),
+                )
                 cascade_scaled_targets = {
                     code: round(weight * cascade_weight, 6)
                     for code, weight in cascade_plan.target_weights.items()
@@ -3135,10 +3315,16 @@ def render_live_monitor(settings) -> None:
             estimated_unrealized = _calculate_unrealized_from_positions(positions)
             broker_realized = _optional_float(account.get("realized_pl"))
             broker_unrealized = _optional_float(account.get("unrealized_pl"))
+            experiment_history = pd.DataFrame()
             experiment_filled_cost_view = pd.DataFrame()
             if split_state.get("reset_at"):
                 split_start = pd.Timestamp(split_state["reset_at"], tz="UTC").tz_convert(current_settings.auto_trader_market_timezone).date().isoformat()
-                experiment_history = trader.get_order_history(acc_id, split_start, market_now.date().isoformat())
+                experiment_history = _safe_live_fetch(
+                    cached_payload,
+                    "experiment_history",
+                    lambda: trader.get_order_history(acc_id, split_start, market_now.date().isoformat()),
+                    pd.DataFrame(),
+                )
                 experiment_filled = experiment_history[
                     pd.to_numeric(experiment_history.get("dealt_qty"), errors="coerce").fillna(0) > 0
                 ].copy() if not experiment_history.empty else experiment_history
@@ -3164,7 +3350,12 @@ def render_live_monitor(settings) -> None:
                     ]
                 )
             )
-            snapshots_frame = trader.get_snapshots(all_symbols) if all_symbols else pd.DataFrame()
+            snapshots_frame = _safe_live_fetch(
+                cached_payload,
+                "snapshots_frame",
+                lambda: trader.get_snapshots(all_symbols) if all_symbols else pd.DataFrame(),
+                pd.DataFrame(),
+            )
             watchlist_rows = []
             for code in all_symbols:
                 snapshot_row = snapshots_frame.loc[code] if not snapshots_frame.empty and code in snapshots_frame.index else pd.Series(dtype=object)
@@ -3181,6 +3372,7 @@ def render_live_monitor(settings) -> None:
                 )
             return {
                 "payload_key": payload_key,
+                "acc_id": acc_id,
                 "account": account,
                 "positions": positions,
                 "position_view": position_view,
@@ -3207,6 +3399,7 @@ def render_live_monitor(settings) -> None:
                 "settings_snapshot": current_settings,
                 "feature_map": feature_map,
                 "all_symbols": all_symbols,
+                "snapshots_frame": snapshots_frame,
                 "terminal_watchlist": pd.DataFrame(watchlist_rows),
                 "estimated_realized": estimated_realized,
                 "estimated_fee_total": estimated_fee_total,
@@ -3214,6 +3407,7 @@ def render_live_monitor(settings) -> None:
                 "broker_realized": broker_realized,
                 "broker_unrealized": broker_unrealized,
                 "split_state": split_state,
+                "experiment_history": experiment_history,
                 "experiment_filled_cost_view": experiment_filled_cost_view,
             }
 
@@ -3246,6 +3440,14 @@ def render_live_monitor(settings) -> None:
 
         try:
             payload = _get_live_payload(force_fetch=True)
+        except FutuTransientError as exc:
+            cached_payload = st.session_state.get("live_payload")
+            if isinstance(cached_payload, dict) and cached_payload.get("payload_key") == payload_key:
+                st.warning(f"实时账户数据刷新失败，已沿用上一帧 / Using cached data: {exc}")
+                payload = cached_payload
+            else:
+                st.warning(f"实时账户数据暂时刷新失败 / Live data refresh failed: {exc}")
+                return
         except (FutuTradeError, MarketDataError) as exc:
             st.error(str(exc))
             return
@@ -4047,7 +4249,9 @@ def render_historical_simulation(settings) -> None:
             "基线月频回测 / Baseline Monthly",
             "策略组合回测 / Strategy Stack Replay",
             "Claude/Cascade 回放 / Claude-Cascade Replay",
-            "Fusion 日内回放 / Fusion Intraday Replay",
+            "Fusion 日内回放 (LOB实盘) / Fusion LOB Replay",
+            "OFIM 日内回放 (LOB实盘) / OFIM LOB Replay",
+            "Fusion 日内回放 (近似) / Fusion Approx Replay",
             "精确执行复盘 / Exact Execution Replay",
             "真实账户复盘 / Account Replay",
         ],
@@ -4112,6 +4316,41 @@ def render_historical_simulation(settings) -> None:
                 )
                 st.markdown("**方法拆分 / Method Breakdown**")
                 st.dataframe(breakdown, use_container_width=True, hide_index=True)
+
+    def _render_intraday_replay_result(result, *, strategy_name: str = "Intraday Replay") -> None:
+        """Render an IntradayReplayResult from intraday_replay.run_*_replay()."""
+        s = result.summary
+        cols = st.columns(4)
+        cols[0].metric("总收益 / Total Return",  f"{s.get('total_return', 0):.2%}")
+        cols[1].metric("Sharpe",                  f"{s.get('sharpe', 0):.2f}")
+        cols[2].metric("最大回撤 / Max Drawdown", f"{s.get('max_drawdown', 0):.2%}")
+        cols[3].metric("成交笔数 / Trades",        str(int(s.get("n_trades", 0))))
+        cols2 = st.columns(2)
+        cols2[0].metric("年化波动 / Ann. Vol",    f"{s.get('annualised_vol', 0):.2%}")
+        cols2[1].metric("总费用 / Total Fees",    f"${s.get('total_fees_usd', 0):,.2f}")
+
+        if not result.equity_curve.empty:
+            st.markdown("**权益曲线 / Equity Curve**")
+            st.line_chart(result.equity_curve.rename(strategy_name), use_container_width=True)
+
+        st.markdown("**成交记录 / Trade Log**")
+        if result.trade_log.empty:
+            st.info("所选区间内没有成交记录 / No fills in the selected range.")
+        else:
+            tl = result.trade_log.copy()
+            if "ts" in tl.columns:
+                tl["ts"] = tl["ts"].astype(str).str[:19]
+            st.dataframe(tl, use_container_width=True, hide_index=True)
+            csv = tl.to_csv(index=False).encode()
+            st.download_button("下载成交记录 CSV / Download Trade Log CSV",
+                               data=csv, file_name=f"{strategy_name.replace(' ', '_')}_trades.csv")
+
+        with st.expander("信号日志 / Plan Log (最近 50 条)", expanded=False):
+            if result.plan_log:
+                import json as _json
+                st.json(result.plan_log[-50:])
+            else:
+                st.info("无信号记录。")
 
     if mode == "基线月频回测 / Baseline Monthly":
         baseline_cols = st.columns(2)
@@ -4277,8 +4516,106 @@ def render_historical_simulation(settings) -> None:
         _render_replay_result(replay)
         return
 
-    if mode == "Fusion 日内回放 / Fusion Intraday Replay":
-        st.warning("Fusion 回放是价格驱动近似版，用 1 分钟历史 K 线回放核心逻辑，不会重建历史 L2 和逐笔。")
+    if mode == "Fusion 日内回放 (LOB实盘) / Fusion LOB Replay":
+        st.success("✅ 使用 **实盘 40 档 LOB + 逐笔 + 1分钟 K 线** 回放，与实盘信号完全一致。数据来自 runtime/market_data/。")
+        if _run_fusion_lob_replay is None:
+            st.error("intraday_replay 模块加载失败，请重启 dashboard。")
+            return
+        from taa_futu.intraday_replay import _iter_day_dirs
+        available = _iter_day_dirs(start.isoformat(), end.isoformat())
+        if not available:
+            st.warning(f"所选日期范围 {start} ~ {end} 内没有存储的 LOB 数据。请选择有实盘记录的日期（最早从 2026-03-11 开始）。")
+            return
+        st.caption(f"找到 {len(available)} 个交易日的 LOB 数据：{available[0].name} ~ {available[-1].name}")
+        progress_box = st.empty()
+        progress_bar = st.progress(0)
+        progress_note = st.empty()
+
+        def _progress(payload: dict[str, object]) -> None:
+            total_days = max(1, int(payload.get("total_days", 0) or 0))
+            completed_days = int(payload.get("completed_days", 0) or 0)
+            current_day = str(payload.get("current_day") or "—")
+            elapsed = float(payload.get("elapsed_seconds", 0.0) or 0.0)
+            progress = float(payload.get("progress", 0.0) or 0.0)
+            avg_per_day = elapsed / completed_days if completed_days > 0 else 0.0
+            remaining_days = max(total_days - completed_days, 0)
+            remaining = avg_per_day * remaining_days if avg_per_day > 0 else 0.0
+            pct = max(0, min(100, int(round(progress * 100))))
+            progress_bar.progress(pct)
+            progress_box.info(
+                f"Fusion 回放进度：{completed_days}/{total_days} 个交易日 | 当前 / Current: {current_day} | "
+                f"已用时 / Elapsed: {elapsed/60:.1f} min | 预计剩余 / ETA: {remaining/60:.1f} min"
+            )
+            progress_note.caption(
+                "进度按交易日更新。每个交易日内部还会逐轮读取 40 档 LOB、逐笔和 1 分钟 K 线，所以某一天内停一会儿是正常的。"
+            )
+        with st.spinner("正在用实盘 LOB 数据回放 Fusion …"):
+            try:
+                result = _run_fusion_lob_replay(
+                    start.isoformat(), end.isoformat(), settings,
+                    initial_capital=float(initial_capital),
+                    cost_model=build_trade_cost_model(settings),
+                    progress_callback=_progress,
+                )
+            except Exception as exc:
+                st.error(f"回放失败: {exc}")
+                return
+        progress_bar.progress(100)
+        progress_box.success("Fusion LOB 回放已完成。")
+        _render_intraday_replay_result(result, strategy_name="Fusion LOB Replay")
+        return
+
+    if mode == "OFIM 日内回放 (LOB实盘) / OFIM LOB Replay":
+        st.success("✅ 使用 **实盘 40 档 LOB + 逐笔 + 1分钟 K 线** 回放 OFIM（仅股票，不含 Binance 加密数据）。")
+        if _run_ofim_lob_replay is None:
+            st.error("intraday_replay 模块加载失败，请重启 dashboard。")
+            return
+        from taa_futu.intraday_replay import _iter_day_dirs
+        available = _iter_day_dirs(start.isoformat(), end.isoformat())
+        if not available:
+            st.warning(f"所选日期范围 {start} ~ {end} 内没有存储的 LOB 数据。")
+            return
+        st.caption(f"找到 {len(available)} 个交易日的 LOB 数据：{available[0].name} ~ {available[-1].name}")
+        progress_box = st.empty()
+        progress_bar = st.progress(0)
+        progress_note = st.empty()
+
+        def _progress(payload: dict[str, object]) -> None:
+            total_days = max(1, int(payload.get("total_days", 0) or 0))
+            completed_days = int(payload.get("completed_days", 0) or 0)
+            current_day = str(payload.get("current_day") or "—")
+            elapsed = float(payload.get("elapsed_seconds", 0.0) or 0.0)
+            progress = float(payload.get("progress", 0.0) or 0.0)
+            avg_per_day = elapsed / completed_days if completed_days > 0 else 0.0
+            remaining_days = max(total_days - completed_days, 0)
+            remaining = avg_per_day * remaining_days if avg_per_day > 0 else 0.0
+            pct = max(0, min(100, int(round(progress * 100))))
+            progress_bar.progress(pct)
+            progress_box.info(
+                f"OFIM 回放进度：{completed_days}/{total_days} 个交易日 | 当前 / Current: {current_day} | "
+                f"已用时 / Elapsed: {elapsed/60:.1f} min | 预计剩余 / ETA: {remaining/60:.1f} min"
+            )
+            progress_note.caption(
+                "进度按交易日更新。OFIM 会逐轮读取 40 档 LOB、逐笔和 1 分钟 K 线；当天内部没有进度跳动时，不代表卡死。"
+            )
+        with st.spinner("正在用实盘 LOB 数据回放 OFIM …"):
+            try:
+                result = _run_ofim_lob_replay(
+                    start.isoformat(), end.isoformat(), settings,
+                    initial_capital=float(initial_capital),
+                    cost_model=build_trade_cost_model(settings),
+                    progress_callback=_progress,
+                )
+            except Exception as exc:
+                st.error(f"回放失败: {exc}")
+                return
+        progress_bar.progress(100)
+        progress_box.success("OFIM LOB 回放已完成。")
+        _render_intraday_replay_result(result, strategy_name="OFIM LOB Replay")
+        return
+
+    if mode == "Fusion 日内回放 (近似) / Fusion Approx Replay":
+        st.warning("近似版：用 1 分钟历史 K 线回放核心逻辑，不含真实 L2 订单簿和逐笔数据。建议优先使用上面的 LOB 实盘回放。")
         try:
             with FutuPaperTrader(settings) as trader:
                 symbols = [settings.fusion_benchmark, *settings.fusion_universe]

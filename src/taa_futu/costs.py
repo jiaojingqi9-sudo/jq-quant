@@ -3,9 +3,12 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from datetime import date, datetime
+import logging
 from typing import TYPE_CHECKING, Mapping
 
 import pandas as pd
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .config import Settings
@@ -363,6 +366,16 @@ def estimate_realized_from_fills(
                 inventory[code].popleft()
             else:
                 inventory[code][0] = (open_qty, open_price, open_fee_per_share)
+        if remaining > 0:
+            # Sell quantity exceeds tracked buy inventory — this can happen when the
+            # order history is incomplete (e.g. position pre-dates the query window).
+            # We skip the unmatched portion rather than fabricating a cost basis.
+            _log.warning(
+                "estimate_realized_from_fills: %s SELL qty=%.0f has %.0f shares "
+                "unmatched in FIFO inventory (incomplete history?). "
+                "Unmatched portion excluded from realized P&L.",
+                code, qty, remaining,
+            )
     return float(realized)
 
 

@@ -8,6 +8,7 @@ import hashlib
 import queue
 import socket
 import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
@@ -54,6 +55,49 @@ CT_DASHBOARD_PORT = 8051
 NASDAQ_BASIC_URL = "https://qtcardfthk.futufin.com/intro/nasdaq-basic?clientlang=0&is_support_buy=1&type=12"
 NASDAQ_TOTALVIEW_URL = "https://qtcardfthk.futufin.com/intro/nasdaq-basic?clientlang=0&is_support_buy=1&type=18"
 OPRA_URL = "https://qtcardfthk.futufin.com/intro/api-usoption-realtime?clientlang=0&is_support_buy=1&type=16"
+
+
+def detect_tcl_tk_paths() -> tuple[Path | None, Path | None]:
+    """Resolve bundled Tcl/Tk data dirs for the current Python runtime."""
+    candidates: list[Path] = []
+    try:
+        candidates.append(Path(tk.__file__).resolve().parents[2])
+    except Exception:
+        pass
+    try:
+        candidates.append(Path(sys.executable).resolve().parents[1] / "lib")
+    except Exception:
+        pass
+
+    seen: set[Path] = set()
+    ordered_candidates: list[Path] = []
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        ordered_candidates.append(path)
+
+    for lib_root in ordered_candidates:
+        if not lib_root.exists():
+            continue
+        tcl_dir = next((p for p in sorted(lib_root.glob("tcl8.*")) if (p / "init.tcl").exists()), None)
+        tk_dir = next((p for p in sorted(lib_root.glob("tk8.*")) if p.is_dir()), None)
+        if tcl_dir and tk_dir:
+            return tcl_dir, tk_dir
+    return None, None
+
+
+def ensure_tcl_tk_env() -> tuple[Path | None, Path | None]:
+    tcl_dir, tk_dir = detect_tcl_tk_paths()
+    if tcl_dir is not None:
+        current_tcl = os.environ.get("TCL_LIBRARY", "").strip()
+        if not current_tcl or not Path(current_tcl).exists():
+            os.environ["TCL_LIBRARY"] = str(tcl_dir)
+    if tk_dir is not None:
+        current_tk = os.environ.get("TK_LIBRARY", "").strip()
+        if not current_tk or not Path(current_tk).exists():
+            os.environ["TK_LIBRARY"] = str(tk_dir)
+    return tcl_dir, tk_dir
 
 
 def is_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -104,6 +148,10 @@ def _is_transient_status_message(message: object) -> bool:
         "connection closed",
         "查询未完成订单请求超时",
         "请求超时",
+        "此数据暂时还未准备好",
+        "网络中断",
+        "连接中断",
+        "接口超时",
         "transient_error",
     )
     return any(marker in text for marker in markers)
@@ -331,7 +379,7 @@ def _ct_engine_args(*, dry_run: bool) -> list[str]:
 
 class ControlPanel:
     def __init__(self) -> None:
-        self._restart_dashboard_on_boot = os.getenv("TAA_FUTU_RESTART_DASHBOARD", "0") == "1"
+        ensure_tcl_tk_env()
         self.root = tk.Tk()
         self.root.title("TAA + Futu 控制台 / Control Panel")
         self.root.geometry("1500x960")
@@ -374,8 +422,46 @@ class ControlPanel:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(300, self._drain_log_queue)
         self.root.after(500, self.refresh_status)
-        if self._restart_dashboard_on_boot:
-            self.root.after(1200, self.start_dashboard)
+        # Close the Terminal window that launched us (if any).
+        # Works regardless of which .command file the user double-clicked.
+        self.root.after(800, self._close_launcher_terminal)
+
+    def _close_launcher_terminal(self) -> None:
+        """Close any Terminal window that was used to launch this control panel.
+
+        Must ignore SIGHUP *before* closing the window: when Terminal closes a
+        window it sends SIGHUP to every process in that session.  Without the
+        signal guard Python would exit the moment the window disappears.
+        """
+        # Step 1: ignore SIGHUP so closing the Terminal window doesn't kill us.
+        try:
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        except (OSError, ValueError):
+            pass  # not available on all platforms; safe to skip
+
+        # Step 2: close whichever Terminal window launched this process.
+        # Try by name first, then fall back to closing the front window.
+        script = (
+            'tell application "Terminal"\n'
+            '  try\n'
+            '    close (every window whose name contains "control_panel")\n'
+            '  end try\n'
+            '  try\n'
+            '    close (every window whose name contains "量化交易")\n'
+            '  end try\n'
+            '  try\n'
+            '    if (count of windows) > 0 then close front window\n'
+            '  end try\n'
+            'end tell'
+        )
+        try:
+            subprocess.Popen(
+                ["osascript", "-e", script],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
 
     def _build_ui(self) -> None:
         self.root.columnconfigure(0, weight=1)
@@ -1477,9 +1563,10 @@ class ControlPanel:
             str(DASHBOARD_APP),
             "--server.port",
             str(dashboard_port),
+            "--server.headless=true",        # prevent streamlit from opening its own browser tab
             "--browser.gatherUsageStats=false",
         ]
-        self.dashboard_process = subprocess.Popen(
+        proc = subprocess.Popen(
             command,
             cwd=REPO_ROOT,
             env=build_env(),
@@ -1487,18 +1574,20 @@ class ControlPanel:
             stderr=subprocess.STDOUT,
             text=True,
         )
+        self.dashboard_process = proc
         self.log(f"正在启动监控页 / Starting dashboard on port {dashboard_port}...")
 
-        def reader() -> None:
-            assert self.dashboard_process is not None
-            assert self.dashboard_process.stdout is not None
-            for line in self.dashboard_process.stdout:
+        def reader(p: subprocess.Popen) -> None:
+            # Capture the process object in the closure so that a later restart
+            # overwriting self.dashboard_process never affects this thread.
+            assert p.stdout is not None
+            for line in p.stdout:
                 self.log(f"[dashboard] {line.rstrip()}")
-            return_code = self.dashboard_process.wait()
+            return_code = p.wait()
             self.log(f"[dashboard] 已停止 / stopped with code {return_code}.")
             self.root.after(0, self.refresh_status)
 
-        threading.Thread(target=reader, daemon=True).start()
+        threading.Thread(target=reader, args=(proc,), daemon=True).start()
         self.root.after(1800, self.open_dashboard_browser)
         self.root.after(600, self.refresh_status)
 
@@ -1607,35 +1696,44 @@ class ControlPanel:
         self.log('提示: 如需同时启动 Cascade 独立引擎，点 Claude 策略面板里的"启动引擎"按钮。')
 
     def restart_console_and_dashboard(self) -> None:
+        """Restart the dashboard in-place (stop → wait → start).
+
+        The old approach spawned a new control-panel process and destroyed the
+        current one, but the new process failed to open a Tkinter window when
+        launched as an orphan on macOS.  Restarting the dashboard inside the
+        running control-panel avoids this entirely — the control panel stays
+        alive; only the dashboard subprocess is recycled.
+        """
         dashboard_port = int(self.dashboard_port.get().strip() or "8501")
-        was_dashboard_running = (
-            (self.dashboard_process is not None and self.dashboard_process.poll() is None)
-            or is_port_open("127.0.0.1", dashboard_port)
-        )
+
+        # ── Stop the running dashboard ────────────────────────────────────────
+        stopped_something = False
         if self.dashboard_process is not None and self.dashboard_process.poll() is None:
             try:
-                self.dashboard_process.terminate()
+                self.dashboard_process.kill()   # SIGKILL — instant, no wait needed
+                stopped_something = True
             except OSError:
                 pass
-            self.log("正在停止当前监控页 / Stopping current dashboard before restart...")
+        self.dashboard_process = None
 
-        restart_env = build_env()
-        restart_env["TAA_FUTU_RESTART_DASHBOARD"] = "1" if was_dashboard_running else "0"
+        # Also force-kill any streamlit on the port from a previous session.
+        try:
+            result = subprocess.run(
+                ["pkill", "-9", "-f", f"streamlit.*{dashboard_port}"],
+                check=False, capture_output=True,
+            )
+            if result.returncode == 0:
+                stopped_something = True
+        except Exception:
+            pass
 
-        restart_command = [
-            str(VENV_PYTHON),
-            "-m",
-            "taa_futu.control_panel",
-        ]
-        subprocess.Popen(
-            restart_command,
-            cwd=REPO_ROOT,
-            env=restart_env,
-            start_new_session=True,
-            text=True,
-        )
-        self.log("正在重启控制台 / Restarting control panel...")
-        self.root.after(200, self.root.destroy)
+        if stopped_something:
+            self.log("正在停止监控页，稍后自动重启 / Stopping dashboard, will restart shortly…")
+        else:
+            self.log("监控页未运行，正在启动 / Dashboard was not running — starting now…")
+
+        # Wait 3 s so the OS fully releases the port before binding again.
+        self.root.after(3000, self.start_dashboard)
 
     def _current_settings(self):
         return load_settings(REPO_ROOT / ".env")
@@ -1732,12 +1830,12 @@ class ControlPanel:
         if strategy == "fusion" and start_date and end_date:
             span_days = (end_date - start_date).days + 1
             self.log(
-                f"Fusion 日内回放会抓分钟级数据。当前区间 {span_days} 天，可能需要较长时间；下面日志会逐只股票显示进度。"
+                f"Fusion 回测会优先使用本地 40 档 LOB / 逐笔 / 1分钟K 线；没有本地数据时才回退到分钟K线近似版。当前区间 {span_days} 天。"
             )
         if strategy == "ofim" and start_date and end_date:
             span_days = (end_date - start_date).days + 1
             self.log(
-                f"OFIM 回放会抓分钟级数据，并读取 L2/逐笔。当前区间 {span_days} 天，日志会按标的显示进度。"
+                f"OFIM 回测会优先使用本地 40 档 LOB / 逐笔 / 1分钟K 线；没有本地数据时才回退到分钟K线近似版。当前区间 {span_days} 天。"
             )
         if strategy == "cascade" and start_date and end_date:
             span_days = (end_date - start_date).days + 1
@@ -1936,8 +2034,17 @@ class ControlPanel:
 def main() -> None:
     if not VENV_PYTHON.exists():
         raise SystemExit(f"缺少 Python 环境 / Missing Python environment: {VENV_PYTHON}")
+    ensure_tcl_tk_env()
     ControlPanel().run()
 
 
 if __name__ == "__main__":
+    # Detach from the controlling terminal so Terminal.app doesn't track this
+    # process as a child — prevents the "terminate running processes?" dialog
+    # when the launcher window closes.
+    try:
+        import os as _os
+        _os.setsid()
+    except Exception:
+        pass
     main()

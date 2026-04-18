@@ -166,6 +166,7 @@ def _start_auto_trader_process() -> int:
             [str(VENV_PYTHON), "-m", "taa_futu.auto_trader"],
             cwd=REPO_ROOT,
             env=_build_env(),
+            stdin=subprocess.DEVNULL,
             stdout=log_file,
             stderr=subprocess.STDOUT,
             start_new_session=True,

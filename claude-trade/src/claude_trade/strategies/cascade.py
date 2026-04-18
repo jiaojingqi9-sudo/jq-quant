@@ -100,9 +100,19 @@ def _safe_div(a: float, b: float, default: float = 0.0) -> float:
 
 
 def _annualized_vol(daily_returns: pd.Series, trading_days: int = 365) -> float:
-    """Annualized vol.  Uses 365 days (crypto) by default; pass 252 for equities."""
-    if len(daily_returns) < 5:
-        return 0.50  # assume 50% vol when data is scarce
+    """Annualized vol.  Uses 365 days (crypto) by default; pass 252 for equities.
+
+    Returns a conservative default when there is insufficient data rather than
+    silently assuming 50% for any series shorter than 5 bars.  Specifically:
+    - 0 bars  → 0.80  (very high: new asset, no data, stay cautious)
+    - 1-4 bars → 0.50  (high: barely any data)
+    - 5+ bars  → actual computed vol (ddof=0 for population vol)
+    """
+    n = len(daily_returns)
+    if n == 0:
+        return 0.80
+    if n < 5:
+        return 0.50
     return float(daily_returns.std(ddof=0) * math.sqrt(trading_days))
 
 
@@ -117,14 +127,22 @@ def _momentum(prices: pd.Series, lookback_days: int) -> float:
 
 
 def _rsi(prices: pd.Series, period: int = 14) -> float:
-    """Wilder RSI."""
+    """Wilder RSI.  Returns 50.0 (neutral) when data is insufficient or NaN."""
     if len(prices) < period + 1:
         return 50.0
     delta = prices.diff().dropna()
+    if len(delta) < period:
+        return 50.0
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = float(gain.rolling(period).mean().iloc[-1])
-    avg_loss = float(loss.rolling(period).mean().iloc[-1])
+    avg_gain_raw = gain.rolling(period).mean().iloc[-1]
+    avg_loss_raw = loss.rolling(period).mean().iloc[-1]
+    # Guard against NaN (can occur if all values in the window are NaN)
+    import math as _math
+    if _math.isnan(avg_gain_raw) or _math.isnan(avg_loss_raw):
+        return 50.0
+    avg_gain = float(avg_gain_raw)
+    avg_loss = float(avg_loss_raw)
     if avg_loss < 1e-12:
         return 100.0
     rs = avg_gain / avg_loss

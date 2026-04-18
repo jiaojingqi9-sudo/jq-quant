@@ -35,10 +35,6 @@ AUTO_TRADER_STATUS_FILE = RUNTIME_DIR / "auto_trader_status.json"
 AUTO_TRADER_PID_FILE = RUNTIME_DIR / "auto_trader.pid"
 AUTO_TRADER_LOG_FILE = RUNTIME_DIR / "auto_trader.log"
 
-# Module-level OFIM strategy instance — persists prev_order_books across polling cycles
-# so the OFI delta is computed against the *previous* LOB snapshot, not against empty.
-_ofim_strategy: OfimIntradayStrategy | None = None
-
 
 @dataclass
 class AutoTraderState:
@@ -52,6 +48,10 @@ class AutoTraderState:
     # Track when each symbol was last bought so we can enforce a minimum hold time.
     # This prevents OFIM from entering a position and exiting it 60 seconds later.
     position_entry_times: dict = None  # code → datetime (UTC) of last BUY submission
+    # Persistent OFIM instance so prev_order_books is maintained across polling cycles.
+    # Kept on state (not as a module global) so AutoTraderState is fully self-contained
+    # and multiple concurrent traders or tests don't share state accidentally.
+    ofim_strategy: OfimIntradayStrategy | None = None
 
     def __post_init__(self):
         if self.position_entry_times is None:
@@ -183,20 +183,38 @@ def _strategy_stack_target_weights(
         scaled_fusion_weights = {code: round(weight * fusion_weight, 6) for code, weight in fusion_plan.target_weights.items()}
 
     scaled_ofim_weights: dict[str, float] = {}
-    if ofim_weight > 0 and fusion_settings.ofim_universe:
-        global _ofim_strategy  # noqa: PLW0603
+    if ofim_weight > 0 and (fusion_settings.ofim_universe or fusion_settings.ofim_crypto_universe):
+        # Build the full set of OFIM-relevant symbols: equity universe + crypto proxies
+        # (proxy ETFs are what Futu holds on behalf of crypto positions).
+        ofim_equity_symbols = set(fusion_settings.ofim_universe)
+        crypto_proxy_map: dict[str, str] = dict(fusion_settings.ofim_crypto_to_proxy or ())
+        proxy_etf_symbols = set(crypto_proxy_map.values())
+        ofim_trackable_symbols = ofim_equity_symbols | proxy_etf_symbols
+
         ofim_positions = positions
-        ofim_symbols = set(fusion_settings.ofim_universe)
-        if not ofim_positions.empty and ofim_symbols:
-            ofim_positions = ofim_positions[ofim_positions["code"].isin(ofim_symbols)].copy()
-        ofim_held_symbols = set(ofim_positions["code"].tolist()) if not ofim_positions.empty else set()
-        # Reuse the persistent instance so prev_order_books is maintained across cycles
-        if _ofim_strategy is None:
-            _ofim_strategy = OfimIntradayStrategy(fusion_settings)
+        if not ofim_positions.empty and ofim_trackable_symbols:
+            ofim_positions = ofim_positions[ofim_positions["code"].isin(ofim_trackable_symbols)].copy()
+
+        # held_symbols passed to OFIM: equity codes as-is, but proxy ETF positions are
+        # reverse-mapped back to their crypto symbol so OFIM's exit logic triggers correctly.
+        proxy_to_crypto: dict[str, str] = {v: k for k, v in crypto_proxy_map.items()}
+        raw_held = set(ofim_positions["code"].tolist()) if not ofim_positions.empty else set()
+        ofim_held_symbols: set[str] = set()
+        for code in raw_held:
+            ofim_held_symbols.add(proxy_to_crypto.get(code, code))
+
+        # Reuse the persistent instance so prev_order_books is maintained across cycles.
+        # The instance lives on state (not as a module global) so tests and multiple
+        # concurrent traders don't accidentally share state.
+        if state is None or state.ofim_strategy is None:
+            ofim_instance = OfimIntradayStrategy(fusion_settings)
+            if state is not None:
+                state.ofim_strategy = ofim_instance
         else:
+            ofim_instance = state.ofim_strategy
             # Settings may change between cycles (e.g. after a weight edit) — update them
-            object.__setattr__(_ofim_strategy, "settings", fusion_settings)
-        ofim_plan = _ofim_strategy.generate_plan(trader, ofim_held_symbols)
+            object.__setattr__(ofim_instance, "settings", fusion_settings)
+        ofim_plan = ofim_instance.generate_plan(trader, ofim_held_symbols)
         diagnostics["ofim_benchmark_score"] = round(float(ofim_plan.benchmark_score), 6)
         diagnostics["ofim_targets"] = tuple(sorted(ofim_plan.target_weights))
         diagnostics["ofim_top"] = tuple(sorted(ofim_plan.target_weights, key=ofim_plan.target_weights.get, reverse=True)[:3])
@@ -254,6 +272,10 @@ def _stack_monitoring_detail(settings: Settings, diagnostics: dict[str, object])
             detail_parts.append(f"cascade_regime={cascade_regime}({float(cascade_score):+.3f})")
         else:
             detail_parts.append(f"cascade_regime={cascade_regime}")
+    cascade_targets = diagnostics.get("cascade_targets")
+    if cascade_targets is not None:
+        tgt_str = ",".join(str(s).replace("US.", "") for s in cascade_targets) if cascade_targets else "none"
+        detail_parts.append(f"cascade_targets={tgt_str}")
     cascade_note = diagnostics.get("cascade_note")
     if cascade_note:
         detail_parts.append(str(cascade_note))
@@ -374,9 +396,15 @@ def run_cycle(settings: Settings, state: AutoTraderState, *, submit: bool) -> tu
         if min_hold.total_seconds() > 0 and state is not None:
             for code, entry_time in list(state.position_entry_times.items()):
                 age = now_utc - entry_time
+                # Always clean up symbols we no longer hold, regardless of hold-time window.
+                # This covers the case where a position was closed via a SELL order that
+                # didn't go through our SELL path (e.g. manual close or broker cancel).
+                if _position_quantity(positions, code) == 0:
+                    state.position_entry_times.pop(code, None)
+                    continue
                 if age < min_hold:
-                    # Only protect if we still hold a position
-                    if _position_quantity(positions, code) > 0 and code not in stack_target_map:
+                    # Still within hold window and position is live — protect from exit
+                    if code not in stack_target_map:
                         ignored_symbols.add(code)
                         remaining_s = int((min_hold - age).total_seconds())
                         _log(
@@ -386,7 +414,7 @@ def run_cycle(settings: Settings, state: AutoTraderState, *, submit: bool) -> tu
                             f"exits in {remaining_s}s)"
                         )
                 else:
-                    # Expired — clean up so the dict doesn't grow unbounded
+                    # Hold window expired — clean up so the dict doesn't grow unbounded
                     state.position_entry_times.pop(code, None)
 
         planned_orders: list[PlannedOrder] = []

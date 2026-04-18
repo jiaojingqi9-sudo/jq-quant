@@ -2,12 +2,162 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+import logging
 import math
+from typing import Any
 
 import pandas as pd
 
 from .config import Settings
 from . import market_logger
+
+_log = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Binance / ccxt crypto data adapter
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _CryptoDataAdapter:
+    """Thin wrapper around a ccxt exchange that mirrors the data-access methods
+    used by OfimIntradayStrategy for Futu symbols, so the scoring logic is
+    exchange-agnostic.
+
+    Falls back to yfinance for OHLCV when ccxt is unavailable, but order-book
+    and tick data require ccxt — those fall back to empty structures gracefully.
+    """
+
+    def __init__(self, exchange_name: str, api_key: str | None, api_secret: str | None, *, sandbox: bool = False) -> None:
+        self._ex: Any | None = None
+        self._exchange_name = exchange_name
+        self._api_key = api_key
+        self._api_secret = api_secret
+        self._sandbox = sandbox
+        self._connected = False
+
+    def connect(self) -> bool:
+        try:
+            import ccxt
+            cfg: dict = {"enableRateLimit": True}
+            if self._sandbox:
+                cfg["sandbox"] = True
+            if self._api_key:
+                cfg["apiKey"] = self._api_key
+            if self._api_secret:
+                cfg["secret"] = self._api_secret
+            self._ex = getattr(ccxt, self._exchange_name)(cfg)
+            # Quick connectivity check using a public endpoint
+            self._ex.fetch_ticker("BTC/USDT")
+            self._connected = True
+            _log.info("OFIM crypto adapter: connected to %s via ccxt.", self._exchange_name)
+            return True
+        except ImportError:
+            _log.info("OFIM crypto adapter: ccxt not installed, crypto OHLCV will use yfinance (no LOB/tick data).")
+            return False
+        except Exception as exc:
+            _log.warning("OFIM crypto adapter: ccxt connection failed (%s), falling back to yfinance.", exc)
+            return False
+
+    def disconnect(self) -> None:
+        if self._ex is not None:
+            try:
+                self._ex.close()
+            except Exception:
+                pass
+        self._connected = False
+
+    # ── OHLCV (1-minute bars) ────────────────────────────────────────────────
+
+    def get_recent_klines(self, symbol: str, num: int) -> pd.DataFrame:
+        """Return a DataFrame with columns [time_key, open, high, low, close, volume]."""
+        if self._connected and self._ex is not None:
+            try:
+                rows = self._ex.fetch_ohlcv(symbol, "1m", limit=num)
+                if rows:
+                    df = pd.DataFrame(rows, columns=["ts_ms", "open", "high", "low", "close", "volume"])
+                    df["time_key"] = pd.to_datetime(df["ts_ms"], unit="ms", utc=True).dt.strftime("%Y-%m-%d %H:%M:%S")
+                    return df[["time_key", "open", "high", "low", "close", "volume"]]
+            except Exception as exc:
+                _log.debug("ccxt get_recent_klines %s: %s", symbol, exc)
+
+        # yfinance fallback: 1m intraday data (last 7 days max)
+        try:
+            import yfinance as yf
+            yf_symbol = symbol.split("/")[0] + "-USD"
+            df = yf.download(yf_symbol, period="1d", interval="1m", progress=False, auto_adjust=True)
+            if df.empty:
+                return pd.DataFrame(columns=["time_key", "open", "high", "low", "close", "volume"])
+            df = df.reset_index()
+            df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower() for c in df.columns]
+            ts_col = next((c for c in df.columns if c in ("datetime", "date", "index")), df.columns[0])
+            df = df.rename(columns={ts_col: "time_key"})
+            df["time_key"] = pd.to_datetime(df["time_key"]).dt.strftime("%Y-%m-%d %H:%M:%S")
+            return df[["time_key", "open", "high", "low", "close", "volume"]].tail(num)
+        except Exception as exc:
+            _log.debug("yfinance get_recent_klines %s: %s", symbol, exc)
+        return pd.DataFrame(columns=["time_key", "open", "high", "low", "close", "volume"])
+
+    # ── Order book ───────────────────────────────────────────────────────────
+
+    def get_order_book_safe(self, symbol: str, depth: int) -> dict | None:
+        """Return order book in the same dict format Futu uses: {"Bid": [...], "Ask": [...]}."""
+        if not self._connected or self._ex is None:
+            return None
+        try:
+            raw = self._ex.fetch_order_book(symbol, limit=depth)
+            # ccxt format: {"bids": [[price, vol], ...], "asks": [[price, vol], ...]}
+            # Futu format: {"Bid": [(price, vol, ...), ...], "Ask": [...]}
+            # We store as plain 2-tuples which is what _tier_volume expects.
+            bids = [(row[0], row[1]) for row in (raw.get("bids") or [])]
+            asks = [(row[0], row[1]) for row in (raw.get("asks") or [])]
+            return {"Bid": bids, "Ask": asks}
+        except Exception as exc:
+            _log.debug("ccxt get_order_book_safe %s: %s", symbol, exc)
+            return None
+
+    # ── Recent ticks ─────────────────────────────────────────────────────────
+
+    def get_recent_tickers(self, symbol: str, num: int) -> pd.DataFrame:
+        """Return a DataFrame with columns [price, volume, ticker_direction]."""
+        if not self._connected or self._ex is None:
+            return pd.DataFrame(columns=["price", "volume", "ticker_direction"])
+        try:
+            trades = self._ex.fetch_trades(symbol, limit=num)
+            rows = []
+            for t in trades:
+                side = "BUY" if t.get("side") == "buy" else "SELL"
+                rows.append({"price": float(t.get("price", 0)), "volume": float(t.get("amount", 0)), "ticker_direction": side})
+            return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["price", "volume", "ticker_direction"])
+        except Exception as exc:
+            _log.debug("ccxt get_recent_tickers %s: %s", symbol, exc)
+            return pd.DataFrame(columns=["price", "volume", "ticker_direction"])
+
+    # ── Snapshot (last price, bid/ask) ───────────────────────────────────────
+
+    def get_snapshots(self, symbols: list[str]) -> pd.DataFrame:
+        """Return a DataFrame indexed by symbol with columns [last_price, bid_price, ask_price]."""
+        rows = {}
+        for symbol in symbols:
+            row = {"last_price": 0.0, "bid_price": 0.0, "ask_price": 0.0}
+            if self._connected and self._ex is not None:
+                try:
+                    t = self._ex.fetch_ticker(symbol)
+                    row["last_price"] = float(t.get("last") or 0.0)
+                    row["bid_price"] = float(t.get("bid") or 0.0)
+                    row["ask_price"] = float(t.get("ask") or 0.0)
+                except Exception as exc:
+                    _log.debug("ccxt get_snapshots %s: %s", symbol, exc)
+            elif not self._connected:
+                # yfinance fallback for price only
+                try:
+                    import yfinance as yf
+                    yf_symbol = symbol.split("/")[0] + "-USD"
+                    info = yf.Ticker(yf_symbol).fast_info
+                    row["last_price"] = float(getattr(info, "last_price", 0) or 0.0)
+                except Exception:
+                    pass
+            rows[symbol] = row
+        return pd.DataFrame(rows).T
 
 
 def _compute_benchmark_score(
@@ -284,7 +434,11 @@ class OfimIntradayStrategy:
 
     def generate_plan(self, trader, held_symbols: set[str]) -> OfimPlan:
         cycle_ts = datetime.now(UTC)
-        symbols = list(dict.fromkeys(self.settings.ofim_universe))
+        # Equity symbols come from ofim_universe; crypto symbols come from
+        # ofim_crypto_universe.  Both are scored together and ranked.
+        equity_symbols = list(dict.fromkeys(self.settings.ofim_universe))
+        crypto_symbols = list(dict.fromkeys(getattr(self.settings, "ofim_crypto_universe", ())))
+        all_scored_symbols = equity_symbols + [s for s in crypto_symbols if s not in equity_symbols]
         benchmark = self.settings.ofim_benchmark
 
         _empty = OfimPlan(
@@ -296,15 +450,62 @@ class OfimIntradayStrategy:
             features=[],
         )
 
-        if not symbols:
+        if not all_scored_symbols:
             return _empty
 
-        # ── 1. Subscribe & snapshot (benchmark + universe in one call) ────────
-        all_symbols = list(dict.fromkeys([benchmark, *symbols]))
-        trader.subscribe_realtime(all_symbols)
-        snapshots = trader.get_snapshots(all_symbols)
+        # ── 1. Connect crypto adapter if crypto symbols are configured ────────
+        crypto_adapter: _CryptoDataAdapter | None = None
+        if crypto_symbols:
+            crypto_adapter = _CryptoDataAdapter(
+                exchange_name=getattr(self.settings, "ofim_crypto_exchange", "binance"),
+                api_key=getattr(self.settings, "ofim_crypto_api_key", None),
+                api_secret=getattr(self.settings, "ofim_crypto_api_secret", None),
+                sandbox=getattr(self.settings, "ofim_crypto_sandbox", False),
+            )
+            crypto_adapter.connect()  # failure is non-fatal — returns False and logs
 
-        # ── 2. Benchmark regime score ─────────────────────────────────────────
+        try:
+            return self._generate_plan_inner(
+                trader=trader,
+                held_symbols=held_symbols,
+                equity_symbols=equity_symbols,
+                crypto_symbols=crypto_symbols,
+                all_scored_symbols=all_scored_symbols,
+                crypto_adapter=crypto_adapter,
+                cycle_ts=cycle_ts,
+                empty=_empty,
+            )
+        finally:
+            if crypto_adapter is not None:
+                crypto_adapter.disconnect()
+
+    def _generate_plan_inner(
+        self,
+        trader,
+        held_symbols: set[str],
+        equity_symbols: list[str],
+        crypto_symbols: list[str],
+        all_scored_symbols: list[str],
+        crypto_adapter: _CryptoDataAdapter | None,
+        cycle_ts: datetime,
+        empty: OfimPlan,
+    ) -> OfimPlan:
+        benchmark = self.settings.ofim_benchmark
+
+        # ── 2. Subscribe & snapshot (benchmark + equity universe) ─────────────
+        futu_symbols = list(dict.fromkeys([benchmark, *equity_symbols]))
+        trader.subscribe_realtime(futu_symbols)
+        futu_snapshots = trader.get_snapshots(futu_symbols)
+
+        # Build unified snapshots: futu + crypto
+        crypto_snapshots = (
+            crypto_adapter.get_snapshots(crypto_symbols)
+            if crypto_adapter is not None and crypto_symbols
+            else pd.DataFrame(columns=["last_price", "bid_price", "ask_price"])
+        )
+        snapshots = pd.concat([futu_snapshots, crypto_snapshots])
+
+        # ── 3. Benchmark regime score ──────────────────────────────────────────
         benchmark_score = 0.0
         if benchmark in snapshots.index:
             bm_bars = trader.get_recent_klines(benchmark, self.settings.ofim_lookback_bars)
@@ -315,7 +516,7 @@ class OfimIntradayStrategy:
             market_logger.log_klines(benchmark, bm_bars, cycle_ts)
             market_logger.log_lob(benchmark, bm_lob, cycle_ts)
 
-        # ── 3. Regime gate: only block in clearly bearish market ──────────────
+        # ── 4. Regime gate ────────────────────────────────────────────────────
         if benchmark_score <= -0.15:
             plan = OfimPlan(
                 strategy="OFIM",
@@ -328,16 +529,27 @@ class OfimIntradayStrategy:
             market_logger.log_plan(plan, cycle_ts)
             return plan
 
-        # ── 4. Score each universe symbol ─────────────────────────────────────
-        for code in symbols:
+        # ── 5. Log snapshots ──────────────────────────────────────────────────
+        for code in all_scored_symbols:
             if code in snapshots.index:
                 market_logger.log_snapshot(code, snapshots.loc[code], cycle_ts)
 
+        # ── 6. Score each symbol (equity via Futu, crypto via Binance) ────────
         features: list[OfimFeature] = []
-        for code in symbols:
-            bars = trader.get_recent_klines(code, self.settings.ofim_lookback_bars)
-            order_book = trader.get_order_book_safe(code, self.settings.ofim_order_book_depth)
-            ticks = trader.get_recent_tickers(code, self.settings.ofim_tick_window)
+        for code in all_scored_symbols:
+            is_crypto = "/" in code
+            if is_crypto and crypto_adapter is not None:
+                bars = crypto_adapter.get_recent_klines(code, self.settings.ofim_lookback_bars)
+                order_book = crypto_adapter.get_order_book_safe(code, self.settings.ofim_order_book_depth)
+                ticks = crypto_adapter.get_recent_tickers(code, self.settings.ofim_tick_window)
+            elif is_crypto:
+                # Crypto configured but adapter failed — skip this symbol
+                _log.debug("OFIM: skipping crypto symbol %s (no adapter)", code)
+                continue
+            else:
+                bars = trader.get_recent_klines(code, self.settings.ofim_lookback_bars)
+                order_book = trader.get_order_book_safe(code, self.settings.ofim_order_book_depth)
+                ticks = trader.get_recent_tickers(code, self.settings.ofim_tick_window)
 
             market_logger.log_klines(code, bars, cycle_ts)
             market_logger.log_lob(code, order_book, cycle_ts)
@@ -355,13 +567,15 @@ class OfimIntradayStrategy:
             if order_book:
                 self.prev_order_books[code] = order_book
 
-        # ── 5. Select candidates & compute weights ────────────────────────────
+        # ── 7. Select candidates & compute weights ────────────────────────────
         # Exposure scales with benchmark strength: full at +1, half at 0
         exposure_scale = min(1.0, max(0.0, 0.5 + benchmark_score))
         max_exposure = self.settings.ofim_max_gross_exposure * exposure_scale
 
         candidates: dict[str, float] = {}
         for feature in features:
+            # For held_symbols tracking, crypto uses its own symbol but execution
+            # will be remapped to the proxy ETF — treat the crypto symbol directly here.
             if feature.code in held_symbols:
                 if feature.score >= self.settings.ofim_exit_threshold:
                     candidates[feature.code] = max(feature.score, self.settings.ofim_exit_threshold)
@@ -370,7 +584,21 @@ class OfimIntradayStrategy:
 
         ordered = dict(sorted(candidates.items(), key=lambda item: item[1], reverse=True)[: self.settings.ofim_max_positions])
         exposure = max_exposure if ordered else 0.0
-        target_weights = _weight_with_cap(ordered, exposure, self.settings.ofim_max_position_weight)
+        raw_weights = _weight_with_cap(ordered, exposure, self.settings.ofim_max_position_weight)
+
+        # ── 8. Remap crypto symbols to proxy ETFs for Futu execution ─────────
+        crypto_proxy_map: dict[str, str] = dict(
+            getattr(self.settings, "ofim_crypto_to_proxy", ()) or ()
+        )
+        target_weights: dict[str, float] = {}
+        for code, weight in raw_weights.items():
+            proxy = crypto_proxy_map.get(code)
+            if proxy:
+                # Merge into proxy (two crypto symbols could map to the same ETF)
+                target_weights[proxy] = round(target_weights.get(proxy, 0.0) + weight, 6)
+            else:
+                target_weights[code] = weight
+
         plan = OfimPlan(
             strategy="OFIM",
             benchmark=benchmark,

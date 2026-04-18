@@ -20,6 +20,11 @@ CASCADE_ROOT = REPO_ROOT / "claude-trade"
 CASCADE_SRC = CASCADE_ROOT / "src"
 CASCADE_ENV_FALLBACK = CASCADE_ROOT / ".env.example"
 
+# Guard: only insert into sys.path once per process lifetime so the path list
+# doesn't accumulate duplicate entries when generate_live_cascade_plan is called
+# every 60 seconds across hundreds of polling cycles.
+_CASCADE_PATH_REGISTERED: bool = False
+
 
 @dataclass(frozen=True)
 class CascadeSleevePlan:
@@ -54,9 +59,13 @@ class CascadeSleevePlan:
 
 
 def _ensure_cascade_import_path() -> None:
+    global _CASCADE_PATH_REGISTERED  # noqa: PLW0603
+    if _CASCADE_PATH_REGISTERED:
+        return
     src = str(CASCADE_SRC)
     if src not in sys.path:
         sys.path.insert(0, src)
+    _CASCADE_PATH_REGISTERED = True
 
 
 def _normalize_history(frame: pd.DataFrame) -> pd.DataFrame:

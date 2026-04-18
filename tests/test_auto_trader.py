@@ -104,4 +104,5 @@ def test_validate_auto_trader_mode_blocks_real_submit_without_opt_in() -> None:
 def test_transient_runtime_error_detects_timeout_markers() -> None:
     assert _is_transient_runtime_error("PacketErr.Timeout")
     assert _is_transient_runtime_error("place_order failed after 4 attempts: timed out")
+    assert _is_transient_runtime_error("position_list_query failed: 此数据暂时还未准备好")
     assert not _is_transient_runtime_error("Configured FUTU_ACC_ID=1 not found.")

@@ -20,6 +20,11 @@ from .costs import build_trade_cost_model
 from .fusion_intraday import FusionIntradayStrategy
 from .ofim_intraday import OfimIntradayStrategy
 from .futu_gateway import FutuPaperTrader, FutuTradeError
+from .intraday_replay import (
+    _iter_day_dirs as _iter_logged_replay_days,
+    run_fusion_replay as run_fusion_lob_replay,
+    run_ofim_replay as run_ofim_lob_replay,
+)
 from .market_data import FutuQuoteDataProvider, HistoricalDataProvider, MarketDataError, YFinanceDataProvider
 from .research import (
     run_account_replay,
@@ -111,6 +116,15 @@ def _parse_iso_date(raw: str | None, *, fallback: date | None = None) -> date | 
     if not raw:
         return fallback
     return date.fromisoformat(raw)
+
+
+def _logged_replay_days(start: str | None, end: str | None) -> list[Path]:
+    if not start or not end:
+        return []
+    try:
+        return _iter_logged_replay_days(start, end)
+    except Exception:
+        return []
 
 
 def cmd_real_check(_args: argparse.Namespace) -> None:
@@ -288,6 +302,26 @@ def cmd_backtest(args: argparse.Namespace) -> None:
 
     with FutuPaperTrader(settings) as trader:
         if args.strategy == "fusion":
+            lob_days = _logged_replay_days(start, end)
+            if lob_days:
+                _progress(
+                    f"[fusion replay] using stored 40-level LOB data for {len(lob_days)} trading day(s): "
+                    f"{lob_days[0].name} .. {lob_days[-1].name}"
+                )
+                _progress("[fusion replay] running exact intraday replay from runtime/market_data ...")
+                replay = run_fusion_lob_replay(
+                    start,
+                    end,
+                    settings,
+                    initial_capital=initial_capital,
+                    cost_model=build_trade_cost_model(settings),
+                )
+                summary_rows = [
+                    ["strategy", "fusion_lob"],
+                    *[[key, value] for key, value in replay.summary.items()],
+                ]
+                _print_table(summary_rows, ["metric", "value"])
+                return
             symbols = [settings.fusion_benchmark, *settings.fusion_universe]
             unique_symbols = list(dict.fromkeys(symbols))
             start_date = _parse_iso_date(start)
@@ -315,6 +349,26 @@ def cmd_backtest(args: argparse.Namespace) -> None:
             _progress("[fusion replay] running replay ...")
             replay = run_fusion_intraday_replay(price_frames, settings, initial_capital=initial_capital)
         elif args.strategy == "ofim":
+            lob_days = _logged_replay_days(start, end)
+            if lob_days:
+                _progress(
+                    f"[ofim replay] using stored 40-level LOB data for {len(lob_days)} trading day(s): "
+                    f"{lob_days[0].name} .. {lob_days[-1].name}"
+                )
+                _progress("[ofim replay] running exact intraday replay from runtime/market_data ...")
+                replay = run_ofim_lob_replay(
+                    start,
+                    end,
+                    settings,
+                    initial_capital=initial_capital,
+                    cost_model=build_trade_cost_model(settings),
+                )
+                summary_rows = [
+                    ["strategy", "ofim_lob"],
+                    *[[key, value] for key, value in replay.summary.items()],
+                ]
+                _print_table(summary_rows, ["metric", "value"])
+                return
             symbols = list(dict.fromkeys([settings.ofim_benchmark, *settings.ofim_universe]))
             _progress(f"[ofim replay] loading minute bars for {len(symbols)} symbols ...")
             price_frames = {}
