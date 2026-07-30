@@ -1,0 +1,477 @@
+[
+  {
+    "frontier_id": "euv-lithography",
+    "cn_label": "EUV光刻",
+    "us_label": "EUV Lithography",
+    "gap_level": "large",
+    "us_keywords": ["euv", "high-na", "asml", "pellicle", "euv source"],
+    "cn_breakthrough_keywords": [
+      "极紫外", "EUV光源", "光刻机突破", "国产光刻", "上海微电子",
+      "科益虹源", "EUV掩模版", "光刻机样机"
+    ],
+    "impact_themes": ["semicap-equipment", "domestic-substitution", "advanced-process"],
+    "related_symbols": ["002371.SZ", "688012.SH"],
+    "breakthrough_bonus": 0.35,
+    "note": "中国目前在 28nm DUV，EUV 完全依赖进口"
+  },
+  {
+    "frontier_id": "hbm-memory",
+    "cn_label": "HBM高带宽内存",
+    "us_label": "HBM (High Bandwidth Memory)",
+    "gap_level": "large",
+    "us_keywords": ["hbm", "hbm3e", "hbm4", "sk hynix", "micron hbm"],
+    "cn_breakthrough_keywords": [
+      "国产HBM", "HBM量产", "长鑫存储", "CXMT", "高带宽内存突破",
+      "自主HBM", "HBM2E国产"
+    ],
+    "impact_themes": ["ai-compute", "chip-design", "advanced-packaging", "domestic-substitution"],
+    "related_symbols": [],
+    "breakthrough_bonus": 0.30,
+    "note": "长鑫存储在追赶 HBM2E，与 SK Hynix HBM3E 差 2 代"
+  },
+  {
+    "frontier_id": "advanced-node-sub5nm",
+    "cn_label": "5nm以下制程",
+    "us_label": "Sub-5nm Process Node",
+    "gap_level": "large",
+    "us_keywords": ["3nm", "2nm", "gaa", "gate-all-around", "nanosheet", "tsmc n2", "intel 18a"],
+    "cn_breakthrough_keywords": [
+      "3纳米", "2纳米", "GAA工艺", "先进制程突破", "中芯国际N+2",
+      "SMIC量产", "国产3nm", "国产先进制程"
+    ],
+    "impact_themes": ["advanced-process", "chip-manufacturing", "semicap-equipment", "domestic-substitution"],
+    "related_symbols": ["688981.SH", "00981.HK"],
+    "breakthrough_bonus": 0.40,
+    "note": "SMIC 最先进量产 7nm（N+1），3nm 及以下需要 EUV"
+  },
+  {
+    "frontier_id": "ai-chip-training",
+    "cn_label": "AI训练芯片",
+    "us_label": "AI Training GPU/Accelerator",
+    "gap_level": "large",
+    "us_keywords": ["b200", "gb200", "blackwell", "h100", "nvidia gpu", "amd mi300"],
+    "cn_breakthrough_keywords": [
+      "国产GPU突破", "海光新一代", "寒武纪新品", "昇腾突破",
+      "壁仞科技", "摩尔线程", "国产AI芯片量产", "算力芯片流片",
+      "昇腾910C", "国产训练卡"
+    ],
+    "impact_themes": ["chip-design", "ai-compute", "domestic-substitution"],
+    "related_symbols": ["688041.SH", "688256.SH"],
+    "breakthrough_bonus": 0.35,
+    "note": "华为昇腾910B 对标 A100，差 Nvidia 约 2 代"
+  },
+  {
+    "frontier_id": "ai-inference-chip",
+    "cn_label": "AI推理芯片",
+    "us_label": "AI Inference Accelerator",
+    "gap_level": "catching-up",
+    "us_keywords": ["nvidia l40", "groq", "cerebras", "tenstorrent", "inference chip"],
+    "cn_breakthrough_keywords": [
+      "国产推理卡", "推理芯片量产", "燧原科技", "壁仞科技推理",
+      "海光DCU推理", "寒武纪推理", "推理算力自主"
+    ],
+    "impact_themes": ["chip-design", "ai-compute", "domestic-substitution", "model-applications"],
+    "related_symbols": ["688041.SH", "688256.SH"],
+    "breakthrough_bonus": 0.28,
+    "note": "推理卡差距小于训练卡，海光 DCU 已在大规模部署"
+  },
+  {
+    "frontier_id": "photoresist-chemicals",
+    "cn_label": "光刻胶/电子特气",
+    "us_label": "Advanced Photoresist & Electronic Chemicals",
+    "gap_level": "large",
+    "us_keywords": ["arf photoresist", "euv resist", "shin-etsu", "tok", "jsr", "electronic gas"],
+    "cn_breakthrough_keywords": [
+      "光刻胶国产", "ArF光刻胶突破", "EUV光刻胶", "电子特气国产化",
+      "彤程新材", "晶瑞电材", "南大光电", "华特气体", "雅克科技",
+      "高纯试剂国产"
+    ],
+    "impact_themes": ["semicap-equipment", "chip-manufacturing", "domestic-substitution", "new-materials"],
+    "related_symbols": ["603650.SH", "300655.SZ", "688076.SH"],
+    "breakthrough_bonus": 0.28,
+    "note": "ArF 国产化率 < 5%，EUV 光刻胶基本空白"
+  },
+  {
+    "frontier_id": "sic-substrate",
+    "cn_label": "碳化硅衬底",
+    "us_label": "SiC Substrate & Epitaxy",
+    "gap_level": "catching-up",
+    "us_keywords": ["sic wafer", "wolfspeed", "coherent sic", "8-inch sic"],
+    "cn_breakthrough_keywords": [
+      "8英寸SiC", "碳化硅衬底量产", "三安光电SiC", "天科合达",
+      "天岳先进", "SiC国产化", "碳化硅良率突破"
+    ],
+    "impact_themes": ["new-materials", "chip-design", "energy-storage", "advanced-manufacturing"],
+    "related_symbols": ["600703.SH", "688234.SH"],
+    "breakthrough_bonus": 0.22,
+    "note": "6 英寸已量产，8 英寸在突破中"
+  },
+  {
+    "frontier_id": "dram-memory",
+    "cn_label": "DRAM内存",
+    "us_label": "DRAM Memory",
+    "gap_level": "large",
+    "us_keywords": ["ddr5", "lpddr5", "samsung dram", "sk hynix dram", "1-alpha node"],
+    "cn_breakthrough_keywords": [
+      "长鑫DRAM", "合肥长鑫", "CXMT DDR5", "国产DRAM量产",
+      "DRAM国产化", "国产DDR5", "国产内存颗粒"
+    ],
+    "impact_themes": ["chip-manufacturing", "domestic-substitution", "ai-compute"],
+    "related_symbols": [],
+    "breakthrough_bonus": 0.25,
+    "note": "长鑫存储 DDR4 已量产，DDR5 在追赶"
+  },
+  {
+    "frontier_id": "semicap-inspection",
+    "cn_label": "半导体检测设备",
+    "us_label": "Semiconductor Inspection & Metrology",
+    "gap_level": "large",
+    "us_keywords": ["kla", "applied materials", "lam research", "amat", "wafer inspection"],
+    "cn_breakthrough_keywords": [
+      "光学检测国产", "量测设备突破", "中科飞测", "精测电子",
+      "晶圆检测国产", "缺陷检测设备", "半导体量测国产化"
+    ],
+    "impact_themes": ["semicap-equipment", "domestic-substitution", "chip-manufacturing"],
+    "related_symbols": ["688361.SH", "300567.SZ"],
+    "breakthrough_bonus": 0.22,
+    "note": "KLA 垄断高端检测，国产替代率极低"
+  },
+  {
+    "frontier_id": "eda-software",
+    "cn_label": "EDA设计软件",
+    "us_label": "EDA (Electronic Design Automation)",
+    "gap_level": "large",
+    "us_keywords": ["synopsys", "cadence", "siemens eda", "eda tool"],
+    "cn_breakthrough_keywords": [
+      "华大九天", "芯华章", "概伦电子", "广立微", "国产EDA突破",
+      "EDA国产替代", "全流程EDA", "国产仿真工具"
+    ],
+    "impact_themes": ["cloud-software", "chip-design", "domestic-substitution"],
+    "related_symbols": ["301269.SZ", "688270.SH"],
+    "breakthrough_bonus": 0.25,
+    "note": "Synopsys+Cadence 占全球 70%，国产只覆盖部分环节"
+  },
+  {
+    "frontier_id": "igbt-power-semi",
+    "cn_label": "IGBT/功率半导体",
+    "us_label": "IGBT & Power Semiconductor",
+    "gap_level": "catching-up",
+    "us_keywords": ["infineon igbt", "onsemi", "power module", "sic mosfet"],
+    "cn_breakthrough_keywords": [
+      "IGBT国产", "斯达半导", "时代电气IGBT", "比亚迪半导体",
+      "功率模块国产", "新能源车IGBT替代", "SiC MOSFET国产"
+    ],
+    "impact_themes": ["chip-design", "energy-storage", "domestic-substitution", "advanced-manufacturing"],
+    "related_symbols": ["603290.SH", "688187.SH"],
+    "breakthrough_bonus": 0.20,
+    "note": "中低压已国产化，高压车规级在追赶 Infineon"
+  },
+  {
+    "frontier_id": "carbon-fiber-t1200",
+    "cn_label": "T1200级碳纤维",
+    "us_label": "Ultra-High-Modulus Carbon Fiber",
+    "gap_level": "catching-up",
+    "us_keywords": ["toray t1100", "t1200", "hexcel", "sgl carbon", "high modulus cf"],
+    "cn_breakthrough_keywords": [
+      "T1100国产", "T1200国产", "高模碳纤维突破", "光威复材",
+      "中复神鹰", "碳纤维自主可控", "国产碳纤维量产", "T800量产",
+      "大丝束碳纤维", "碳纤维降本", "吉林化纤碳纤维"
+    ],
+    "impact_themes": ["new-materials", "aerospace-defense", "domestic-substitution", "order-momentum"],
+    "related_symbols": ["300699.SZ", "688295.SH"],
+    "breakthrough_bonus": 0.22,
+    "note": "T800 已量产，T1000/T1100 在追赶，T1200 是下一目标"
+  },
+  {
+    "frontier_id": "high-temp-alloy",
+    "cn_label": "高温合金/单晶叶片",
+    "us_label": "Superalloy & Single Crystal Blade",
+    "gap_level": "large",
+    "us_keywords": ["single crystal blade", "turbine alloy", "ge9x", "pratt whitney gtf"],
+    "cn_breakthrough_keywords": [
+      "单晶叶片突破", "高温合金国产", "镍基合金", "钢研高纳",
+      "抚顺特钢", "航发合金", "涡轮叶片自主", "第四代单晶"
+    ],
+    "impact_themes": ["new-materials", "aerospace-defense", "advanced-manufacturing", "domestic-substitution"],
+    "related_symbols": ["300034.SZ", "600399.SH"],
+    "breakthrough_bonus": 0.25,
+    "note": "航空发动机热端部件的核心瓶颈"
+  },
+  {
+    "frontier_id": "rare-earth-magnet",
+    "cn_label": "稀土永磁",
+    "us_label": "Rare Earth Permanent Magnet",
+    "gap_level": "leading",
+    "us_keywords": ["neodymium magnet", "rare earth motor", "mp materials"],
+    "cn_breakthrough_keywords": [
+      "稀土永磁电机", "钕铁硼突破", "金力永磁", "中科三环",
+      "稀土新材料", "永磁直驱", "稀土配额", "重稀土替代"
+    ],
+    "impact_themes": ["new-materials", "advanced-manufacturing", "robotics", "order-momentum"],
+    "related_symbols": ["06680.HK", "000970.SZ"],
+    "breakthrough_bonus": 0.18,
+    "note": "中国占全球稀土 60% 产能和 90% 加工，优势地位"
+  },
+  {
+    "frontier_id": "aircraft-engine",
+    "cn_label": "航空发动机",
+    "us_label": "Aero Engine / Turbofan",
+    "gap_level": "large",
+    "us_keywords": ["leap", "pw1000g", "ge9x", "cfm rise", "pratt whitney"],
+    "cn_breakthrough_keywords": [
+      "CJ-1000A", "长江发动机", "国产大飞机发动机", "涡扇发动机突破",
+      "航发动力", "航发控制", "高温合金叶片", "单晶叶片国产",
+      "WS-15", "WS-20", "涡扇15"
+    ],
+    "impact_themes": ["aerospace-defense", "new-materials", "advanced-manufacturing", "domestic-substitution"],
+    "related_symbols": ["600893.SH", "000738.SZ"],
+    "breakthrough_bonus": 0.30,
+    "note": "C919 暂用 LEAP-1C，国产 CJ-1000A 还在试飞"
+  },
+  {
+    "frontier_id": "commercial-aircraft-parts",
+    "cn_label": "大飞机零部件国产化",
+    "us_label": "Commercial Aircraft Supply Chain",
+    "gap_level": "catching-up",
+    "us_keywords": ["boeing supply chain", "airbus a320", "safran", "honeywell aero"],
+    "cn_breakthrough_keywords": [
+      "C919国产化率", "大飞机零部件", "机载系统国产", "航电国产",
+      "起落架国产", "APU国产", "C929", "国产大飞机供应商",
+      "中航电子", "中航光电", "航天电器", "博云新材"
+    ],
+    "impact_themes": ["aerospace-defense", "advanced-manufacturing", "domestic-substitution", "order-momentum"],
+    "related_symbols": ["600372.SH", "002179.SZ", "600879.SH"],
+    "breakthrough_bonus": 0.25,
+    "note": "C919 国产化率约 60%，核心零部件仍大量进口"
+  },
+  {
+    "frontier_id": "satellite-internet",
+    "cn_label": "卫星互联网",
+    "us_label": "Satellite Internet Constellation",
+    "gap_level": "catching-up",
+    "us_keywords": ["starlink", "spacex starlink", "kuiper", "oneweb", "leo constellation"],
+    "cn_breakthrough_keywords": [
+      "千帆星座", "国网星座", "G60星链", "卫星互联网", "低轨卫星组网",
+      "银河航天", "中国星网", "一箭多星", "卫星批量生产", "商业航天",
+      "许可准入", "发射申请", "频率协调", "箭星场频网", "太空算力", "太空制造"
+    ],
+    "impact_themes": ["aerospace-defense", "commercial-space", "satellite-internet", "domestic-substitution", "order-momentum"],
+    "related_symbols": ["600118.SH", "601698.SH", "600879.SH", "002025.SZ"],
+    "breakthrough_bonus": 0.22,
+    "note": "中国千帆星座计划14000颗卫星，对标 Starlink"
+  },
+  {
+    "frontier_id": "evtol-lowaltitude",
+    "cn_label": "eVTOL/低空经济",
+    "us_label": "eVTOL / Urban Air Mobility",
+    "gap_level": "parallel",
+    "us_keywords": ["joby aviation", "lilium", "archer", "evtol faa", "urban air mobility"],
+    "cn_breakthrough_keywords": [
+      "eVTOL适航", "低空经济政策", "亿航智能", "峰飞航空",
+      "小鹏汇天", "低空空域开放", "无人机适航证", "低空飞行器量产"
+    ],
+    "impact_themes": ["aerospace-defense", "advanced-manufacturing", "chip-design", "order-momentum"],
+    "related_symbols": ["002097.SZ", "002013.SZ"],
+    "breakthrough_bonus": 0.20,
+    "note": "亿航 EH216-S 全球首获适航证，政策推进中国更快"
+  },
+  {
+    "frontier_id": "solid-state-battery",
+    "cn_label": "全固态电池",
+    "us_label": "Solid-State Battery",
+    "gap_level": "parallel",
+    "us_keywords": ["solid-state battery", "quantumscape", "solid power", "samsung sdi solid"],
+    "cn_breakthrough_keywords": [
+      "全固态量产", "固态电池装车", "固态电解质突破", "宁德时代固态",
+      "比亚迪固态", "卫蓝新能源", "清陶能源", "赣锋锂电固态",
+      "半固态电池交付"
+    ],
+    "impact_themes": ["energy-storage", "new-materials", "advanced-manufacturing", "order-momentum"],
+    "related_symbols": ["300750.SZ", "002460.SZ"],
+    "breakthrough_bonus": 0.25,
+    "note": "中美日韩基本同步竞争，中国在半固态略微领先"
+  },
+  {
+    "frontier_id": "nuclear-smr",
+    "cn_label": "小型模块化核反应堆",
+    "us_label": "Small Modular Reactor (SMR)",
+    "gap_level": "leading",
+    "us_keywords": ["nuscale", "smr", "x-energy", "terrapower"],
+    "cn_breakthrough_keywords": [
+      "玲龙一号", "ACP100", "高温气冷堆商用", "海南昌江",
+      "小型堆出口", "浮动核电站", "核电审批", "核电重启"
+    ],
+    "impact_themes": ["nuclear-power", "ai-energy", "order-momentum", "advanced-manufacturing"],
+    "related_symbols": ["601985.SH", "000777.SZ"],
+    "breakthrough_bonus": 0.20,
+    "note": "玲龙一号是全球首个陆上 SMR，中国领先"
+  },
+  {
+    "frontier_id": "perovskite-solar",
+    "cn_label": "钙钛矿太阳能电池",
+    "us_label": "Perovskite Solar Cell",
+    "gap_level": "parallel",
+    "us_keywords": ["perovskite solar", "tandem solar cell", "oxford pv", "first solar perovskite"],
+    "cn_breakthrough_keywords": [
+      "钙钛矿量产", "钙钛矿效率突破", "协鑫光电", "极电光能",
+      "纤纳光电", "钙钛矿组件", "钙钛矿产线", "叠层电池"
+    ],
+    "impact_themes": ["energy-storage", "new-materials", "advanced-manufacturing", "order-momentum"],
+    "related_symbols": ["002506.SZ"],
+    "breakthrough_bonus": 0.20,
+    "note": "中国在钙钛矿商业化进度与欧洲持平"
+  },
+  {
+    "frontier_id": "hydrogen-fuel-cell",
+    "cn_label": "氢燃料电池",
+    "us_label": "Hydrogen Fuel Cell & Green Hydrogen",
+    "gap_level": "catching-up",
+    "us_keywords": ["plug power", "bloom energy", "green hydrogen", "pem electrolyzer"],
+    "cn_breakthrough_keywords": [
+      "氢燃料电池突破", "膜电极国产", "质子交换膜国产", "亿华通",
+      "国鸿氢能", "PEM电解槽国产", "绿氢成本突破", "加氢站审批"
+    ],
+    "impact_themes": ["energy-storage", "new-materials", "advanced-manufacturing", "domestic-substitution"],
+    "related_symbols": ["688339.SH", "09663.HK"],
+    "breakthrough_bonus": 0.20,
+    "note": "膜电极等核心材料依赖进口，成本是主要瓶颈"
+  },
+  {
+    "frontier_id": "quantum-computing",
+    "cn_label": "量子计算",
+    "us_label": "Quantum Computing",
+    "gap_level": "parallel",
+    "us_keywords": ["quantum supremacy", "logical qubit", "error correction", "ibm quantum", "google willow"],
+    "cn_breakthrough_keywords": [
+      "量子比特数突破", "祖冲之号", "量子纠错突破",
+      "国盾量子", "本源量子", "量子计算云平台", "量子优越性"
+    ],
+    "impact_themes": ["quantum-computing", "chip-design", "domestic-substitution"],
+    "related_symbols": ["688027.SH"],
+    "breakthrough_bonus": 0.20,
+    "note": "中美在不同路线各有领先"
+  },
+  {
+    "frontier_id": "domestic-os-cpu",
+    "cn_label": "国产操作系统/CPU",
+    "us_label": "Operating System & CPU Architecture",
+    "gap_level": "catching-up",
+    "us_keywords": ["windows", "intel core", "amd zen", "arm architecture", "risc-v"],
+    "cn_breakthrough_keywords": [
+      "鸿蒙突破", "OpenKylin", "统信UOS", "麒麟OS", "龙芯",
+      "LoongArch", "飞腾CPU", "兆芯", "RISC-V国产", "申威"
+    ],
+    "impact_themes": ["domestic-substitution", "cloud-software", "chip-design"],
+    "related_symbols": ["688561.SH"],
+    "breakthrough_bonus": 0.22,
+    "note": "信创推动下桌面OS和服务器CPU国产化加速"
+  },
+  {
+    "frontier_id": "database-middleware",
+    "cn_label": "国产数据库/中间件",
+    "us_label": "Database & Enterprise Middleware",
+    "gap_level": "catching-up",
+    "us_keywords": ["oracle", "microsoft sql", "mongodb", "snowflake"],
+    "cn_breakthrough_keywords": [
+      "达梦数据库", "OceanBase", "GaussDB", "TiDB", "PolarDB",
+      "国产数据库替代", "国产中间件", "东方通", "宝兰德",
+      "数据库信创替换"
+    ],
+    "impact_themes": ["cloud-software", "domestic-substitution", "order-momentum"],
+    "related_symbols": ["688232.SH", "300379.SZ"],
+    "breakthrough_bonus": 0.20,
+    "note": "金融核心系统数据库替换正在推进中"
+  },
+  {
+    "frontier_id": "6g-communication",
+    "cn_label": "6G通信",
+    "us_label": "6G Communications",
+    "gap_level": "parallel",
+    "us_keywords": ["6g", "thz communication", "ris", "reconfigurable intelligent surface"],
+    "cn_breakthrough_keywords": [
+      "6G标准", "6G试验", "太赫兹通信", "智能超表面", "通感一体",
+      "6G白皮书", "6G频谱", "中国6G专利"
+    ],
+    "impact_themes": ["chip-design", "domestic-substitution", "cloud-software"],
+    "related_symbols": ["600050.SH", "000063.SZ"],
+    "breakthrough_bonus": 0.18,
+    "note": "中国 6G 专利申请数全球第一"
+  },
+  {
+    "frontier_id": "medical-imaging-high-end",
+    "cn_label": "高端医学影像",
+    "us_label": "High-End Medical Imaging (MRI/CT/PET)",
+    "gap_level": "catching-up",
+    "us_keywords": ["siemens healthineers", "ge healthcare", "philips mri", "3t mri", "pet-ct"],
+    "cn_breakthrough_keywords": [
+      "联影医疗突破", "国产MRI", "国产PET-CT", "3T核磁国产",
+      "5T核磁", "万东医疗", "东软医疗", "高端CT国产化"
+    ],
+    "impact_themes": ["domestic-substitution", "advanced-manufacturing", "order-momentum"],
+    "related_symbols": ["688271.SH", "600055.SH"],
+    "breakthrough_bonus": 0.20,
+    "note": "联影医疗已突破 3T MRI，向 5T 进军"
+  },
+  {
+    "frontier_id": "surgical-robot",
+    "cn_label": "手术机器人",
+    "us_label": "Surgical Robot",
+    "gap_level": "catching-up",
+    "us_keywords": ["intuitive surgical", "da vinci", "medtronic hugo", "stryker mako"],
+    "cn_breakthrough_keywords": [
+      "天智航", "微创机器人", "精锋医疗", "国产手术机器人",
+      "骨科机器人国产", "腔镜机器人突破", "手术机器人获批",
+      "手术机器人集采"
+    ],
+    "impact_themes": ["robotics", "domestic-substitution", "order-momentum"],
+    "related_symbols": ["688277.SH", "02252.HK"],
+    "breakthrough_bonus": 0.20,
+    "note": "达芬奇垄断腔镜领域，国产在骨科领域追赶快"
+  },
+  {
+    "frontier_id": "cnc-machine-tool",
+    "cn_label": "高端数控机床",
+    "us_label": "High-End CNC Machine Tool",
+    "gap_level": "large",
+    "us_keywords": ["dmg mori", "mazak", "okuma", "five-axis cnc", "haas"],
+    "cn_breakthrough_keywords": [
+      "五轴联动国产", "高端数控突破", "科德数控", "海天精工",
+      "纽威数控", "工业母机突破", "国产五轴加工中心", "机床精度突破"
+    ],
+    "impact_themes": ["advanced-manufacturing", "domestic-substitution", "aerospace-defense", "order-momentum"],
+    "related_symbols": ["688305.SH", "601882.SH"],
+    "breakthrough_bonus": 0.25,
+    "note": "五轴联动数控机床长期依赖日德进口，是制造业根基"
+  },
+  {
+    "frontier_id": "micro-led-display",
+    "cn_label": "Micro-LED/高端显示",
+    "us_label": "Micro-LED & Advanced Display",
+    "gap_level": "parallel",
+    "us_keywords": ["micro-led", "apple micro led", "samsung micro led", "mini led"],
+    "cn_breakthrough_keywords": [
+      "Micro-LED量产", "巨量转移突破", "京东方Micro-LED", "利亚德",
+      "TCL华星", "Micro-LED芯片", "MicroLED良率突破"
+    ],
+    "impact_themes": ["advanced-manufacturing", "chip-design", "order-momentum"],
+    "related_symbols": ["000725.SZ", "300296.SZ"],
+    "breakthrough_bonus": 0.18,
+    "note": "巨量转移是核心瓶颈，中国面板厂积极布局"
+  },
+  {
+    "frontier_id": "humanoid-robot",
+    "cn_label": "人形机器人",
+    "us_label": "Humanoid Robot",
+    "gap_level": "catching-up",
+    "us_keywords": ["optimus", "figure", "1x", "humanoid", "boston dynamics atlas"],
+    "cn_breakthrough_keywords": [
+      "人形机器人量产", "宇树量产", "小米铁大", "智元机器人", "傅利叶",
+      "人形机器人进工厂", "人形机器人订单", "机器人国标",
+      "开普勒机器人", "达闼机器人"
+    ],
+    "impact_themes": ["robotics", "ai-hardware", "advanced-manufacturing", "order-momentum"],
+    "related_symbols": ["300124.SZ", "688256.SH"],
+    "breakthrough_bonus": 0.22,
+    "note": "宇树、智元等追赶速度极快"
+  }
+]

@@ -1,0 +1,15 @@
+市场新闻提醒
+时间: 2026-03-15T14:13:50.823597+00:00
+来源: local-json
+主线提醒: 1 条 | 港A科技催化: 1 条
+
+全市场主线
+1. [高优先级][利空][监管] New EV tariff proposals raise pressure on battery exporters
+   标的: 1211.HK, 300750.SZ, TSLA
+   要点: EV Tariff Pressure: matched tariff, ev, batte... | 分数: 65
+
+港A科技催化
+1. [跟踪][利好] AI chip demand accelerates as cloud giants expand capex plans
+   港A候选: 300308.SZ, 300502.SZ, 688041.SH
+   触发: 主线题材, 算力扩张, 服务器链 | 关注分: 58
+   逻辑: hit AI算力 via compute, gpu, ai infrastruct...；hit 服务器 via server, \bserver\b

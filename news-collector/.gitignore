@@ -1,0 +1,64 @@
+# ── 为什么需要这个文件 ────────────────────────────────────────────────────
+# 2026-07-30：本仓库的 .git 一度膨胀到 11GB，而真正被提交引用的对象只有 313 个、
+# 最大 blob 仅 3MB。原因是 data/market_news_live.db（3.5GB）长期处于待提交状态，
+# 反复 git add / gc 被中断，留下 18 个 tmp_pack 残骸和数千个孤儿对象。
+# 清理后 .git 降到 1.7MB。以下规则确保这种情况不再发生。
+#
+# 原则：凡是「跑一次就会重新生成」的东西都不进版本库，只提交源码与配置。
+
+# ── 运行时数据库（最大的坑，3.5GB 且每轮增长）──────────────────────────
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+# ── 模型缓存与预算计数（每次运行都变）─────────────────────────────────
+data/model_judgement_cache.json
+data/model_judgement_budget.json
+data/review_api_model_budget.json
+data/lexicon_discovery.jsonl
+
+# ── 生成的报告与看板（采集线每 5 分钟重写）────────────────────────────
+reports/live/*.json
+reports/live/*.jsonl
+reports/live/*.html
+reports/live/*.md
+reports/live/*.txt
+reports/*.json
+reports/*.html
+reports/news_learning/*.json
+reports/news_learning/*.jsonl
+
+# 保留报告目录结构，方便新机器上直接跑
+!reports/live/.gitkeep
+!reports/news_learning/.gitkeep
+
+# ── 运行时状态与日志（无轮转，会长到几百 MB）───────────────────────────
+runtime/logs/
+runtime/*.log
+runtime/*.txt
+runtime/*_progress.json
+runtime/desktop_archive/
+
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# ── 备份与临时文件 ────────────────────────────────────────────────────────
+*.bak
+*.bak_*
+*.tmp
+*.orig
+*~
+
+# ── 密钥与本地配置（绝不能进版本库）───────────────────────────────────
+.env
+*_cookies.json
+!config/examples/*_cookies.example.json
+
+# ── macOS ─────────────────────────────────────────────────────────────────
+.DS_Store
