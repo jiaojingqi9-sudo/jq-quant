@@ -1,10 +1,10 @@
 #!/bin/zsh
 # 桌面快捷启动：直接打开 TAA + Futu 的可点击控制台
 
-PROJECT_DIR="/Users/jiao/All here/trade"
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 
 if [[ ! -d "$PROJECT_DIR" ]]; then
-  osascript -e 'display alert "找不到项目目录" message "请确认项目目录在 /Users/jiao/All here/trade" as critical'
+  osascript -e 'display alert "找不到项目目录" message "请确认启动器仍放在项目的 stock/launchers/ 下" as critical'
   exit 1
 fi
 

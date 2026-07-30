@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pandas as pd
 
 from taa_futu.dashboard_app import (
@@ -9,8 +11,12 @@ from taa_futu.dashboard_app import (
     _epoch_seconds,
     _history_window_from_days,
     _current_strategy_breakdown,
+    _is_transient_status_message,
     _live_monitor_run_every,
     _lower_panel_payload,
+    _runtime_error_banner_level,
+    _stock_account_start_date,
+    _stock_performance_summary,
     _lightweight_chart_html,
     _lob_ladder_view,
     _order_book_view,
@@ -205,6 +211,72 @@ def test_live_monitor_run_every_respects_toggle_and_minimum() -> None:
     assert _live_monitor_run_every(False, 5) is None
     assert _live_monitor_run_every(True, 1) == "2s"
     assert _live_monitor_run_every(True, 5) == "5s"
+
+
+def test_dashboard_treats_us_overnight_status_failure_as_transient() -> None:
+    assert _is_transient_status_message("subscribe_realtime failed: 拉取美股夜盘状态失败。")
+    assert _runtime_error_banner_level("error", "subscribe_realtime failed: 拉取美股夜盘状态失败。", 0.0) == "warning"
+    assert _runtime_error_banner_level("error", "Configured FUTU_ACC_ID=1 not found.", 0.0) == "error"
+
+
+def test_stock_performance_summary_uses_account_base_for_total_pnl() -> None:
+    summary = _stock_performance_summary(
+        total_assets=1_025_000.0,
+        base_assets=1_000_000.0,
+        stock_ledger_epoch={"ts": "2026-05-05T17:31:16+00:00", "account_snapshot": {"total_assets": 1_021_000.0}},
+        stock_ledger_v2=SimpleNamespace(net_realized_pnl=-250.0, fees_paid=125.0, trade_count=226),
+        stock_ledger_projection=SimpleNamespace(realized_pnl=999.0, fees_paid=999.0, trade_count=800),
+        estimated_fee_total=800.0,
+        estimated_realized=1_200.0,
+        estimated_unrealized=300.0,
+        broker_realized=500.0,
+        broker_unrealized=700.0,
+        selected_range_trade_count=800,
+    )
+
+    assert summary.base_assets == 1_000_000.0
+    assert summary.epoch_start_value == 1_021_000.0
+    assert summary.net_change == 25_000.0
+    assert summary.fee_total == 800.0
+    assert summary.trade_count == 800
+    assert summary.realized == 500.0
+    assert summary.unrealized == 700.0
+
+
+def test_stock_performance_summary_falls_back_without_epoch() -> None:
+    summary = _stock_performance_summary(
+        total_assets=1_010_000.0,
+        base_assets=1_000_000.0,
+        stock_ledger_epoch={},
+        stock_ledger_v2=SimpleNamespace(net_realized_pnl=-250.0, fees_paid=125.0, trade_count=226),
+        stock_ledger_projection=SimpleNamespace(realized_pnl=999.0, fees_paid=999.0, trade_count=800),
+        estimated_fee_total=800.0,
+        estimated_realized=1_200.0,
+        estimated_unrealized=300.0,
+        broker_realized=None,
+        broker_unrealized=None,
+        selected_range_trade_count=800,
+    )
+
+    assert summary.base_assets == 1_000_000.0
+    assert summary.net_change == 10_000.0
+    assert summary.fee_total == 800.0
+    assert summary.trade_count == 800
+    assert summary.realized == 1_200.0
+    assert summary.unrealized == 300.0
+
+
+def test_stock_account_start_date_defaults_to_april_first(monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_ACCOUNT_START_DATE", raising=False)
+    monkeypatch.delenv("ACCOUNT_START_DATE", raising=False)
+
+    assert str(_stock_account_start_date(pd.Timestamp("2026-05-07").date())) == "2026-04-01"
+
+
+def test_stock_account_start_date_can_be_overridden(monkeypatch) -> None:
+    monkeypatch.setenv("STOCK_ACCOUNT_START_DATE", "2026-04-15")
+
+    assert str(_stock_account_start_date(pd.Timestamp("2026-05-07").date())) == "2026-04-15"
 
 
 def test_lightweight_chart_html_contains_chart_payload() -> None:

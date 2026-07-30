@@ -1,8 +1,8 @@
 #!/bin/zsh
 # 直接重启 streamlit dashboard（不依赖控制台重启按钮）
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$PROJECT_DIR"
 
 # 先杀掉已有的 streamlit
 pkill -f "streamlit.*8501" 2>/dev/null
@@ -13,7 +13,7 @@ if [[ ! -x ".venv/bin/python" ]]; then
   exit 1
 fi
 
-export PYTHONPATH="$SCRIPT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$PROJECT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 
 echo "正在启动 Dashboard..."
 nohup ".venv/bin/streamlit" run "src/taa_futu/dashboard_app.py" \

@@ -37,6 +37,7 @@ class WatchdogState:
     restart_count: int = 0
     last_restart_at: datetime | None = None
     last_opend_launch_at: datetime | None = None
+    data_quality_failures: int = 0
 
 
 def _log(message: str) -> None:
@@ -175,19 +176,38 @@ def _start_auto_trader_process() -> int:
     return process.pid
 
 
-def _restart_auto_trader(settings: Settings, state: WatchdogState, now_utc: datetime) -> tuple[str, str]:
+def _wait_for_auto_trader_payload(pid: int, *, timeout_seconds: float = 5.0) -> dict[str, Any]:
+    deadline = time.time() + max(0.0, timeout_seconds)
+    payload: dict[str, Any] = {}
+    while time.time() <= deadline:
+        payload = _read_status(AUTO_TRADER_STATUS_FILE)
+        if _pid_from_file(AUTO_TRADER_PID_FILE) == pid and _is_pid_running(pid):
+            payload.setdefault("running", True)
+            payload.setdefault("pid", pid)
+            return payload
+        time.sleep(0.2)
+    payload.setdefault("pid", pid)
+    payload.setdefault("running", _is_pid_running(pid))
+    return payload
+
+
+def _restart_auto_trader(settings: Settings, state: WatchdogState, now_utc: datetime) -> tuple[str, str, dict[str, Any]]:
     if (
         state.last_restart_at is not None
         and (now_utc - state.last_restart_at).total_seconds() < settings.watchdog_restart_cooldown_seconds
     ):
         cooldown = settings.watchdog_restart_cooldown_seconds - int((now_utc - state.last_restart_at).total_seconds())
-        return "restart_cooldown", f"waiting_{max(cooldown, 0)}s_before_next_restart"
+        return "restart_cooldown", f"waiting_{max(cooldown, 0)}s_before_next_restart", _read_status(AUTO_TRADER_STATUS_FILE)
 
     stop_ok, stop_detail = _stop_auto_trader_process()
     pid = _start_auto_trader_process()
     state.restart_count += 1
     state.last_restart_at = now_utc
-    return "restarted_auto_trader", f"{stop_detail}; started_pid={pid}; restart_count={state.restart_count}"
+    return (
+        "restarted_auto_trader",
+        f"{stop_detail}; started_pid={pid}; restart_count={state.restart_count}",
+        _wait_for_auto_trader_payload(pid),
+    )
 
 
 def _ensure_opend(settings: Settings, state: WatchdogState, now_utc: datetime) -> tuple[bool, str]:
@@ -215,6 +235,28 @@ def _next_sleep_seconds(settings: Settings, *, market_open: bool) -> int:
     if low > high:
         low, high = high, low
     return random.SystemRandom().randint(max(15, low), max(max(15, low), high))
+
+
+def _data_quality_probe(settings: Settings) -> tuple[bool, str]:
+    symbols = tuple(settings.fusion_universe or settings.symbols or (settings.benchmark,))
+    symbol = symbols[0] if symbols else settings.benchmark
+    last_detail = "not_run"
+    for attempt in range(3):
+        try:
+            with FutuPaperTrader(settings) as trader:
+                snapshots = trader.get_snapshots([symbol])
+            if snapshots.empty or symbol not in snapshots.index:
+                last_detail = f"snapshot_missing:{symbol}"
+            else:
+                last_price = float(snapshots.loc[symbol].get("last_price", 0.0) or 0.0)
+                if last_price > 0:
+                    return True, f"ok:{symbol}:{last_price:.4f}"
+                last_detail = f"price_zero:{symbol}"
+        except Exception as exc:
+            last_detail = f"{type(exc).__name__}:{exc}"
+        if attempt < 2:
+            time.sleep(2)
+    return False, last_detail
 
 
 def _write_status(
@@ -247,6 +289,7 @@ def _write_status(
         "window_end": settings.auto_trader_end_time,
         "opend_connected": opend_connected,
         "restart_count": state.restart_count,
+        "data_quality_failures": state.data_quality_failures,
         "auto_trader_pid": _pid_from_file(AUTO_TRADER_PID_FILE),
         "auto_trader_running": bool(_pid_from_file(AUTO_TRADER_PID_FILE) and _is_pid_running(_pid_from_file(AUTO_TRADER_PID_FILE))),
         "auto_trader_action": (auto_payload or {}).get("action"),
@@ -280,13 +323,35 @@ def _run_cycle(settings: Settings, state: WatchdogState) -> tuple[str, str, bool
     opend_connected, opend_detail = _ensure_opend(settings, state, now_utc)
     if not opend_connected:
         auto_payload = _read_status(AUTO_TRADER_STATUS_FILE)
+        state.data_quality_failures = 0
         return "waiting_opend", opend_detail, market_open, window_detail, auto_payload, False
+
+    data_quality_detail = ""
+    if market_open:
+        data_ok, data_detail = _data_quality_probe(settings)
+        if data_ok:
+            state.data_quality_failures = 0
+            data_quality_detail = f"; data_quality={data_detail}"
+        else:
+            state.data_quality_failures += 1
+            if state.data_quality_failures >= 3:
+                action, detail, auto_payload = _restart_auto_trader(settings, state, now_utc)
+                return (
+                    action,
+                    f"reason=data_quality_failed:{data_detail}; failures={state.data_quality_failures}; {detail}",
+                    market_open,
+                    window_detail,
+                    auto_payload,
+                    True,
+                )
+            data_quality_detail = f"; data_quality_warning={data_detail}; failures={state.data_quality_failures}/3"
 
     healthy, health_detail, auto_payload = _auto_trader_health(settings, now_utc)
     if healthy:
-        return "healthy", health_detail, market_open, window_detail, auto_payload, True
+        action = "data_quality_warning" if data_quality_detail.startswith("; data_quality_warning") else "healthy"
+        return action, f"{health_detail}{data_quality_detail}", market_open, window_detail, auto_payload, True
 
-    action, detail = _restart_auto_trader(settings, state, now_utc)
+    action, detail, auto_payload = _restart_auto_trader(settings, state, now_utc)
     return action, f"reason={health_detail}; {detail}", market_open, window_detail, auto_payload, True
 
 
@@ -301,6 +366,8 @@ def run_watchdog(settings: Settings) -> None:
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
     _register_pid()
     _write_status(

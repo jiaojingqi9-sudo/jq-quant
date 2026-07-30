@@ -339,7 +339,10 @@ class ReplayTrader:
 def _get_cycle_timestamps(day_dir: Path) -> list[str]:
     """Return sorted unique cycle timestamps from plan.jsonl for a day."""
     plan_path = day_dir / "plan.jsonl"
-    if not plan_path.exists():
+    # Archived days are gzipped in place, so plan.jsonl may only exist as
+    # plan.jsonl.gz. Check both before falling back, otherwise an archived day
+    # silently uses lob cycle boundaries instead of the real plan ones.
+    if not plan_path.exists() and not plan_path.with_suffix(".jsonl.gz").exists():
         # Fall back to lob.jsonl cycle boundaries
         plan_path = day_dir / "lob.jsonl"
     tss: list[str] = []
@@ -382,6 +385,7 @@ class _PortfolioState:
     cash: float
     qty: dict[str, float] = field(default_factory=dict)        # code → shares
     pending: dict[str, float] = field(default_factory=dict)    # code → target_weight (next fill)
+    entry_cycle: dict[str, int] = field(default_factory=dict)  # code → cycle index of entry (for min-hold)
 
     def market_value(self, prices: dict[str, float]) -> float:
         equity = sum(self.qty.get(c, 0.0) * p for c, p in prices.items())
@@ -393,8 +397,19 @@ class _PortfolioState:
         cost_model: TradeCostModel | None,
         trade_log_rows: list[dict],
         cycle_ts: str,
+        *,
+        min_rebalance_drift_pct: float = 0.0,
+        min_hold_cycles: int = 0,
+        cycle_index: int = 0,
     ) -> None:
-        """Execute last cycle's pending orders at this cycle's prices."""
+        """Execute last cycle's pending orders at this cycle's prices.
+
+        Anti-churn controls (both default 0 = original behavior):
+        * ``min_rebalance_drift_pct``: skip a symbol whose target weight is
+          within this fraction of its current weight — don't trade tiny drifts.
+        * ``min_hold_cycles``: don't sell a position younger than this many
+          cycles, to stop rapid in-and-out churn.
+        """
         if not self.pending:
             return
         # Current portfolio value for sizing
@@ -411,8 +426,13 @@ class _PortfolioState:
         target_qty: dict[str, float] = {}
         for code, target_w in self.pending.items():
             price = _fill_price(next_store.get_snapshot(code), "BUY")
-            if price > 0:
-                target_qty[code] = math.floor(target_w * portfolio_value / price)
+            if price <= 0:
+                continue
+            if min_rebalance_drift_pct > 0:
+                cur_w = self.qty.get(code, 0.0) * current_prices.get(code, 0.0) / portfolio_value
+                if abs(target_w - cur_w) < min_rebalance_drift_pct:
+                    continue  # drift too small — leave this position untouched
+            target_qty[code] = math.floor(target_w * portfolio_value / price)
 
         # --- sells ---
         for code, tgt in target_qty.items():
@@ -420,6 +440,9 @@ class _PortfolioState:
             delta = tgt - current
             if delta >= 0:
                 continue
+            if (min_hold_cycles > 0 and code in self.entry_cycle
+                    and (cycle_index - self.entry_cycle[code]) < min_hold_cycles):
+                continue  # held too briefly — respect the minimum hold
             price = _fill_price(next_store.get_snapshot(code), "SELL")
             if price <= 0:
                 continue
@@ -431,6 +454,8 @@ class _PortfolioState:
                                             timestamp=None, model=cost_model)
             self.cash += notional - breakdown.total
             self.qty[code] = max(0.0, current - qty)
+            if self.qty[code] <= 1e-12:
+                self.entry_cycle.pop(code, None)
             trade_log_rows.append({
                 "ts": cycle_ts, "code": code, "side": "SELL",
                 "qty": qty, "price": price, "notional": notional,
@@ -462,6 +487,8 @@ class _PortfolioState:
             if notional + breakdown.total > self.cash:
                 continue
             self.cash -= notional + breakdown.total
+            if current <= 1e-12:
+                self.entry_cycle[code] = cycle_index
             self.qty[code] = current + qty
             trade_log_rows.append({
                 "ts": cycle_ts, "code": code, "side": "BUY",
@@ -469,6 +496,36 @@ class _PortfolioState:
                 "fees": breakdown.total,
             })
 
+        self.pending.clear()
+
+    def liquidate(
+        self,
+        store: ReplayDataStore,
+        cost_model: TradeCostModel | None,
+        trade_log_rows: list[dict],
+        cycle_ts: str,
+    ) -> None:
+        """Force-sell every open position to cash (used for flat-by-close).
+
+        Sells at the current bid (via _fill_price) and books exit costs, so the
+        no-overnight variant pays realistic round-trip fees.
+        """
+        for code, qty in list(self.qty.items()):
+            if qty <= 0:
+                continue
+            price = _fill_price(store.get_snapshot(code), "SELL")
+            if price <= 0:
+                continue
+            notional = qty * price
+            breakdown = estimate_trade_cost("SELL", qty, price, timestamp=None, model=cost_model)
+            self.cash += notional - breakdown.total
+            self.qty[code] = 0.0
+            trade_log_rows.append({
+                "ts": cycle_ts, "code": code, "side": "SELL",
+                "qty": qty, "price": price, "notional": notional,
+                "fees": breakdown.total,
+            })
+        self.qty = {c: q for c, q in self.qty.items() if q > 1e-12}
         self.pending.clear()
 
 
@@ -517,8 +574,16 @@ def run_intraday_replay(
     cost_model: TradeCostModel | None = None,
     suppress_logging: bool = True,
     progress_callback: ReplayProgressFn | None = None,
+    flat_by_close: bool = False,
+    min_rebalance_drift_pct: float = 0.0,
+    min_hold_cycles: int = 0,
 ) -> IntradayReplayResult:
     """Replay an intraday strategy using stored real market data.
+
+    flat_by_close: if True, force-liquidate all positions at the end of each
+    trading day, so nothing is held overnight (the no-overnight variant).
+    min_rebalance_drift_pct / min_hold_cycles: anti-churn execution controls
+    (both default 0 = original behavior); see _PortfolioState.execute_pending.
 
     Parameters
     ----------
@@ -565,6 +630,7 @@ def run_intraday_replay(
             _log_patch.__enter__()
 
         prev_store: ReplayDataStore | None = None
+        global_cycle = 0
 
         if progress_callback is not None:
             progress_callback(
@@ -598,16 +664,21 @@ def run_intraday_replay(
                 continue
 
             for idx, ts in enumerate(cycle_tss):
+                global_cycle += 1
                 # Execute last cycle's pending orders at this cycle's price
                 if prev_store is not None and portfolio.pending:
                     portfolio.execute_pending(
-                        store, cost_model, trade_log_rows, ts
+                        store, cost_model, trade_log_rows, ts,
+                        min_rebalance_drift_pct=min_rebalance_drift_pct,
+                        min_hold_cycles=min_hold_cycles, cycle_index=global_cycle,
                     )
                 elif idx > 0 and portfolio.pending:
                     # within same day — use current store but advanced to this ts
                     store.advance_to(ts)
                     portfolio.execute_pending(
-                        store, cost_model, trade_log_rows, ts
+                        store, cost_model, trade_log_rows, ts,
+                        min_rebalance_drift_pct=min_rebalance_drift_pct,
+                        min_hold_cycles=min_hold_cycles, cycle_index=global_cycle,
                     )
 
                 # Build replay trader for this cycle
@@ -637,6 +708,10 @@ def run_intraday_replay(
                 equity_ts.append(ts)
                 equity_vals.append(portfolio.market_value(current_prices))
 
+            if flat_by_close and cycle_tss:
+                store.advance_to(cycle_tss[-1])
+                portfolio.liquidate(store, cost_model, trade_log_rows, cycle_tss[-1])
+
             prev_store = store
             if progress_callback is not None:
                 elapsed = time.perf_counter() - started_at
@@ -656,7 +731,9 @@ def run_intraday_replay(
             last_store = ReplayDataStore(day_dirs[-1])
             last_store.advance_to(equity_ts[-1])
             portfolio.execute_pending(
-                last_store, cost_model, trade_log_rows, equity_ts[-1]
+                last_store, cost_model, trade_log_rows, equity_ts[-1],
+                min_rebalance_drift_pct=min_rebalance_drift_pct,
+                min_hold_cycles=min_hold_cycles, cycle_index=global_cycle,
             )
         if progress_callback is not None:
             elapsed = time.perf_counter() - started_at
@@ -762,6 +839,9 @@ def run_ofim_replay(
     initial_capital: float = 1_000_000.0,
     cost_model: TradeCostModel | None = None,
     progress_callback: ReplayProgressFn | None = None,
+    flat_by_close: bool = False,
+    min_rebalance_drift_pct: float = 0.0,
+    min_hold_cycles: int = 0,
 ) -> IntradayReplayResult:
     """Replay OFIM strategy using stored real 40-level LOB data.
 
@@ -786,6 +866,9 @@ def run_ofim_replay(
         initial_capital=initial_capital,
         cost_model=cost_model,
         progress_callback=progress_callback,
+        flat_by_close=flat_by_close,
+        min_rebalance_drift_pct=min_rebalance_drift_pct,
+        min_hold_cycles=min_hold_cycles,
     )
 
 

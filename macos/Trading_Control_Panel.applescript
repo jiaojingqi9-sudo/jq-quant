@@ -1,5 +1,7 @@
-set repoRoot to "/Users/jiao/All here/trade"
-set commandPath to repoRoot & "/Launch_Trading_Control_Panel.command"
+-- Assumed layout: this repo sits at ~/All here/trade. If you clone it
+-- somewhere else, change the line below to your own repository path.
+set repoRoot to (POSIX path of (path to home folder)) & "All here/trade"
+set commandPath to repoRoot & "/stock/launchers/Launch_Trading_Control_Panel.command"
 set launcherCommand to "open -a Terminal " & quoted form of commandPath
 
 try

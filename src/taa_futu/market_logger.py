@@ -24,10 +24,11 @@ runtime/market_data/
 """
 from __future__ import annotations
 
+import gzip
 import json
 import traceback
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_DIR = REPO_ROOT / "runtime"
 MARKET_DATA_DIR = RUNTIME_DIR / "market_data"
+LOB_CACHE_FILE = RUNTIME_DIR / "lob_cache.json"
 
 # ET timezone used for trading-day folder names
 _ET_ZONE = "America/New_York"
@@ -67,19 +69,43 @@ def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
         fh.write(json.dumps(record, default=str) + "\n")
 
 
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
+    tmp.replace(path)
+
+
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    if not path.exists():
-        return rows
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
+    paths = [path]
+    gz_path = path.with_suffix(path.suffix + ".gz")
+    if gz_path.exists():
+        paths.append(gz_path)
+    for candidate in paths:
+        if not candidate.exists():
             continue
-        try:
-            rows.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+        opener = gzip.open if candidate.suffix == ".gz" else open
+        with opener(candidate, "rt", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
     return rows
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _ts(ts: datetime | None) -> str:
@@ -154,6 +180,45 @@ def load_order_records(start: str, end: str | None = None) -> pd.DataFrame:
     return frame.sort_values(["ts", "code"], na_position="last").reset_index(drop=True)
 
 
+def market_data_disk_usage() -> dict[str, Any]:
+    days: list[dict[str, Any]] = []
+    total_bytes = 0
+    if not MARKET_DATA_DIR.exists():
+        return {"root": str(MARKET_DATA_DIR), "total_bytes": 0, "days": []}
+    for day_dir in sorted(MARKET_DATA_DIR.glob("*")):
+        if not day_dir.is_dir():
+            continue
+        size = sum(path.stat().st_size for path in day_dir.rglob("*") if path.is_file())
+        total_bytes += size
+        days.append({"date": day_dir.name, "bytes": size, "path": str(day_dir)})
+    return {"root": str(MARKET_DATA_DIR), "total_bytes": total_bytes, "days": days}
+
+
+def market_data_retention_plan(*, keep_days: int, today: date | None = None) -> dict[str, Any]:
+    keep_days = max(1, int(keep_days))
+    today = today or datetime.now(UTC).date()
+    cutoff = today - timedelta(days=keep_days - 1)
+    older: list[dict[str, Any]] = []
+    kept: list[dict[str, Any]] = []
+    for item in market_data_disk_usage()["days"]:
+        try:
+            day = pd.Timestamp(item["date"]).date()
+        except (TypeError, ValueError):
+            kept.append(item)
+            continue
+        if day < cutoff:
+            older.append(item)
+        else:
+            kept.append(item)
+    return {
+        "keep_days": keep_days,
+        "cutoff": cutoff.isoformat(),
+        "older_bytes": sum(int(item["bytes"]) for item in older),
+        "older_days": older,
+        "kept_days": kept,
+    }
+
+
 # ---------------------------------------------------------------------------
 # LOB  (order-book snapshot)
 # ---------------------------------------------------------------------------
@@ -161,19 +226,59 @@ def load_order_records(start: str, end: str | None = None) -> pd.DataFrame:
 def _do_log_lob(code: str, order_book: dict[str, Any] | None, ts: datetime | None) -> None:
     if order_book is None:
         return
+    stamp = _ts(ts)
     record: dict[str, Any] = {
-        "ts": _ts(ts),
+        "ts": stamp,
         "type": "lob",
         "code": code,
         "bid": order_book.get("Bid", []),
         "ask": order_book.get("Ask", []),
     }
     _append_jsonl(_trading_day_dir(ts) / "lob.jsonl", record)
+    cache = _read_json(LOB_CACHE_FILE)
+    books = dict(cache.get("books") or {})
+    books[code] = {
+        "ts": stamp,
+        "Bid": order_book.get("Bid", []),
+        "Ask": order_book.get("Ask", []),
+    }
+    _write_json_atomic(
+        LOB_CACHE_FILE,
+        {
+            "updated_at": stamp,
+            "source": "stock_lob_logger",
+            "books": books,
+        },
+    )
 
 
 def log_lob(code: str, order_book: dict[str, Any] | None, ts: datetime | None = None) -> None:
     """Append one order-book snapshot record."""
     _safe(_do_log_lob, code, order_book, ts)
+
+
+def load_lob_cache(code: str, *, max_age_seconds: int = 5) -> dict[str, Any] | None:
+    payload = _read_json(LOB_CACHE_FILE)
+    books = payload.get("books") if isinstance(payload, dict) else None
+    if not isinstance(books, dict) or code not in books:
+        return None
+    book = books.get(code)
+    if not isinstance(book, dict):
+        return None
+    try:
+        ts = pd.Timestamp(book.get("ts"))
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(ts):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    age = (pd.Timestamp.utcnow() - ts.tz_convert("UTC")).total_seconds()
+    if age > max(0, int(max_age_seconds)):
+        return None
+    if not book.get("Bid") or not book.get("Ask"):
+        return None
+    return {"Bid": book.get("Bid", []), "Ask": book.get("Ask", [])}
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +409,7 @@ def _do_log_orders(
 
     for order in planned_orders:
         row_dict = asdict(order)
+        row_dict.setdefault("strategy_source", getattr(order, "strategy_source", "Unclassified"))
         row_dict["action"] = action
         if order.code in result_index:
             row_dict.update(result_index[order.code])

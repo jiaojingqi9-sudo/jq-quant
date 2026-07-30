@@ -1,8 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$PROJECT_DIR"
 
 WATCHDOG_PLIST="$HOME/Library/LaunchAgents/com.jiao.taa_futu_watchdog.plist"
 launchctl unload "$WATCHDOG_PLIST" >/dev/null 2>&1 || true

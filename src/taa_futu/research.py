@@ -20,7 +20,7 @@ from .costs import (
     with_trade_costs,
 )
 from .fusion_intraday import build_target_weights, compute_benchmark_score, compute_symbol_feature
-from .strategy_stack import effective_fusion_settings, stack_allocations, stack_label
+from .strategy_stack import baseline_sleeve_enabled, effective_fusion_settings, stack_allocations, stack_label
 
 
 @dataclass(frozen=True)
@@ -652,7 +652,7 @@ def run_strategy_stack_replay(
     baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = stack_allocations(settings)
     fusion_settings = effective_fusion_settings(settings)
 
-    baseline_initial = float(initial_capital) * baseline_weight if settings.stack_baseline_enabled else 0.0
+    baseline_initial = float(initial_capital) * baseline_weight if baseline_sleeve_enabled(settings) else 0.0
     fusion_initial = float(initial_capital) * fusion_weight
     ofim_initial = float(initial_capital) * ofim_weight
     cascade_initial = float(initial_capital) * cascade_weight
@@ -661,7 +661,7 @@ def run_strategy_stack_replay(
     baseline_curve = pd.Series(dtype=float)
     benchmark_curve = pd.Series(dtype=float)
     baseline_log = pd.DataFrame()
-    if settings.stack_baseline_enabled and baseline_initial > 0:
+    if baseline_sleeve_enabled(settings) and baseline_initial > 0:
         baseline_curve, benchmark_curve, baseline_log = _baseline_daily_replay(
             baseline_daily_closes,
             settings,

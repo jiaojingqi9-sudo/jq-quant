@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import re
 import socket
 import time
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -31,6 +32,7 @@ class PlannedOrder:
     current_qty: int
     target_qty: int
     target_weight: float
+    strategy_source: str = "Unclassified"
 
 
 def _price_precision(price_spread: float) -> int:
@@ -50,6 +52,17 @@ def _round_limit_price(raw_price: float, price_spread: float, side: str) -> floa
     return round(rounded, _price_precision(spread))
 
 
+def _scrub_error(message: object, settings: Settings) -> str:
+    text = str(message)
+    password_md5 = getattr(settings, "futu_unlock_trade_password_md5", None)
+    if password_md5:
+        text = text.replace(str(password_md5), "***md5***")
+    acc_id = getattr(settings, "futu_acc_id", None)
+    if acc_id is not None:
+        text = text.replace(str(acc_id), "***acc_id***")
+    return re.sub(r"\b[a-fA-F0-9]{32}\b", "***hash***", text)
+
+
 class FutuPaperTrader:
     TERMINAL_ORDER_STATUSES = {
         "FILLED_ALL",
@@ -65,6 +78,9 @@ class FutuPaperTrader:
         "timed out",
         "temporarily unavailable",
         "此数据暂时还未准备好",
+        "拉取美股夜盘状态失败",
+        "夜盘状态失败",
+        "overnight status",
         "网络中断",
         "连接中断",
         "请求超时",
@@ -82,6 +98,7 @@ class FutuPaperTrader:
         self._futu: Any | None = None
         self.quote_ctx = None
         self.trade_ctx = None
+        self._lob_push_handler = None
 
     def __enter__(self) -> "FutuPaperTrader":
         try:
@@ -117,7 +134,7 @@ class FutuPaperTrader:
     def _expect_ok(self, result: tuple, *, context: str = "Futu call") -> Any:
         ret, payload, *_rest = result
         if ret != self._futu.RET_OK:
-            message = str(payload)
+            message = _scrub_error(payload, self.settings)
             if self._is_transient_error(message):
                 raise FutuTransientError(f"{context} failed after retries: {message}")
             raise FutuTradeError(f"{context} failed: {message}")
@@ -161,7 +178,7 @@ class FutuPaperTrader:
             try:
                 result = fn(*args, **kwargs)
             except Exception as exc:
-                last_message = str(exc)
+                last_message = _scrub_error(exc, self.settings)
                 if attempt < attempts and self._is_transient_error(last_message):
                     self._reconnect_contexts()
                     self._retry_wait(attempt)
@@ -178,7 +195,7 @@ class FutuPaperTrader:
                 return result
 
             payload = result[1] if len(result) > 1 else ""
-            last_message = str(payload)
+            last_message = _scrub_error(payload, self.settings)
             if attempt < attempts and self._is_transient_error(last_message):
                 self._reconnect_contexts()
                 self._retry_wait(attempt)
@@ -224,6 +241,32 @@ class FutuPaperTrader:
             password_md5=self.settings.futu_unlock_trade_password_md5,
         )
         self._expect_ok(result, context="unlock_trade")
+
+    def healthcheck(self) -> dict:
+        """Lightweight API-level probe that the OpenD quote channel is alive.
+
+        Triggers a real round-trip via ``query_subscription`` rather than the
+        socket-only check used in ``__enter__``. Raises ``FutuTransientError``
+        when the call fails with a transient marker so callers can short-circuit
+        cycle work (e.g. before issuing place_order) instead of discovering the
+        half-dead state mid-cycle.
+
+        ``query_subscription`` is read-only and has no side effects, so it is
+        safe to call at the start of every auto_trader cycle.
+        """
+        try:
+            result = self._call_with_retry(
+                "healthcheck:query_subscription",
+                self.quote_ctx.query_subscription,
+            )
+        except FutuTradeError as exc:
+            # surface non-transient failures as transient too — for healthcheck
+            # we treat *any* failure as "do not proceed" because a working
+            # OpenD must answer query_subscription
+            if not self._is_transient_error(exc):
+                raise FutuTransientError(f"healthcheck failed: {exc}") from exc
+            raise
+        return {"ok": True, "ret": result[0] if isinstance(result, tuple) else None}
 
     def list_accounts(self) -> pd.DataFrame:
         return self._expect_ok(self._call_with_retry("get_acc_list", self.trade_ctx.get_acc_list), context="get_acc_list")
@@ -450,6 +493,54 @@ class FutuPaperTrader:
         )
         self._expect_ok(result, context="subscribe_types")
 
+    def subscribe_push_lob(
+        self,
+        symbols: list[str],
+        callback: Callable[[str, dict[str, Any]], None] | None = None,
+        *,
+        session: str = "RTH",
+    ) -> None:
+        """Subscribe to pushed order-book updates and mirror them into the LOB cache."""
+        clean_symbols = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
+        if not clean_symbols:
+            return
+        if callback is None:
+            from . import market_logger
+
+            callback = market_logger.log_lob
+
+        futu_mod = self._futu
+        trader = self
+
+        class _LobPushHandler(futu_mod.OrderBookHandlerBase):
+            def on_recv_rsp(self, rsp_pb):  # noqa: ANN001
+                ret_code, data = super().on_recv_rsp(rsp_pb)
+                if ret_code != futu_mod.RET_OK:
+                    return ret_code, data
+                code = str(data.get("code", "") if isinstance(data, dict) else "").strip()
+                if code:
+                    try:
+                        callback(code, data)
+                    except Exception:
+                        pass
+                return ret_code, data
+
+        handler = _LobPushHandler()
+        ret = self.quote_ctx.set_handler(handler)
+        if ret != self._futu.RET_OK:
+            raise FutuTradeError("subscribe_push_lob failed: unable to register order-book push handler")
+        self._lob_push_handler = handler
+        result = self._call_with_retry(
+            "subscribe_push_lob",
+            self.quote_ctx.subscribe,
+            clean_symbols,
+            [self._futu.SubType.ORDER_BOOK],
+            subscribe_push=True,
+            is_first_push=True,
+            session=getattr(self._futu.Session, session),
+        )
+        trader._expect_ok(result, context="subscribe_push_lob")
+
     def get_recent_klines(self, code: str, num: int) -> pd.DataFrame:
         data = self._expect_ok(
             self._call_with_retry(
@@ -671,6 +762,15 @@ class FutuPaperTrader:
             order_notional = order_qty * reference_price
             if min_notional > 0 and order_notional < min_notional and target_weight > 0:
                 continue
+
+            # Hard pre-trade notional cap. Full exits are deliberately exempt:
+            # shrinking risk should not be blocked by a buy/trim sizing guard.
+            max_notional = getattr(self.settings, "auto_trader_max_order_value_usd", 0.0)
+            if max_notional > 0 and target_weight > 0 and order_notional > max_notional:
+                capped_qty = math.floor(float(max_notional) / reference_price / lot_size) * lot_size
+                order_qty = min(order_qty, int(capped_qty))
+                if order_qty <= 0:
+                    continue
 
             raw_price = float(snapshot["ask_price"] if side == "BUY" and snapshot["ask_price"] > 0 else snapshot["bid_price"])
             if raw_price <= 0:

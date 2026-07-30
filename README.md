@@ -41,7 +41,7 @@
 
 那么这篇多资产趋势跟踪白皮书比很多需要做空、上杠杆、交易期货、依赖分钟级 alpha 的论文更适合落地。
 
-更详细的选型说明见 [docs/strategy-selection.md](/Users/jiao/All%20here/trade/docs/strategy-selection.md)。
+更详细的选型说明见 [stock/docs/strategy-selection.md](stock/docs/strategy-selection.md)。
 
 ## Fusion Intraday
 
@@ -55,7 +55,7 @@
 - 逐笔方向失衡
 - 点差和仓位约束
 
-说明文档见 [docs/fusion-intraday-strategy.md](/Users/jiao/All%20here/trade/docs/fusion-intraday-strategy.md)。
+说明文档见 [stock/docs/fusion-intraday-strategy.md](stock/docs/fusion-intraday-strategy.md)。
 
 ## 环境准备
 
@@ -153,8 +153,8 @@ cp .env.example .env
 
 或者直接在 Finder 里双击：
 
-- [Launch_Trading_Control_Panel.command](/Users/jiao/All%20here/trade/Launch_Trading_Control_Panel.command)
-- [Trading Control Panel.applescript source](/Users/jiao/All%20here/trade/macos/Trading_Control_Panel.applescript)
+- [Launch_Trading_Control_Panel.command](stock/launchers/Launch_Trading_Control_Panel.command)
+- [Trading Control Panel.applescript source](macos/Trading_Control_Panel.applescript)
 
 控制台和监控页现在都已经做成了中英文对照：
 
@@ -173,11 +173,33 @@ cp .env.example .env
 - 它会在主要交易时段按随机间隔自检，默认大约每 `4` 到 `9` 分钟检查一次
 - 如果发现 `OpenD` 掉线、自动运行进程退出、状态文件卡死或进入 `error`，会自动尝试恢复
 - 它会把状态写到：
-  - [runtime/watchdog_status.json](/Users/jiao/All%20here/trade/runtime/watchdog_status.json)
-  - [runtime/watchdog.log](/Users/jiao/All%20here/trade/runtime/watchdog.log)
+  - `runtime/watchdog_status.json`
+  - `runtime/watchdog.log`
 - 原交易引擎状态仍然写到：
-  - [runtime/auto_trader_status.json](/Users/jiao/All%20here/trade/runtime/auto_trader_status.json)
-  - [runtime/auto_trader.log](/Users/jiao/All%20here/trade/runtime/auto_trader.log)
+  - `runtime/auto_trader_status.json`
+  - `runtime/auto_trader.log`
+- 股票侧现在也有工程化运行流水：
+  - `runtime/stock_events.jsonl`：每轮 cycle、目标、订单、错误和成交同步事件
+  - `runtime/stock_fills.jsonl`：append-only 成交事件账本
+  - `runtime/stock_ledger_epoch.json`：本地账本统计起点
+  - `runtime/stock_journal.jsonl`：由成交事件派生的双分录审计账本，带 hash chain
+  - `runtime/stock_order_memory.jsonl`：每笔计划/提交订单的决策快照，用于学习归因
+  - `runtime/stock_trade_outcomes.jsonl`：由 FIFO 成交配对生成的已实现交易结果标签
+  - `runtime/stock_attribution.json`：按策略、标的、亏盈原因聚合的学习报告
+  - `runtime/strategy_upgrade_candidates.jsonl`：研究级策略改进候选，默认不允许 live 自动晋级
+  - `runtime/strategy_promotion_report.json`：候选策略晋级门禁结果
+  - `runtime/stock_learning_review_packet.md`：可直接发给 Codex 复核的学习审阅包
+  - `runtime/stock_learning_review_packet.json`：同一审阅包的机器可校验版本，包含证据文件 hash
+- 股票自动执行还有一层硬风控护栏：
+  - `AUTO_TRADER_MAX_TARGET_GROSS_EXPOSURE`：账户级目标总敞口上限，默认 `1.0`
+  - `AUTO_TRADER_MAX_TARGET_WEIGHT`：单标的目标权重硬上限，默认 `1.0`
+  - `AUTO_TRADER_MAX_ORDER_VALUE_USD`：单笔订单名义金额上限，`0` 表示关闭
+  - `AUTO_TRADER_MAX_CYCLE_TURNOVER_USD`：单轮非清仓换手上限，`0` 表示关闭
+  - `AUTO_TRADER_MAX_EPOCH_LOSS_USD` / `AUTO_TRADER_MAX_EPOCH_LOSS_PCT`：账本 epoch 以来的最大亏损刹车，触发后只允许降风险订单
+- 股票账本现在按成交增量入账；部分成交订单会按累计成交差分写多条 fill，避免后续成交被同一个 `order_id` 吞掉。
+- 股票系统起点现在用统一命令维护：`.venv/bin/taa-futu stock-system-reset` 会同时设置事件审计账本 Epoch 和四策略分账起点，避免两套账本各算各的。
+- 股票系统 Doctor：`.venv/bin/taa-futu stock-system-doctor` 会检查账本起点、四策略分账、学习包、自动交易、守护监控和对账胶水，并给出修复命令。
+- 股票侧有 `Learning Lab`：`.venv/bin/taa-futu stock-learning-build` 重建订单结果、亏盈归因、候选改动和审阅包；`.venv/bin/taa-futu stock-learning-export` 专门导出给 Codex 复核的审阅包；`.venv/bin/taa-futu stock-learning-status` 查看最新学习状态。该模块只生成 research/paper 级建议，不会直接修改 live 策略或代码。
 
 默认组合建议：
 
@@ -225,4 +247,6 @@ cp .env.example .env
 - 富途模拟交易接口当前不支持 `deal_list` 成交明细查询，所以监控页里的“成交”是订单维度，不是逐笔撮合流水。
 - 富途 `history_order_list_query` 当前不会返回费用字段，所以页面里的“已实现 / 净变化 / 估算费用”在多数情况下是按官方费率估算，不是券商回传原值。
 - 全天自动运行默认只在 `America/New_York 09:45-15:55` 工作，交易引擎轮询间隔默认 `60` 秒；可以在 `.env` 里改 `AUTO_TRADER_*` 配置。
+- `AUTO_TRADER_EXIT_CONFIRM_CYCLES` 可以要求退出信号连续出现 N 轮后才卖出，默认 `1` 保持旧行为。
+- `AUTO_TRADER_MIN_SYMBOL_INTERVAL_SECONDS` 可以给单个标的加下单冷却，默认 `0` 表示关闭。
 - 守护监控默认在主要交易时段每 `240-540` 秒随机检查一次，盘后每 `900-1800` 秒随机检查一次；可以在 `.env` 里改 `WATCHDOG_*` 配置。

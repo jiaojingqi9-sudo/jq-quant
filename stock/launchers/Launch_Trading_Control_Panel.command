@@ -3,15 +3,15 @@
 # Starts Python in the background then closes this Terminal window so only
 # the control-panel window is visible — no extra Python/Terminal windows.
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$PROJECT_DIR"
 
 if [[ ! -x ".venv/bin/python" ]]; then
   osascript -e 'display alert "Missing .venv/bin/python" message "The local Python environment is missing. Ask Claude to reinstall the project dependencies." as critical'
   exit 1
 fi
 
-export PYTHONPATH="$SCRIPT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$PROJECT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 
 # uv-managed Python on macOS sometimes needs explicit Tcl/Tk library hints
 # when launched from a detached Terminal session.

@@ -18,9 +18,10 @@ import signal
 from zoneinfo import ZoneInfo
 from tkinter import simpledialog
 
+from . import describe_build
 from .cascade_sleeve import cascade_summary_line
 from .config import load_settings
-from .strategy_stack import stack_allocations, stack_label
+from .strategy_stack import active_stack_strategy, baseline_sleeve_enabled, stack_allocations, stack_label
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -255,10 +256,11 @@ def _cascade_summary(settings) -> str:
 
 
 def _auto_stack_summary(settings) -> str:
+    active = active_stack_strategy(settings)
     baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = stack_allocations(settings)
     sleeves: list[tuple[str, float, str | None]] = []
 
-    if settings.stack_baseline_enabled and baseline_weight > 0:
+    if baseline_sleeve_enabled(settings) and baseline_weight > 0:
         sleeves.append(("基线 Baseline", baseline_weight, None))
     if fusion_weight > 0:
         sleeves.append(("Fusion 日内", fusion_weight, None))
@@ -273,7 +275,15 @@ def _auto_stack_summary(settings) -> str:
         return "现在后台自动运行: 没有启用任何模块。"
 
     mode_label = "自定义组合"
-    if len(sleeves) == 1 and sleeves[0][0] == "Fusion 日内" and abs(fusion_weight - 1.0) <= 1e-9:
+    if active == "baseline":
+        mode_label = "独占插头 / Plug: Baseline Only"
+    elif active == "fusion":
+        mode_label = "独占插头 / Plug: Fusion Only"
+    elif active == "ofim":
+        mode_label = "独占插头 / Plug: OFIM Only"
+    elif active == "cascade":
+        mode_label = "独占插头 / Plug: Claude/Cascade Only"
+    elif len(sleeves) == 1 and sleeves[0][0] == "Fusion 日内" and abs(fusion_weight - 1.0) <= 1e-9:
         mode_label = "Fusion Only"
     elif len(sleeves) == 1 and sleeves[0][0] == "OFIM 订单流" and abs(ofim_weight - 1.0) <= 1e-9:
         mode_label = "OFIM Only"
@@ -282,7 +292,7 @@ def _auto_stack_summary(settings) -> str:
     elif len(sleeves) == 1 and sleeves[0][0] == "Claude/Cascade" and abs(cascade_weight - 1.0) <= 1e-9:
         mode_label = "Cascade Only"
     elif (
-        settings.stack_baseline_enabled
+        baseline_sleeve_enabled(settings)
         and abs(baseline_weight - 0.25) <= 1e-9
         and abs(fusion_weight) <= 1e-9
         and abs(ofim_weight - 0.25) <= 1e-9
@@ -291,7 +301,7 @@ def _auto_stack_summary(settings) -> str:
     ):
         mode_label = "我的策略组 50% + Claude 50%"
     elif (
-        settings.stack_baseline_enabled
+        baseline_sleeve_enabled(settings)
         and abs(baseline_weight - 0.25) <= 1e-9
         and abs(fusion_weight - 0.25) <= 1e-9
         and abs(ofim_weight - 0.25) <= 1e-9
@@ -306,6 +316,8 @@ def _auto_stack_summary(settings) -> str:
         headline = f"现在后台自动运行: {len(sleeves)} 个模块一起跑。"
 
     mode_text = f"当前自动盘模式: {mode_label}"
+    if active is not None:
+        mode_text += "。已开启硬隔离，不会和其他策略混跑。"
     ratio_text = "占比: " + " + ".join(f"{name} {weight:.0%}" for name, weight, _ in sleeves)
     detail_lines = [f"{idx}. {name}: {weight:.0%}" for idx, (name, weight, _) in enumerate(sleeves, start=1)]
     for _, _, note in sleeves:
@@ -377,13 +389,55 @@ def _ct_engine_args(*, dry_run: bool) -> list[str]:
     return base
 
 
+class _EmbeddedFrame(ttk.Frame):
+    """ttk.Frame that absorbs the toplevel-only ``tk.Tk`` calls ControlPanel
+    makes against ``self.root``.
+
+    The legacy ControlPanel was written assuming ``self.root = tk.Tk()`` and
+    calls ``self.root.title()`` / ``.geometry()`` / ``.minsize()`` / ``.protocol()``
+    etc. in many places. When ControlPanel is embedded inside another Tk
+    window (e.g. the unified panel), those window-config calls don't make
+    sense — the host owns the window — so we no-op them. Widget methods
+    (``after``, ``bind``, ``winfo_*``, ``columnconfigure``, ``rowconfigure``,
+    ``update_idletasks``) inherit from ttk.Frame and work normally.
+
+    ``destroy`` is intentionally NOT overridden — the default Frame.destroy
+    destroys this frame and its children but leaves the host window alone,
+    which is exactly what we want when a tab is closed.
+    """
+
+    def title(self, *_args, **_kwargs): return None
+    def geometry(self, *_args, **_kwargs): return None
+    def minsize(self, *_args, **_kwargs): return None
+    def maxsize(self, *_args, **_kwargs): return None
+    def resizable(self, *_args, **_kwargs): return None
+    def protocol(self, *_args, **_kwargs): return None
+    def iconbitmap(self, *_args, **_kwargs): return None
+    def iconphoto(self, *_args, **_kwargs): return None
+    def wm_attributes(self, *_args, **_kwargs): return None
+    def deiconify(self): return None
+    def iconify(self): return None
+    def withdraw(self): return None
+    def mainloop(self, *_args, **_kwargs): return None
+    def quit(self): return None
+
+
 class ControlPanel:
-    def __init__(self) -> None:
+    def __init__(self, master: tk.Misc | None = None) -> None:
         ensure_tcl_tk_env()
-        self.root = tk.Tk()
-        self.root.title("TAA + Futu 控制台 / Control Panel")
-        self.root.geometry("1500x960")
-        self.root.minsize(1240, 780)
+        version, tag, commit = describe_build()
+        # When ``master`` is provided we are being embedded inside another
+        # window (the unified panel's "完整控制台" tab). In that mode we use
+        # an _EmbeddedFrame so widget-creation code that passes ``self.root``
+        # as the parent still works, but window-config calls become no-ops.
+        self._embedded = master is not None
+        if self._embedded:
+            self.root = _EmbeddedFrame(master)
+        else:
+            self.root = tk.Tk()
+            self.root.title(f"TAA + Futu 控制台 / Control Panel · {tag}")
+            self.root.geometry("1500x960")
+            self.root.minsize(1240, 780)
 
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.dashboard_process: subprocess.Popen[str] | None = None
@@ -395,6 +449,8 @@ class ControlPanel:
         self.middle_pane: tk.PanedWindow | None = None
         self._scroll_canvases: list[tk.Canvas] = []
         self._pane_constraint_after_id: str | None = None
+        self._enforcing_pane_limits = False
+        self._last_root_size: tuple[int, int] | None = None
 
         self.opend_host = tk.StringVar(value="127.0.0.1")
         self.opend_port = tk.StringVar(value="11111")
@@ -409,6 +465,8 @@ class ControlPanel:
         self.stack_fusion_weight = tk.StringVar(value=f"{initial_settings.stack_fusion_weight:.2f}")
         self.stack_ofim_weight = tk.StringVar(value=f"{initial_settings.stack_ofim_weight:.2f}")
         self.stack_cascade_weight = tk.StringVar(value=f"{initial_settings.stack_cascade_weight:.2f}")
+        # Futu pre-gate (additive — defaults preserve original behavior).
+        self.pregate_mode = tk.StringVar(value=self._resolve_pregate_mode(initial_settings))
 
         self.opend_status = tk.StringVar(value="OpenD 状态 / Status: 检查中 / checking...")
         self.dashboard_status = tk.StringVar(value="监控页 / Dashboard: 已停止 / stopped")
@@ -417,14 +475,20 @@ class ControlPanel:
         self.ct_engine_status = tk.StringVar(value="Cascade引擎 / CT Engine: 检查中 / checking...")
         self.trade_mode_status = tk.StringVar(value="交易模式 / Trade Mode: 检查中 / checking...")
         self.strategy_status = tk.StringVar(value="当前策略 / Strategy: 检查中 / checking...")
+        self.version_status = tk.StringVar(
+            value=f"版本 / Version: {version} | 标签 / Tag: {tag} | 提交 / Commit: {commit}"
+        )
 
         self._build_ui()
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        # Window-level wiring only applies when we own the window.
+        if not self._embedded:
+            self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(300, self._drain_log_queue)
         self.root.after(500, self.refresh_status)
-        # Close the Terminal window that launched us (if any).
-        # Works regardless of which .command file the user double-clicked.
-        self.root.after(800, self._close_launcher_terminal)
+        # Only close the launching Terminal when running standalone — when
+        # embedded we are not the process that opened the terminal.
+        if not self._embedded:
+            self.root.after(800, self._close_launcher_terminal)
 
     def _close_launcher_terminal(self) -> None:
         """Close any Terminal window that was used to launch this control panel.
@@ -521,7 +585,7 @@ class ControlPanel:
 
         status_frame, status_inner = self._create_scrollable_section(top_pane, "状态 / Status")
         top_pane.add(status_frame, minsize=360, stretch="always")
-        for idx, text_var in enumerate([self.opend_status, self.dashboard_status, self.ct_engine_status, self.trade_mode_status, self.strategy_status, self.auto_status, self.watchdog_status]):
+        for idx, text_var in enumerate([self.version_status, self.opend_status, self.dashboard_status, self.ct_engine_status, self.trade_mode_status, self.strategy_status, self.auto_status, self.watchdog_status]):
             label = ttk.Label(status_inner, textvariable=text_var, justify="left", anchor="w")
             label.grid(row=idx, column=0, sticky="ew", pady=(0 if idx == 0 else 8, 0))
             self._wrapping_labels.append(label)
@@ -550,52 +614,95 @@ class ControlPanel:
         ttk.Entry(config_inner, textvariable=self.opend_port).grid(row=1, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
         ttk.Label(config_inner, text="监控页端口 / Dashboard Port").grid(row=2, column=0, sticky="w", pady=(10, 0))
         ttk.Entry(config_inner, textvariable=self.dashboard_port).grid(row=2, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
-        ttk.Label(config_inner, text="常用组合 / Quick Stack").grid(row=3, column=0, sticky="w", pady=(14, 0))
-        ttk.Button(config_inner, text="单跑 Fusion / Fusion Only", command=self.use_fusion_only).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="单跑 OFIM / OFIM Only", command=self.use_ofim_only).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="我的策略组 50% + Claude 50%", command=self.use_fusion_cascade_split).grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="四策略均衡 25/25/25/25", command=self.use_full_stack).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Label(config_inner, text="交易环境 / Trade Mode").grid(row=8, column=0, sticky="w", pady=(14, 0))
-        ttk.Button(config_inner, text="切到模拟盘 / Use SIMULATE", command=self.arm_simulate_mode).grid(row=9, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="⚠️ 重置模拟账户 / Reset Simulate Account", command=self.reset_simulate_account).grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 0))
-        ttk.Button(config_inner, text="切到实盘手动 / Arm REAL Manual", command=self.arm_real_manual_mode).grid(row=11, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="切到实盘自动 / Arm REAL Auto", command=self.arm_real_auto_mode).grid(row=12, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Label(config_inner, text="实用工具 / Utilities").grid(row=13, column=0, sticky="w", pady=(14, 0))
-        ttk.Button(config_inner, text="撤销全部挂单 / Cancel All Open Orders", command=self.cancel_all_orders).grid(row=14, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="⚠️ 清空全部持仓 / Flatten All Positions", command=self.flatten_all_positions).grid(row=15, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="实盘就绪检查 / Check REAL Readiness", command=self.check_real_readiness).grid(row=17, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="设置交易密码MD5 / Set Trade Pwd MD5", command=self.set_trade_password_md5).grid(row=18, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="安装开机自启 / Install Login Auto Start", command=self.install_login_auto_start).grid(row=19, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(config_inner, text="关闭开机自启 / Remove Login Auto Start", command=self.uninstall_login_auto_start).grid(row=20, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Label(config_inner, text="高级组合 / Advanced Stack").grid(row=21, column=0, sticky="w", pady=(14, 0))
-        ttk.Checkbutton(config_inner, text="启用基线 sleeve / Enable Baseline Sleeve", variable=self.stack_baseline_enabled).grid(row=21, column=1, sticky="w", padx=(10, 0), pady=(14, 0))
-        ttk.Label(config_inner, text="基线权重 / Baseline Weight").grid(row=22, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(config_inner, textvariable=self.stack_baseline_weight).grid(row=22, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
-        ttk.Label(config_inner, text="Fusion 权重 / Fusion Weight").grid(row=23, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(config_inner, textvariable=self.stack_fusion_weight).grid(row=23, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
-        ttk.Label(config_inner, text="OFIM 权重 / OFIM Weight").grid(row=24, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(config_inner, textvariable=self.stack_ofim_weight).grid(row=24, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
-        ttk.Label(config_inner, text="Cascade 权重 / Cascade Weight").grid(row=25, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(config_inner, textvariable=self.stack_cascade_weight).grid(row=25, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
-        ttk.Button(config_inner, text="应用组合配置 / Apply Stack Config", command=self.apply_stack_config).grid(row=26, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ttk.Label(config_inner, text="独占插头 / Plug Mode").grid(row=3, column=0, sticky="w", pady=(14, 0))
+        ttk.Button(config_inner, text="单跑 Baseline / Baseline Only", command=self.use_baseline_only).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="单跑 Fusion / Fusion Only", command=self.use_fusion_only).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="单跑 OFIM / OFIM Only", command=self.use_ofim_only).grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="单跑 Cascade / Cascade Only", command=self.use_cascade_only).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="解除插头 / Clear Plug (Custom Mix)", command=self.clear_active_plug).grid(row=8, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(config_inner, text="常用组合 / Quick Stack").grid(row=9, column=0, sticky="w", pady=(14, 0))
+        ttk.Button(config_inner, text="我的策略组 50% + Claude 50%", command=self.use_fusion_cascade_split).grid(row=10, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="四策略均衡 25/25/25/25", command=self.use_full_stack).grid(row=11, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(config_inner, text="交易环境 / Trade Mode").grid(row=12, column=0, sticky="w", pady=(14, 0))
+        ttk.Button(config_inner, text="切到模拟盘 / Use SIMULATE", command=self.arm_simulate_mode).grid(row=13, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="⚠️ 重置模拟账户 / Reset Simulate Account", command=self.reset_simulate_account).grid(row=14, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        ttk.Button(config_inner, text="切到实盘手动 / Arm REAL Manual", command=self.arm_real_manual_mode).grid(row=15, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="切到实盘自动 / Arm REAL Auto", command=self.arm_real_auto_mode).grid(row=16, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(config_inner, text="实用工具 / Utilities").grid(row=17, column=0, sticky="w", pady=(14, 0))
+        ttk.Button(config_inner, text="撤销全部挂单 / Cancel All Open Orders", command=self.cancel_all_orders).grid(row=18, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="⚠️ 清空全部持仓 / Flatten All Positions", command=self.flatten_all_positions).grid(row=19, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="实盘就绪检查 / Check REAL Readiness", command=self.check_real_readiness).grid(row=20, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="设置交易密码MD5 / Set Trade Pwd MD5", command=self.set_trade_password_md5).grid(row=21, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="安装开机自启 / Install Login Auto Start", command=self.install_login_auto_start).grid(row=22, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="关闭开机自启 / Remove Login Auto Start", command=self.uninstall_login_auto_start).grid(row=23, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(config_inner, text="高级组合 / Advanced Stack").grid(row=24, column=0, sticky="w", pady=(14, 0))
+        ttk.Checkbutton(config_inner, text="启用基线 sleeve / Enable Baseline Sleeve", variable=self.stack_baseline_enabled).grid(row=24, column=1, sticky="w", padx=(10, 0), pady=(14, 0))
+        ttk.Label(config_inner, text="基线权重 / Baseline Weight").grid(row=25, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.stack_baseline_weight).grid(row=25, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Label(config_inner, text="Fusion 权重 / Fusion Weight").grid(row=26, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.stack_fusion_weight).grid(row=26, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Label(config_inner, text="OFIM 权重 / OFIM Weight").grid(row=27, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.stack_ofim_weight).grid(row=27, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Label(config_inner, text="Cascade 权重 / Cascade Weight").grid(row=28, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.stack_cascade_weight).grid(row=28, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Button(config_inner, text="应用组合配置 / Apply Stack Config", command=self.apply_stack_config).grid(row=29, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
-        ttk.Separator(config_inner, orient="horizontal").grid(row=27, column=0, columnspan=2, sticky="ew", pady=(14, 6))
-        ttk.Label(config_inner, text="行情权限 / Market Data").grid(row=28, column=0, columnspan=2, sticky="w")
+        ttk.Separator(config_inner, orient="horizontal").grid(row=30, column=0, columnspan=2, sticky="ew", pady=(14, 6))
+        ttk.Label(config_inner, text="行情权限 / Market Data").grid(row=31, column=0, columnspan=2, sticky="w")
         ttk.Button(
             config_inner,
             text="开通 Nasdaq Basic / Open Nasdaq Basic",
             command=lambda: webbrowser.open(NASDAQ_BASIC_URL),
-        ).grid(row=27, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ).grid(row=32, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         ttk.Button(
             config_inner,
             text="开通 TotalView / Open TotalView",
             command=lambda: webbrowser.open(NASDAQ_TOTALVIEW_URL),
-        ).grid(row=28, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ).grid(row=33, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         ttk.Button(
             config_inner,
             text="开通 OPRA / Open OPRA",
             command=lambda: webbrowser.open(OPRA_URL),
-        ).grid(row=29, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ).grid(row=34, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+
+        # ── Futu Pre-gate (additive; defaults to OFF) ──────────────────────
+        ttk.Separator(config_inner, orient="horizontal").grid(
+            row=35, column=0, columnspan=2, sticky="ew", pady=(14, 6)
+        )
+        ttk.Label(
+            config_inner,
+            text="富途盘前过滤 / Futu Pre-gate (Fusion only)",
+        ).grid(row=36, column=0, columnspan=2, sticky="w")
+        _pregate_radio_frame = ttk.Frame(config_inner)
+        _pregate_radio_frame.grid(row=37, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Radiobutton(
+            _pregate_radio_frame,
+            text="关闭 / Off",
+            variable=self.pregate_mode,
+            value="off",
+            command=self.apply_pregate_mode,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Radiobutton(
+            _pregate_radio_frame,
+            text="只记录 / Log only",
+            variable=self.pregate_mode,
+            value="logonly",
+            command=self.apply_pregate_mode,
+        ).grid(row=0, column=1, sticky="w", padx=(0, 12))
+        ttk.Radiobutton(
+            _pregate_radio_frame,
+            text="生效 / Active",
+            variable=self.pregate_mode,
+            value="active",
+            command=self.apply_pregate_mode,
+        ).grid(row=0, column=2, sticky="w")
+        ttk.Label(
+            config_inner,
+            text="只删不加；不会修改订单或权重，Baseline 不受影响。",
+            foreground="#666666",
+            wraplength=380,
+            justify="left",
+        ).grid(row=38, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         middle_pane = tk.PanedWindow(
             self.content_vertical_pane,
@@ -813,6 +920,8 @@ class ControlPanel:
             label.configure(wraplength=wraplength)
 
     def _schedule_pane_constraints(self, _event=None) -> None:
+        if self._enforcing_pane_limits:
+            return
         if self._pane_constraint_after_id is not None:
             try:
                 self.root.after_cancel(self._pane_constraint_after_id)
@@ -821,6 +930,14 @@ class ControlPanel:
         self._pane_constraint_after_id = self.root.after(12, self._enforce_pane_limits)
 
     def _schedule_root_constraints(self, _event=None) -> None:
+        if self._enforcing_pane_limits:
+            return
+        if _event is not None and getattr(_event, "widget", None) is not self.root:
+            return
+        current_size = (self.root.winfo_width(), self.root.winfo_height())
+        if current_size == self._last_root_size:
+            return
+        self._last_root_size = current_size
         if self._pane_constraint_after_id is not None:
             try:
                 self.root.after_cancel(self._pane_constraint_after_id)
@@ -876,7 +993,8 @@ class ControlPanel:
             remaining_sashes = sash_width * (sash_count - index)
             upper = total - remaining_min - remaining_sashes
             clamped = max(lower, min(current, upper))
-            pane.sash_place(index, clamped, 1)
+            if abs(clamped - current) >= 2:
+                pane.sash_place(index, clamped, 1)
             previous_edge = clamped + sash_width
 
     def _clamp_vertical_pane(self, pane: tk.PanedWindow | None, fallback_min_sizes: list[int]) -> None:
@@ -901,15 +1019,23 @@ class ControlPanel:
             remaining_sashes = sash_width * (sash_count - index)
             upper = total - remaining_min - remaining_sashes
             clamped = max(lower, min(current, upper))
-            pane.sash_place(index, 1, clamped)
+            if abs(clamped - current) >= 2:
+                pane.sash_place(index, 1, clamped)
             previous_edge = clamped + sash_width
 
     def _enforce_pane_limits(self) -> None:
         self._pane_constraint_after_id = None
-        self._clamp_vertical_pane(self.main_pane, [420, 180])
-        self._clamp_vertical_pane(self.content_vertical_pane, [260, 220])
-        self._clamp_horizontal_pane(self.top_pane, [360, 240, 260])
-        self._clamp_horizontal_pane(self.middle_pane, [320, 260, 300, 300])
+        if self._enforcing_pane_limits:
+            return
+        self._enforcing_pane_limits = True
+        try:
+            self._clamp_vertical_pane(self.main_pane, [420, 180])
+            self._clamp_vertical_pane(self.content_vertical_pane, [260, 220])
+            self._clamp_horizontal_pane(self.top_pane, [360, 240, 260])
+            self._clamp_horizontal_pane(self.middle_pane, [320, 260, 300, 300])
+            self._last_root_size = (self.root.winfo_width(), self.root.winfo_height())
+        finally:
+            self._enforcing_pane_limits = False
 
     def expand_log_panel(self) -> None:
         if self.main_pane is None:
@@ -979,7 +1105,7 @@ class ControlPanel:
                     f"{'打开 / on' if settings.futu_enable_real_trading else '关闭 / off'} | "
                     f"实盘自动 / REAL Auto: {auto_real} | 交易密码MD5: {unlock_ready}\n"
                     f"组合 / Stack: {stack_text} | 基线开关 / Baseline: "
-                    f"{'开 / on' if settings.stack_baseline_enabled else '关 / off'} "
+                    f"{'开 / on' if baseline_sleeve_enabled(settings) else '关 / off'} "
                     f"({baseline_weight:.0%}) | Fusion ({fusion_weight:.0%}) | OFIM ({ofim_weight:.0%}) | "
                     f"Cascade ({cascade_weight:.0%}) | 预留 / Reserve ({reserve_weight:.0%})"
                 )
@@ -1270,7 +1396,17 @@ class ControlPanel:
         fusion_weight: float,
         ofim_weight: float,
         cascade_weight: float,
+        active_strategy: str | None = None,
     ) -> None:
+        if active_strategy is not None:
+            normalized = active_strategy.strip().lower()
+            if normalized not in {"baseline", "fusion", "ofim", "cascade"}:
+                raise ValueError(f"未知插头模式 / Unknown plug mode: {active_strategy}")
+            baseline_enabled = normalized == "baseline"
+            baseline_weight = 1.0 if normalized == "baseline" else 0.0
+            fusion_weight = 1.0 if normalized == "fusion" else 0.0
+            ofim_weight = 1.0 if normalized == "ofim" else 0.0
+            cascade_weight = 1.0 if normalized == "cascade" else 0.0
         effective_baseline = baseline_weight if baseline_enabled else 0.0
         total = effective_baseline + fusion_weight + ofim_weight + cascade_weight
         if total > 1.0 + 1e-9:
@@ -1286,6 +1422,7 @@ class ControlPanel:
             "STACK_FUSION_WEIGHT": f"{fusion_weight:.4f}",
             "STACK_OFIM_WEIGHT": f"{ofim_weight:.4f}",
             "STACK_CASCADE_WEIGHT": f"{cascade_weight:.4f}",
+            "STACK_ACTIVE_STRATEGY": (active_strategy or ""),
             "STACK_ISOLATE_BASELINE_SYMBOLS": "true",
         }
         self._update_env_values(updates)
@@ -1307,12 +1444,26 @@ class ControlPanel:
                 fusion_weight=fusion_weight,
                 ofim_weight=ofim_weight,
                 cascade_weight=cascade_weight,
+                active_strategy=None,
             )
         except ValueError as exc:
             messagebox.showerror("组合配置错误 / Stack Config Error", str(exc))
             return
-        self.log("已应用组合配置 / Applied stack configuration.")
+        self.log("已应用自定义组合配置 / Applied custom stack configuration.")
         self._restart_auto_runtime_if_running("组合权重已修改")
+        self.refresh_status()
+
+    def use_baseline_only(self) -> None:
+        self._apply_stack_env(
+            baseline_enabled=True,
+            baseline_weight=1.0,
+            fusion_weight=0.0,
+            ofim_weight=0.0,
+            cascade_weight=0.0,
+            active_strategy="baseline",
+        )
+        self.log("已开启独占插头：只跑 Baseline / Plug mode enabled: Baseline only.")
+        self._restart_auto_runtime_if_running("已切到 Baseline Plug")
         self.refresh_status()
 
     def use_fusion_only(self) -> None:
@@ -1322,9 +1473,10 @@ class ControlPanel:
             fusion_weight=1.0,
             ofim_weight=0.0,
             cascade_weight=0.0,
+            active_strategy="fusion",
         )
-        self.log("已切到单跑 Fusion / Switched to Fusion-only stack.")
-        self._restart_auto_runtime_if_running("已切到 Fusion Only")
+        self.log("已开启独占插头：只跑 Fusion / Plug mode enabled: Fusion only.")
+        self._restart_auto_runtime_if_running("已切到 Fusion Plug")
         self.refresh_status()
 
     def use_ofim_only(self) -> None:
@@ -1334,9 +1486,40 @@ class ControlPanel:
             fusion_weight=0.0,
             ofim_weight=1.0,
             cascade_weight=0.0,
+            active_strategy="ofim",
         )
-        self.log("已切到单跑 OFIM / Switched to OFIM-only stack.")
-        self._restart_auto_runtime_if_running("已切到 OFIM Only")
+        self.log("已开启独占插头：只跑 OFIM / Plug mode enabled: OFIM only.")
+        self._restart_auto_runtime_if_running("已切到 OFIM Plug")
+        self.refresh_status()
+
+    def use_cascade_only(self) -> None:
+        self._apply_stack_env(
+            baseline_enabled=False,
+            baseline_weight=0.0,
+            fusion_weight=0.0,
+            ofim_weight=0.0,
+            cascade_weight=1.0,
+            active_strategy="cascade",
+        )
+        self.log("已开启独占插头：只跑 Cascade / Plug mode enabled: Claude-Cascade only.")
+        self._restart_auto_runtime_if_running("已切到 Cascade Plug")
+        self.refresh_status()
+
+    def clear_active_plug(self) -> None:
+        try:
+            self._apply_stack_env(
+                baseline_enabled=bool(self.stack_baseline_enabled.get()),
+                baseline_weight=float(self.stack_baseline_weight.get().strip() or "0"),
+                fusion_weight=float(self.stack_fusion_weight.get().strip() or "0"),
+                ofim_weight=float(self.stack_ofim_weight.get().strip() or "0"),
+                cascade_weight=float(self.stack_cascade_weight.get().strip() or "0"),
+                active_strategy=None,
+            )
+        except ValueError as exc:
+            messagebox.showerror("组合配置错误 / Stack Config Error", str(exc))
+            return
+        self.log("已解除独占插头，恢复自定义混合模式 / Cleared plug mode, back to custom mix.")
+        self._restart_auto_runtime_if_running("已解除独占插头")
         self.refresh_status()
 
     def use_fusion_cascade_split(self) -> None:
@@ -1346,6 +1529,7 @@ class ControlPanel:
             fusion_weight=0.25,
             ofim_weight=0.0,
             cascade_weight=0.5,
+            active_strategy=None,
         )
         self.log("已切到我的策略组 50% + Claude 50% (Baseline 25% + Fusion 25% + Cascade 50%).")
         self._restart_auto_runtime_if_running("已切到我的策略组 50% + Claude 50%")
@@ -1359,6 +1543,7 @@ class ControlPanel:
             fusion_weight=0.25,
             ofim_weight=0.25,
             cascade_weight=0.25,
+            active_strategy=None,
         )
         self.log("已切到四策略均衡 25/25/25/25 / Switched to full four-strategy stack.")
         self._restart_auto_runtime_if_running("已切到四策略均衡")
@@ -1400,6 +1585,60 @@ class ControlPanel:
             self.root.after(2000, self._start_auto_runtime_no_prompt)
         else:
             self.log("模拟账户重置指引已显示。自动交易未在运行，无需重启。")
+
+    # ── Futu Pre-gate controls ──────────────────────────────────────────────
+    @staticmethod
+    def _resolve_pregate_mode(settings) -> str:
+        """Translate the two pre-gate env flags into a single tri-state."""
+        enabled = bool(getattr(settings, "fusion_futu_pregate_enabled", False))
+        log_only = bool(getattr(settings, "fusion_futu_pregate_log_only", True))
+        if not enabled:
+            return "off"
+        return "logonly" if log_only else "active"
+
+    def apply_pregate_mode(self) -> None:
+        """Persist the radio-selected mode to .env without restarting auto-run.
+
+        Skip-only filter: when 'active' the gate drops weak Fusion candidates;
+        when 'logonly' it writes decisions to runtime/stock_events.jsonl
+        but lets Fusion trade unchanged; when 'off' the gate is a no-op.
+        """
+
+        mode = self.pregate_mode.get().strip().lower()
+        if mode == "off":
+            updates = {
+                "FUSION_FUTU_PREGATE_ENABLED": "false",
+                "FUSION_FUTU_PREGATE_LOG_ONLY": "true",
+            }
+            note = "Pre-gate 已关闭 / Pre-gate OFF"
+        elif mode == "logonly":
+            updates = {
+                "FUSION_FUTU_PREGATE_ENABLED": "true",
+                "FUSION_FUTU_PREGATE_LOG_ONLY": "true",
+            }
+            note = ("Pre-gate 只记录不执行 / Log-only mode. "
+                    "Check runtime/stock_events.jsonl for fusion_pregate_decision events.")
+        elif mode == "active":
+            if not messagebox.askyesno(
+                "确认激活 / Confirm Active",
+                "Pre-gate 将真正过滤 Fusion 候选。\n"
+                "Pre-gate will actually filter Fusion candidates.\n\n"
+                "建议先在 Log-only 模式跑一天确认阈值。继续？",
+            ):
+                # Revert the radio button to whatever .env currently says.
+                current = load_settings(REPO_ROOT / ".env")
+                self.pregate_mode.set(self._resolve_pregate_mode(current))
+                return
+            updates = {
+                "FUSION_FUTU_PREGATE_ENABLED": "true",
+                "FUSION_FUTU_PREGATE_LOG_ONLY": "false",
+            }
+            note = "Pre-gate 已激活 / Pre-gate ACTIVE (filtering Fusion candidates)"
+        else:
+            self.log(f"未知 pre-gate 模式 / unknown pre-gate mode: {mode!r}")
+            return
+        self._update_env_values(updates)
+        self.log(note + " — 下个 cycle 自动生效 / takes effect on next cycle.")
 
     def cancel_all_orders(self) -> None:
         """Cancel all open orders in the current trading account via API."""
@@ -1799,7 +2038,7 @@ class ControlPanel:
         except ValueError:
             return True
         stack_active = (
-            settings.stack_baseline_enabled
+            baseline_sleeve_enabled(settings)
             or reserve_weight > 0
             or fusion_weight > 0.001
             or ofim_weight > 0.001

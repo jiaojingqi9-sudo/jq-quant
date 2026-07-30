@@ -176,10 +176,12 @@ def _compute_benchmark_score(
         return 0.0
 
     # 5-minute momentum
-    mom_5m = float(last / bars["close"].iloc[-6] - 1) if len(bars) >= 6 else 0.0
+    close = _numeric_column(bars, "close")
+    mom_5m = last / _safe_series_float(close.iloc[-6]) - 1 if len(close) >= 6 and _safe_series_float(close.iloc[-6]) > 0 else 0.0
     # VWAP deviation
-    vol = bars["volume"].fillna(0)
-    vwap = float((bars["close"] * vol).sum() / vol.sum()) if vol.sum() > 0 else last
+    vol = _numeric_column(bars, "volume").fillna(0.0)
+    total_vol = _safe_series_float(vol.sum())
+    vwap = _safe_series_float((close * vol).sum() / total_vol) if total_vol > 0 else last
     vwap_dev = float(last / vwap - 1) if vwap > 0 else 0.0
     # LOB imbalance (shallow, 1-5 levels)
     bid_vol = _tier_volume(order_book, "Bid", 1, 5)
@@ -200,6 +202,23 @@ def _clip(value: float, scale: float) -> float:
         return 0.0
     normalized = value / scale
     return max(-1.0, min(1.0, normalized))
+
+
+def _numeric_column(frame: pd.DataFrame, column: str) -> pd.Series:
+    if frame is None or frame.empty or column not in frame.columns:
+        return pd.Series(dtype=float)
+    values = frame.loc[:, column]
+    if isinstance(values, pd.DataFrame):
+        values = values.iloc[:, 0]
+    return pd.to_numeric(values, errors="coerce")
+
+
+def _safe_series_float(value: object, default: float = 0.0) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+    return result if math.isfinite(result) else default
 
 
 def _level_volume(level: object) -> float:
@@ -239,32 +258,35 @@ def compute_multi_level_ofi(
 
 
 def compute_volume_acceleration(bars_1m: pd.DataFrame) -> float:
-    if len(bars_1m) < 30:
+    volume = _numeric_column(bars_1m, "volume").fillna(0.0)
+    if len(volume) < 30:
         return 1.0
-    recent = bars_1m["volume"].iloc[-5:].mean()
-    baseline = bars_1m["volume"].iloc[-30:-5].mean()
+    recent = _safe_series_float(volume.iloc[-5:].mean())
+    baseline = _safe_series_float(volume.iloc[-30:-5].mean())
     if baseline <= 0:
         return 1.0
     return float(recent / baseline)
 
 
 def compute_micro_momentum(bars_1m: pd.DataFrame) -> dict[str, float]:
-    close = bars_1m["close"]
-    last = float(close.iloc[-1]) if len(close) else 0.0
+    close = _numeric_column(bars_1m, "close")
+    last = _safe_series_float(close.iloc[-1]) if len(close) else 0.0
     return {
-        "mom_3m": last / float(close.iloc[-4]) - 1 if len(close) >= 4 else 0.0,
-        "mom_10m": last / float(close.iloc[-11]) - 1 if len(close) >= 11 else 0.0,
-        "mom_30m": last / float(close.iloc[-31]) - 1 if len(close) >= 31 else 0.0,
+        "mom_3m": last / _safe_series_float(close.iloc[-4]) - 1 if len(close) >= 4 and _safe_series_float(close.iloc[-4]) > 0 else 0.0,
+        "mom_10m": last / _safe_series_float(close.iloc[-11]) - 1 if len(close) >= 11 and _safe_series_float(close.iloc[-11]) > 0 else 0.0,
+        "mom_30m": last / _safe_series_float(close.iloc[-31]) - 1 if len(close) >= 31 and _safe_series_float(close.iloc[-31]) > 0 else 0.0,
     }
 
 
 def compute_vwap_deviation(bars_1m: pd.DataFrame) -> float:
-    volume = bars_1m["volume"].fillna(0)
-    total_vol = volume.sum()
+    close = _numeric_column(bars_1m, "close")
+    volume = _numeric_column(bars_1m, "volume").fillna(0.0)
+    total_vol = _safe_series_float(volume.sum())
     if total_vol <= 0:
         return 0.0
-    vwap = (bars_1m["close"] * volume).sum() / total_vol
-    return float(bars_1m["close"].iloc[-1] / vwap - 1)
+    vwap = _safe_series_float((close * volume).sum() / total_vol)
+    last = _safe_series_float(close.iloc[-1]) if len(close) else 0.0
+    return float(last / vwap - 1) if last > 0 and vwap > 0 else 0.0
 
 
 def compute_tick_aggression(ticks: pd.DataFrame) -> float:
@@ -289,17 +311,20 @@ def compute_spread_quality(snapshot: pd.Series) -> float:
 def _compute_atr_pct(bars: pd.DataFrame, window: int = 14) -> float:
     if len(bars) < 2:
         return 0.0
-    prev_close = bars["close"].shift(1)
+    close = _numeric_column(bars, "close")
+    high = _numeric_column(bars, "high")
+    low = _numeric_column(bars, "low")
+    prev_close = close.shift(1)
     true_range = pd.concat(
         [
-            bars["high"] - bars["low"],
-            (bars["high"] - prev_close).abs(),
-            (bars["low"] - prev_close).abs(),
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
         ],
         axis=1,
     ).max(axis=1)
-    atr = float(true_range.tail(window).mean())
-    last_price = float(bars["close"].iloc[-1]) if len(bars) else 0.0
+    atr = _safe_series_float(true_range.tail(window).mean())
+    last_price = _safe_series_float(close.iloc[-1]) if len(close) else 0.0
     if last_price <= 0:
         return 0.0
     return atr / last_price
@@ -495,6 +520,11 @@ class OfimIntradayStrategy:
         # ── 2. Subscribe & snapshot (benchmark + equity universe) ─────────────
         futu_symbols = list(dict.fromkeys([benchmark, *equity_symbols]))
         trader.subscribe_realtime(futu_symbols)
+        if hasattr(trader, "subscribe_push_lob"):
+            try:
+                trader.subscribe_push_lob(futu_symbols)
+            except Exception as exc:
+                market_logger.log_error("ofim_lob_push_subscribe", exc)
         futu_snapshots = trader.get_snapshots(futu_symbols)
 
         # Build unified snapshots: futu + crypto
@@ -510,7 +540,7 @@ class OfimIntradayStrategy:
         if benchmark in snapshots.index:
             bm_bars = trader.get_recent_klines(benchmark, self.settings.ofim_lookback_bars)
             bm_snap = snapshots.loc[benchmark]
-            bm_lob = trader.get_order_book_safe(benchmark, 5)
+            bm_lob = market_logger.load_lob_cache(benchmark, max_age_seconds=5) or trader.get_order_book_safe(benchmark, 5)
             benchmark_score = _compute_benchmark_score(bm_bars, bm_snap, bm_lob)
             market_logger.log_snapshot(benchmark, bm_snap, cycle_ts)
             market_logger.log_klines(benchmark, bm_bars, cycle_ts)
@@ -548,7 +578,10 @@ class OfimIntradayStrategy:
                 continue
             else:
                 bars = trader.get_recent_klines(code, self.settings.ofim_lookback_bars)
-                order_book = trader.get_order_book_safe(code, self.settings.ofim_order_book_depth)
+                order_book = market_logger.load_lob_cache(code, max_age_seconds=5) or trader.get_order_book_safe(
+                    code,
+                    self.settings.ofim_order_book_depth,
+                )
                 ticks = trader.get_recent_tickers(code, self.settings.ofim_tick_window)
 
             market_logger.log_klines(code, bars, cycle_ts)

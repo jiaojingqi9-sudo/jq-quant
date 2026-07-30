@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass
 from datetime import date, datetime
 import logging
+import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
 import pandas as pd
+
+from .ledger import FillEvent, project_fills
 
 _log = logging.getLogger(__name__)
 
@@ -338,45 +341,132 @@ def estimate_realized_from_fills(
     else:
         annotated = with_trade_costs(rows, settings, side_col=side_col, qty_col="qty_num", price_col="price_num", timestamp_col=timestamp_col)
 
-    inventory: dict[str, deque[tuple[float, float, float]]] = {}
-    realized = 0.0
-    for row in annotated.itertuples(index=False):
-        code = str(getattr(row, code_col))
-        side = str(getattr(row, side_col))
-        qty = float(getattr(row, "qty_num"))
-        price = float(getattr(row, "price_num"))
-        fees_total = float(getattr(row, "fees_total", 0.0))
-        fee_per_share = fees_total / qty if qty > 0 else 0.0
-        inventory.setdefault(code, deque())
+    def row_scalar(row: pd.Series, column: str, default: object = "") -> object:
+        value = row.get(column, default)
+        if isinstance(value, pd.Series):
+            non_null = value.dropna()
+            return non_null.iloc[-1] if not non_null.empty else default
+        return value
 
-        if side == "BUY":
-            inventory[code].append((qty, price, fee_per_share))
-            continue
-        if side != "SELL":
-            continue
-
-        remaining = qty
-        while remaining > 0 and inventory[code]:
-            open_qty, open_price, open_fee_per_share = inventory[code][0]
-            matched = min(remaining, open_qty)
-            realized += (price - open_price - fee_per_share - open_fee_per_share) * matched
-            remaining -= matched
-            open_qty -= matched
-            if open_qty <= 0:
-                inventory[code].popleft()
-            else:
-                inventory[code][0] = (open_qty, open_price, open_fee_per_share)
-        if remaining > 0:
-            # Sell quantity exceeds tracked buy inventory — this can happen when the
-            # order history is incomplete (e.g. position pre-dates the query window).
-            # We skip the unmatched portion rather than fabricating a cost basis.
-            _log.warning(
-                "estimate_realized_from_fills: %s SELL qty=%.0f has %.0f shares "
-                "unmatched in FIFO inventory (incomplete history?). "
-                "Unmatched portion excluded from realized P&L.",
-                code, qty, remaining,
+    events: list[FillEvent] = []
+    for index, row in annotated.reset_index(drop=True).iterrows():
+        events.append(
+            FillEvent(
+                ts=row_scalar(row, "timestamp", row_scalar(row, timestamp_col, "")),
+                symbol=str(row_scalar(row, code_col, "")),
+                side=str(row_scalar(row, side_col, "")),
+                quantity=float(row_scalar(row, "qty_num", 0.0) or 0.0),
+                price=float(row_scalar(row, "price_num", 0.0) or 0.0),
+                fee=float(row_scalar(row, "fees_total", 0.0) or 0.0),
+                event_id=str(row_scalar(row, "order_id", index)),
+                source="stock_order_history",
             )
-    return float(realized)
+        )
+
+    projection = project_fills(events)
+    for warning in projection.warnings:
+        _log.warning("estimate_realized_from_fills: %s", warning)
+    return float(projection.realized_pnl)
+
+
+def _load_jsonl_records(path: Path) -> list[dict[str, object]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, object]] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            rows.append(record)
+    return rows
+
+
+def _epoch_fill_offset(epoch_path: Path | None) -> int:
+    if epoch_path is None or not epoch_path.exists():
+        return 0
+    try:
+        payload = json.loads(epoch_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    try:
+        return max(0, int(payload.get("fills_count_at_reset", 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _epoch_opening_lots(epoch_path: Path | None) -> dict[str, list[tuple[float, float]]]:
+    if epoch_path is None or not epoch_path.exists():
+        return {}
+    try:
+        payload = json.loads(epoch_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    snapshot = payload.get("account_snapshot") if isinstance(payload, dict) else {}
+    positions = snapshot.get("positions") if isinstance(snapshot, dict) else None
+    if not isinstance(positions, list):
+        return {}
+    lots: dict[str, list[tuple[float, float]]] = {}
+    for row in positions:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or row.get("code") or "").strip().upper()
+        qty = _optional_float(row.get("qty") or row.get("quantity")) or 0.0
+        market_val = _optional_float(row.get("market_val")) or 0.0
+        basis = market_val / qty if qty > 0 and market_val > 0 else 0.0
+        if basis <= 0:
+            for key in ("nominal_price", "last_price", "price", "cost_price", "average_cost", "avg_cost"):
+                value = _optional_float(row.get(key))
+                if value is not None and value > 0:
+                    basis = value
+                    break
+        if symbol and qty > 0 and basis > 0:
+            lots.setdefault(symbol, []).append((qty, basis))
+    return lots
+
+
+def build_stock_fills_ledger(
+    fills_path: Path,
+    *,
+    epoch_path: Path | None = None,
+):
+    """Project the append-only stock fill journal into FIFO accounting state.
+
+    This is the stock-side companion to the crypto ledger projection. It keeps
+    broker/API details outside the accounting rulebook and uses the shared
+    project_fills implementation.
+    """
+
+    records = _load_jsonl_records(fills_path)
+    offset = _epoch_fill_offset(epoch_path)
+    if offset:
+        records = records[offset:]
+    events: list[FillEvent] = []
+    for index, row in enumerate(records, start=offset):
+        events.append(
+            FillEvent(
+                ts=row.get("ts", ""),
+                symbol=str(row.get("symbol", "")),
+                side=str(row.get("side", "")),
+                quantity=float(row.get("quantity", 0.0) or 0.0),
+                price=float(row.get("price", 0.0) or 0.0),
+                fee=float(row.get("fee", 0.0) or 0.0),
+                event_id=str(row.get("event_id", index)),
+                strategy=str(row.get("strategy", "")),
+                source=str(row.get("source", "stock_fills")),
+            )
+        )
+    projection = project_fills(events, opening_lots=_epoch_opening_lots(epoch_path))
+    for warning in projection.warnings:
+        _log.warning("build_stock_fills_ledger: %s", warning)
+    return projection
 
 
 def trade_log_total_fees(trade_log: pd.DataFrame) -> float:

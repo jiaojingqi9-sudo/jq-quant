@@ -259,6 +259,11 @@ class FusionIntradayStrategy:
 
         symbols = list(dict.fromkeys((self.settings.fusion_benchmark, *self.settings.fusion_universe)))
         trader.subscribe_realtime(symbols)
+        if hasattr(trader, "subscribe_push_lob"):
+            try:
+                trader.subscribe_push_lob(symbols)
+            except Exception as exc:
+                market_logger.log_error("fusion_lob_push_subscribe", exc)
         snapshots = trader.get_snapshots(symbols)
 
         # Log snapshots for every symbol in this cycle
@@ -269,7 +274,10 @@ class FusionIntradayStrategy:
         # Benchmark data + logging
         benchmark_bars = trader.get_recent_klines(self.settings.fusion_benchmark, self.settings.fusion_lookback_bars)
         benchmark_ticks = trader.get_recent_tickers(self.settings.fusion_benchmark, self.settings.fusion_tick_window)
-        benchmark_order_book = trader.get_order_book_safe(self.settings.fusion_benchmark, self.settings.fusion_order_book_depth)
+        benchmark_order_book = market_logger.load_lob_cache(self.settings.fusion_benchmark, max_age_seconds=5) or trader.get_order_book_safe(
+            self.settings.fusion_benchmark,
+            self.settings.fusion_order_book_depth,
+        )
         market_logger.log_klines(self.settings.fusion_benchmark, benchmark_bars, cycle_ts)
         market_logger.log_ticks(self.settings.fusion_benchmark, benchmark_ticks, cycle_ts)
         market_logger.log_lob(self.settings.fusion_benchmark, benchmark_order_book, cycle_ts)
@@ -285,7 +293,10 @@ class FusionIntradayStrategy:
         features: list[FusionFeature] = []
         for code in self.settings.fusion_universe:
             bars = trader.get_recent_klines(code, self.settings.fusion_lookback_bars)
-            order_book = trader.get_order_book_safe(code, self.settings.fusion_order_book_depth)
+            order_book = market_logger.load_lob_cache(code, max_age_seconds=5) or trader.get_order_book_safe(
+                code,
+                self.settings.fusion_order_book_depth,
+            )
             ticks = trader.get_recent_tickers(code, self.settings.fusion_tick_window)
 
             # Log raw market data for each universe symbol
@@ -307,6 +318,15 @@ class FusionIntradayStrategy:
             features.append(feature)
 
         exposure, target_weights = build_target_weights(features, benchmark_score, held_symbols, self.settings)
+        # Optional Futu pre-gate (FUSION_FUTU_PREGATE_ENABLED, default off).
+        # Strictly skip-only — never adds symbols or rescales weights. When the
+        # gate is disabled this returns the input dict unchanged.
+        from taa_futu import fusion_pregate
+        target_weights = fusion_pregate.apply(
+            target_weights,
+            features=features,
+            settings=self.settings,
+        )
         plan = FusionPlan(
             benchmark=self.settings.fusion_benchmark,
             benchmark_score=round(benchmark_score, 6),
@@ -317,4 +337,3 @@ class FusionIntradayStrategy:
         # Log the complete plan (信号) — this is the single source of truth for replay
         market_logger.log_plan(plan, cycle_ts)
         return plan
-

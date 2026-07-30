@@ -16,7 +16,6 @@ from typing import Any
 from unittest.mock import patch
 
 import pandas as pd
-import pytest
 
 import taa_futu.market_logger as ml
 
@@ -36,7 +35,7 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _patch_dir(tmp_path: Path):
     """Context manager: redirect market_logger's MARKET_DATA_DIR to tmp_path."""
-    return patch.object(ml, "MARKET_DATA_DIR", tmp_path)
+    return patch.multiple(ml, MARKET_DATA_DIR=tmp_path, LOB_CACHE_FILE=tmp_path / "lob_cache.json")
 
 
 FIXED_TS = datetime(2026, 3, 11, 14, 30, 0, tzinfo=UTC)
@@ -72,6 +71,25 @@ class TestLogLob:
         assert len(records) == 2
         assert {r["code"] for r in records} == {"US.SPY", "US.QQQ"}
 
+    def test_preserves_full_l2_depth_for_replay(self, tmp_path: Path) -> None:
+        book = {
+            "Bid": [(100.0 - idx * 0.01, 100 + idx, 1) for idx in range(60)],
+            "Ask": [(100.1 + idx * 0.01, 90 + idx, 1) for idx in range(60)],
+        }
+        with _patch_dir(tmp_path):
+            ml.log_lob("US.SPY", book, ts=FIXED_TS)
+
+        records = _read_jsonl(tmp_path / "2026-03-11" / "lob.jsonl")
+        assert len(records[0]["bid"]) == 60
+        assert len(records[0]["ask"]) == 60
+
+    def test_lob_cache_roundtrip(self, tmp_path: Path) -> None:
+        with _patch_dir(tmp_path):
+            ml.log_lob("US.SPY", {"Bid": [(100.0, 10)], "Ask": [(100.1, 9)]})
+            cached = ml.load_lob_cache("US.SPY", max_age_seconds=5)
+
+        assert cached == {"Bid": [[100.0, 10]], "Ask": [[100.1, 9]]}
+
     def test_does_not_raise_on_bad_input(self, tmp_path: Path) -> None:
         with _patch_dir(tmp_path):
             ml.log_lob("X", {"Bid": object()}, ts=FIXED_TS)  # type: ignore[arg-type]
@@ -104,6 +122,13 @@ class TestLogTicks:
             ml.log_ticks("US.SPY", pd.DataFrame(), ts=FIXED_TS)
         assert not (tmp_path / "2026-03-11" / "ticks.jsonl").exists()
 
+    def test_logs_all_tick_rows_for_replay(self, tmp_path: Path) -> None:
+        with _patch_dir(tmp_path):
+            ml.log_ticks("US.SPY", self._make_ticks(), ts=FIXED_TS)
+
+        records = _read_jsonl(tmp_path / "2026-03-11" / "ticks.jsonl")
+        assert len(records[0]["rows"]) == 3
+
 
 # ---------------------------------------------------------------------------
 # log_klines
@@ -132,6 +157,13 @@ class TestLogKlines:
         with _patch_dir(tmp_path):
             ml.log_klines("US.QQQ", pd.DataFrame(), ts=FIXED_TS)
         assert not (tmp_path / "2026-03-11" / "klines.jsonl").exists()
+
+    def test_logs_all_kline_rows_for_replay(self, tmp_path: Path) -> None:
+        with _patch_dir(tmp_path):
+            ml.log_klines("US.QQQ", self._make_bars(), ts=FIXED_TS)
+
+        records = _read_jsonl(tmp_path / "2026-03-11" / "klines.jsonl")
+        assert len(records[0]["rows"]) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -380,3 +412,21 @@ class TestDayBoundary:
 
         assert (tmp_path / "2026-03-10" / "lob.jsonl").exists()
         assert (tmp_path / "2026-03-11" / "lob.jsonl").exists()
+
+
+class TestMarketDataStatus:
+    def test_retention_plan_is_read_only(self, tmp_path: Path) -> None:
+        old_dir = tmp_path / "2026-03-01"
+        keep_dir = tmp_path / "2026-03-10"
+        old_dir.mkdir()
+        keep_dir.mkdir()
+        (old_dir / "lob.jsonl").write_text("{}\n", encoding="utf-8")
+        (keep_dir / "lob.jsonl").write_text("{}\n", encoding="utf-8")
+
+        with _patch_dir(tmp_path):
+            plan = ml.market_data_retention_plan(keep_days=3, today=datetime(2026, 3, 10, tzinfo=UTC).date())
+
+        assert plan["older_bytes"] > 0
+        assert len(plan["older_days"]) == 1
+        assert old_dir.exists()
+        assert keep_dir.exists()

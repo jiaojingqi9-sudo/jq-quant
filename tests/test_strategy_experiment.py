@@ -1,7 +1,10 @@
+from dataclasses import replace
+import json
 import pandas as pd
+from unittest.mock import patch
 
 from taa_futu.config import Settings
-from taa_futu.strategy_experiment import build_strategy_ledger
+from taa_futu.strategy_experiment import build_strategy_ledger, period_strategy_performance, write_strategy_split_state
 
 
 def _settings() -> Settings:
@@ -38,6 +41,12 @@ def _settings() -> Settings:
         ofim_max_position_weight=0.15,
         ofim_max_gross_exposure=0.80,
         ofim_max_positions=5,
+        ofim_crypto_universe=(),
+        ofim_crypto_to_proxy=(),
+        ofim_crypto_exchange="binance",
+        ofim_crypto_api_key=None,
+        ofim_crypto_api_secret=None,
+        ofim_crypto_sandbox=False,
         stack_ofim_weight=0.0,
         futu_host="127.0.0.1",
         futu_port=11111,
@@ -102,6 +111,7 @@ def test_build_strategy_ledger_uses_current_allowed_capital_columns() -> None:
         "当前浮盈 / Unrealized",
         "交易成本 / Fees",
         "成交笔数 / Trades",
+        "账本状态 / Ledger Status",
         "当前目标 / Targets",
     ]
     assert set(ledger["策略 / Strategy"]) == {"Baseline", "Fusion", "OFIM", "Claude/Cascade"}
@@ -124,3 +134,189 @@ def test_build_strategy_ledger_allowed_capital_follows_current_weights() -> None
     assert baseline_row["当前允许操作总现金 / Allowed Capital"] == 500.0
     assert fusion_row["当前允许操作总现金 / Allowed Capital"] == 0.0
     assert cascade_row["当前允许操作总现金 / Allowed Capital"] == 500.0
+
+
+def test_write_strategy_split_state_uses_current_allocations(tmp_path) -> None:
+    path = tmp_path / "strategy_split_state.json"
+
+    write_strategy_split_state(
+        settings=_settings(),
+        total_assets=1_000.0,
+        reason="test",
+        path=path,
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    strategies = payload["strategies"]
+    assert payload["mode"] == "four_strategy_split"
+    assert strategies["baseline"]["start_cash"] == 500.0
+    assert strategies["fusion"]["start_cash"] == 0.0
+    assert strategies["cascade"]["start_cash"] == 500.0
+
+
+def test_build_strategy_ledger_blanks_performance_for_strategy_enabled_after_reset() -> None:
+    settings = replace(_settings(), stack_fusion_weight=0.25, stack_baseline_weight=0.25, stack_cascade_weight=0.5)
+    period_performance = pd.DataFrame(
+        [
+            {"策略 / Strategy": "Fusion", "成交笔数 / Trades": 10, "交易成本 / Fees": 50.0, "区间已实现 / Realized": 50_000.0},
+        ]
+    )
+
+    ledger, _ = build_strategy_ledger(
+        settings=settings,
+        split_state={
+            "reset_at": "2026-04-08T12:23:12Z",
+            "strategies": {
+                "baseline": {"weight": 0.25, "start_cash": 250_000.0},
+                "fusion": {"weight": 0.0, "start_cash": 0.0},
+                "ofim": {"weight": 0.5, "start_cash": 500_000.0},
+                "cascade": {"weight": 0.25, "start_cash": 250_000.0},
+            },
+        },
+        total_assets=1_000_000.0,
+        current_holdings=pd.DataFrame(columns=["策略 / Strategy", "当前持仓市值 / Holdings", "当前浮盈 / Unrealized", "当前目标 / Targets"]),
+        period_performance=period_performance,
+    )
+
+    fusion_row = ledger.loc[ledger["策略 / Strategy"] == "Fusion"].iloc[0]
+    assert pd.isna(fusion_row["净表现 / Net Performance"])
+    assert fusion_row["账本状态 / Ledger Status"] == "需重设起点 / Reset Required"
+
+
+def test_period_strategy_performance_prefers_logged_strategy_source() -> None:
+    filled_cost_view = pd.DataFrame(
+        [
+            {
+                "code": "US.AAPL",
+                "trd_side": "BUY",
+                "dealt_qty": 10,
+                "dealt_avg_price": 100.0,
+                "updated_time": "2026-03-11 10:00:00",
+                "order_id": "42",
+                "fees_total": 1.0,
+            }
+        ]
+    )
+    logged_orders = pd.DataFrame(
+        [
+            {
+                "ts": pd.Timestamp("2026-03-11T10:00:00Z"),
+                "action": "submitted",
+                "submit_status": "submitted",
+                "submit_detail": "42",
+                "strategy_source": "OFIM",
+            }
+        ]
+    )
+
+    with patch("taa_futu.strategy_experiment.load_order_records", return_value=logged_orders):
+        summary = period_strategy_performance(
+            filled_cost_view=filled_cost_view,
+            settings=_settings(),
+        )
+
+    assert summary.iloc[0]["策略 / Strategy"] == "OFIM"
+    assert summary.iloc[0]["成交笔数 / Trades"] == 1
+
+
+def test_period_strategy_performance_uses_reset_weights_for_fallback_bucket() -> None:
+    filled_cost_view = pd.DataFrame(
+        [
+            {
+                "code": "US.AAPL",
+                "trd_side": "BUY",
+                "dealt_qty": 10,
+                "dealt_avg_price": 100.0,
+                "updated_time": "2026-03-11 10:00:00",
+                "fees_total": 0.0,
+            }
+        ]
+    )
+    split_state = {
+        "reset_at": "2026-03-11T00:00:00Z",
+        "strategies": {
+            "baseline": {"weight": 0.5},
+            "fusion": {"weight": 0.0},
+            "ofim": {"weight": 0.5},
+            "cascade": {"weight": 0.0},
+        },
+    }
+
+    with patch("taa_futu.strategy_experiment.load_order_records", return_value=pd.DataFrame()):
+        summary = period_strategy_performance(
+            filled_cost_view=filled_cost_view,
+            settings=_settings(),
+            split_state=split_state,
+        )
+
+    assert summary.iloc[0]["策略 / Strategy"] == "OFIM"
+    assert summary.iloc[0]["成交笔数 / Trades"] == 1
+
+
+def test_period_strategy_performance_uses_account_fifo_before_strategy_attribution() -> None:
+    filled_cost_view = pd.DataFrame(
+        [
+            {
+                "code": "US.SPY",
+                "trd_side": "BUY",
+                "dealt_qty": 1,
+                "dealt_avg_price": 100.0,
+                "updated_time": "2026-03-11 10:00:00",
+                "order_id": "BUY-FUSION",
+                "fees_total": 0.0,
+            },
+            {
+                "code": "US.SPY",
+                "trd_side": "SELL",
+                "dealt_qty": 1,
+                "dealt_avg_price": 50.0,
+                "updated_time": "2026-03-11 10:05:00",
+                "order_id": "SELL-OFIM",
+                "fees_total": 0.0,
+            },
+            {
+                "code": "US.SPY",
+                "trd_side": "SELL",
+                "dealt_qty": 1,
+                "dealt_avg_price": 200.0,
+                "updated_time": "2026-03-11 10:10:00",
+                "order_id": "SELL-FUSION",
+                "fees_total": 0.0,
+            },
+        ]
+    )
+    logged_orders = pd.DataFrame(
+        [
+            {
+                "ts": pd.Timestamp("2026-03-11T10:00:00Z"),
+                "action": "submitted",
+                "submit_status": "submitted",
+                "submit_detail": "BUY-FUSION",
+                "strategy_source": "Fusion",
+            },
+            {
+                "ts": pd.Timestamp("2026-03-11T10:05:00Z"),
+                "action": "submitted",
+                "submit_status": "submitted",
+                "submit_detail": "SELL-OFIM",
+                "strategy_source": "OFIM",
+            },
+            {
+                "ts": pd.Timestamp("2026-03-11T10:10:00Z"),
+                "action": "submitted",
+                "submit_status": "submitted",
+                "submit_detail": "SELL-FUSION",
+                "strategy_source": "Fusion",
+            },
+        ]
+    )
+
+    with patch("taa_futu.strategy_experiment.load_order_records", return_value=logged_orders):
+        summary = period_strategy_performance(
+            filled_cost_view=filled_cost_view,
+            settings=_settings(),
+        )
+
+    by_strategy = summary.set_index("策略 / Strategy")
+    assert by_strategy.at["Fusion", "区间已实现 / Realized"] == -50.0
+    assert by_strategy.at["OFIM", "区间已实现 / Realized"] == 0.0
