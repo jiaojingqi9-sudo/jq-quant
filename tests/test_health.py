@@ -106,6 +106,37 @@ class HealthMonitorTest(unittest.TestCase):
             self.assertEqual(snapshot.checks[0].status, "degraded")
             self.assertEqual(snapshot.checks[0].modules[1]["name"], "tech_block")
 
+    def test_health_keeps_delivery_healthy_after_preview_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            report_path = temp_path / "reports" / "latest_report.json"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text("{}", encoding="utf-8")
+            delivery_status = temp_path / "reports" / "delivery_status.json"
+            delivery_status.write_text(
+                json.dumps(
+                    {
+                        "timestamp": utcnow().isoformat(),
+                        "overall_status": "ok",
+                        "artifacts": {"json_report": str(report_path)},
+                        "modules": [
+                            {"name": "core_alerts", "status": "active", "detail": "preview kept locally"},
+                            {"name": "tech_block", "status": "active", "detail": "preview kept locally"},
+                        ],
+                        "errors": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            snapshot = evaluate_status_files(
+                status_files=[("delivery", delivery_status)],
+                max_age_seconds=900,
+            )
+
+            self.assertEqual(snapshot.overall_status, "ok")
+            self.assertEqual(snapshot.checks[0].status, "ok")
+
     def test_writer_persists_health_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

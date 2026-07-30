@@ -6,6 +6,19 @@ from market_news.common import jaccard_similarity, significant_tokens, stable_id
 from market_news.domain.models import EventCluster, NewsDocument
 
 
+GENERIC_CLUSTER_TOKENS = {
+    "company",
+    "financial",
+    "industrial-chain",
+    "market",
+    "official-policy",
+    "policy",
+    "state-owned-enterprise",
+    "technology",
+    "trade",
+}
+
+
 @dataclass
 class _WorkingCluster:
     anchor_tokens: set[str]
@@ -54,13 +67,20 @@ class KeywordEventClusterer:
     def _cluster_tokens(self, document: NewsDocument) -> list[str]:
         title_tokens = significant_tokens(document.title, extra_stop_words=document.regions)[:4]
         return unique_preserve(
-            list(document.themes)
+            self._specific_tokens(document.themes)
             + list(document.entities)
             + title_tokens
         )
 
     def _anchor_tokens(self, document: NewsDocument) -> list[str]:
-        return unique_preserve(list(document.themes) + list(document.entities))
+        return unique_preserve(self._specific_tokens(document.themes) + list(document.entities))
+
+    def _specific_tokens(self, values: list[str]) -> list[str]:
+        return [
+            value
+            for value in values
+            if value.strip().lower() not in GENERIC_CLUSTER_TOKENS
+        ]
 
     def _to_cluster(self, working_cluster: _WorkingCluster) -> EventCluster:
         representative = max(

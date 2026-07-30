@@ -16,8 +16,12 @@
         "source_id": "hkex_news",
         "source_trust": 0.97,
         "language": "en",
-        "regions": ["HK"],
-        "exclude_title_patterns": ["^20\\d{2}$"]
+        "regions": [
+          "HK"
+        ],
+        "exclude_title_patterns": [
+          "^20\\d{2}$"
+        ]
       },
       {
         "url": "https://www.sec.gov/news/pressreleases.rss",
@@ -25,7 +29,9 @@
         "source_id": "sec_press",
         "source_trust": 0.98,
         "language": "en",
-        "regions": ["US"]
+        "regions": [
+          "US"
+        ]
       },
       {
         "url": "https://www.sec.gov/Archives/edgar/usgaap.rss.xml",
@@ -33,7 +39,9 @@
         "source_id": "sec_xbrl_usgaap",
         "source_trust": 0.99,
         "language": "en",
-        "regions": ["US"]
+        "regions": [
+          "US"
+        ]
       },
       {
         "url": "https://www.reutersagency.com/feed/?taxonomy=best-sectors&post_type=best",
@@ -41,19 +49,56 @@
         "source_id": "reuters-tech",
         "source_trust": 0.88,
         "language": "en",
-        "regions": ["US", "GLOBAL"],
+        "regions": [
+          "US",
+          "GLOBAL"
+        ],
         "include_title_patterns": [
           "AI|chip|semiconductor|quantum|robot|EUV|HBM|TSMC|ASML|Nvidia|data center|battery|nuclear|carbon fiber|SpaceX|lithography|DRAM|solid.state"
-        ]
+        ],
+        "enabled": false,
+        "disabled_reason": "2026-07-30 实测 404，Reuters Agency 公共 feed 已下线；reuters.com 正文需订阅(401)"
       }
     ]
   },
   "eastmoney": {
     "enabled": true,
-    "endpoints": ["ann-a", "ann-h", "news", "focus", "global"],
+    "endpoints": [
+      "ann-a",
+      "ann-h",
+      "news",
+      "focus",
+      "global"
+    ],
     "page_size": 50,
     "global_page_size": 30,
     "max_records_per_endpoint": 25
+  },
+  "eastmoney_topic": {
+    "enabled": true,
+    "source_id": "eastmoney-topic",
+    "name": "eastmoney-topic",
+    "source_trust": 0.83,
+    "language": "zh",
+    "homepage_limit": 10,
+    "history_limit": 10,
+    "metadata": {
+      "source_category": "curated-topic",
+      "compliance_policy": "public-web-json"
+    }
+  },
+  "sfc_offer_periods": {
+    "enabled": true,
+    "source_id": "sfc-offer-periods",
+    "name": "sfc-offer-periods",
+    "url": "https://www.sfc.hk/en/Regulatory-functions/Corporates/Takeovers-and-mergers/offer-periods",
+    "source_trust": 0.99,
+    "language": "en",
+    "item_limit": 10,
+    "metadata": {
+      "source_category": "official-regulator",
+      "compliance_policy": "public-web-html"
+    }
   },
   "cls": {
     "enabled": true,
@@ -70,23 +115,69 @@
     "enabled": true,
     "cookie_path": "~/.market_news/weibo_cookies.json",
     "queries": [
-      "半导体", "AI算力", "国产替代", "芯片", "大模型", "光模块", "机器人",
-      "碳纤维", "信创", "网络安全", "新材料", "储能", "固态电池",
-      "核电", "工业AI", "AR眼镜", "量子计算", "低空经济", "人形机器人",
-      "科技板块", "港股科技"
+      "半导体",
+      "AI算力",
+      "国产替代",
+      "芯片",
+      "大模型",
+      "光模块",
+      "机器人",
+      "碳纤维",
+      "信创",
+      "网络安全",
+      "新材料",
+      "储能",
+      "固态电池",
+      "核电",
+      "工业AI",
+      "AR眼镜",
+      "量子计算",
+      "低空经济",
+      "商业航天",
+      "卫星互联网",
+      "低轨卫星",
+      "航天科技",
+      "航天科工",
+      "可回收火箭",
+      "人形机器人",
+      "科技板块",
+      "港股科技"
     ],
+    "max_queries_per_cycle": 5,
     "max_results_per_query": 20,
-    "sleep_range_seconds": [2.0, 4.0],
+    "sleep_range_seconds": [
+      0.2,
+      0.6
+    ],
     "browser_timeout_ms": 15000,
-    "browser_warmup_ms": 1200
+    "browser_warmup_ms": 1200,
+    "browser_fallback_enabled": false
   },
   "xueqiu": {
     "enabled": true,
     "cookie_path": "~/.market_news/xueqiu_cookies.json",
     "queries": [
-      "半导体", "科技股", "AI概念", "算力", "先进制程",
-      "碳纤维", "信创", "网络安全", "储能", "固态电池",
-      "机器人概念", "低空经济", "核电", "新材料", "港股科技"
+      "半导体",
+      "科技股",
+      "AI概念",
+      "算力",
+      "先进制程",
+      "碳纤维",
+      "信创",
+      "网络安全",
+      "储能",
+      "固态电池",
+      "机器人概念",
+      "低空经济",
+      "商业航天",
+      "卫星互联网",
+      "低轨卫星",
+      "航天科技",
+      "航天科工",
+      "可回收火箭",
+      "核电",
+      "新材料",
+      "港股科技"
     ],
     "max_results_per_query": 12,
     "browser_timeout_ms": 15000,
@@ -102,11 +193,29 @@
       "cninfo_latest",
       "eastmoney-724",
       "eastmoney-focus",
+      "eastmoney-topic",
       "eastmoney-news",
       "hkex_news",
       "sec_press",
       "sec_xbrl_usgaap",
-      "reuters-tech"
+      "reuters-tech",
+      "gov-cnsa",
+      "spacechina-news",
+      "spacechina-innovation",
+      "gov-miit",
+      "gov-most",
+      "gov-ndrc",
+      "gov-pbc",
+      "gov-nfra",
+      "gov-nhsa",
+      "gov-mofcom",
+      "gov-gacc",
+      "gov-mohurd",
+      "gov-mot",
+      "gov-sasac",
+      "gov-nda",
+      "sse_announcements",
+      "szse_announcements"
     ]
   },
   "html_sources": [
@@ -119,12 +228,22 @@
       "source_trust": 0.76,
       "timeout": 12,
       "language": "zh",
-      "regions": ["HK", "CN"],
-      "themes": ["technology"],
+      "regions": [
+        "HK",
+        "CN"
+      ],
+      "themes": [
+        "technology"
+      ],
       "item_limit": 10,
       "detail_fetch_limit": 4,
-      "include_link_patterns": ["https?://www\\.gelonghui\\.com/live/\\d+"],
-      "exclude_link_patterns": ["javascript:", "#"],
+      "include_link_patterns": [
+        "https?://www\\.gelonghui\\.com/live/\\d+"
+      ],
+      "exclude_link_patterns": [
+        "javascript:",
+        "#"
+      ],
       "include_title_patterns": [
         "港股|HK\\$|恒生|腾讯|阿里|美团|小米|快手|京东|百度|科技|AI|半导体|芯片|机器人|新材料|电池|医疗|南向"
       ],
@@ -146,22 +265,41 @@
       "source_trust": 0.97,
       "timeout": 12,
       "language": "zh",
-      "regions": ["CN"],
-      "themes": ["technology"],
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "technology"
+      ],
       "item_limit": 8,
       "detail_fetch_limit": 3,
-      "include_link_patterns": ["https?://www\\.news\\.cn/tech/\\d{8}/[^/]+/c\\.html"],
-      "exclude_link_patterns": ["index\\.htm$", "javascript:", "#", "\\.pdf$"],
-      "include_title_patterns": ["科技|AI|人工智能|芯片|半导体|机器人|算力|互联网|通信|数据|软件|汽车|智能"],
-      "exclude_title_patterns": ["组图$"],
+      "include_link_patterns": [
+        "https?://www\\.news\\.cn/tech/\\d{8}/[^/]+/c\\.html"
+      ],
+      "exclude_link_patterns": [
+        "index\\.htm$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "科技|AI|人工智能|芯片|半导体|机器人|算力|互联网|通信|数据|软件|汽车|智能"
+      ],
+      "exclude_title_patterns": [
+        "组图$"
+      ],
       "body_container_patterns": [
+        "<div[^>]+id=\\\"detail\\\"[^>]*>.*?</div>",
+        "<div[^>]+id=\\\"articleEdit\\\"[^>]*>.*?</div>",
+        "<span[^>]+id=\\\"detailContent\\\"[^>]*>.*?</span>",
         "<div[^>]+class=\\\"[^\\\"]*(?:detail|content|page-content|article)[^\\\"]*\\\"[^>]*>.*?</div>",
         "<article.*?</article>"
       ],
       "metadata": {
         "source_category": "official-media",
         "compliance_policy": "public-web-html"
-      }
+      },
+      "note": "2026-07-30 正文容器为 id=detail/articleEdit，旧规则只匹配 class 导致长期提取为空"
     },
     {
       "enabled": false,
@@ -172,14 +310,27 @@
       "source_trust": 0.71,
       "timeout": 12,
       "language": "zh",
-      "regions": ["CN"],
-      "themes": ["technology"],
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "technology"
+      ],
       "item_limit": 8,
       "detail_fetch_limit": 2,
-      "include_link_patterns": ["https?://www\\.huxiu\\.com/article/\\d+\\.html"],
-      "exclude_link_patterns": ["javascript:", "#"],
-      "include_title_patterns": ["AI|人工智能|芯片|半导体|机器人|算力|互联网|大模型|云|汽车|软件|数据|科技|智驾"],
-      "exclude_title_patterns": ["虎嗅APP|打开APP|下载APP|登录|注册"],
+      "include_link_patterns": [
+        "https?://www\\.huxiu\\.com/article/\\d+\\.html"
+      ],
+      "exclude_link_patterns": [
+        "javascript:",
+        "#"
+      ],
+      "include_title_patterns": [
+        "AI|人工智能|芯片|半导体|机器人|算力|互联网|大模型|云|汽车|软件|数据|科技|智驾"
+      ],
+      "exclude_title_patterns": [
+        "虎嗅APP|打开APP|下载APP|登录|注册"
+      ],
       "body_container_patterns": [
         "<div[^>]+class=\\\"[^\\\"]*(?:article__content|article-content|main-content|article-content-wrap)[^\\\"]*\\\"[^>]*>.*?</div>",
         "<article.*?</article>"
@@ -198,14 +349,28 @@
       "source_trust": 0.74,
       "timeout": 12,
       "language": "zh",
-      "regions": ["CN"],
-      "themes": ["technology"],
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "technology"
+      ],
       "item_limit": 8,
       "detail_fetch_limit": 3,
-      "include_link_patterns": ["https?://tech\\.ifeng\\.com/c/[A-Za-z0-9]+"],
-      "exclude_link_patterns": ["javascript:", "#", "/special/"],
-      "include_title_patterns": ["AI|人工智能|芯片|半导体|机器人|算力|互联网|大模型|云|汽车|软件|数据|科技|智驾"],
-      "exclude_title_patterns": ["直播|视频"],
+      "include_link_patterns": [
+        "https?://tech\\.ifeng\\.com/c/[A-Za-z0-9]+"
+      ],
+      "exclude_link_patterns": [
+        "javascript:",
+        "#",
+        "/special/"
+      ],
+      "include_title_patterns": [
+        "AI|人工智能|芯片|半导体|机器人|算力|互联网|大模型|云|汽车|软件|数据|科技|智驾"
+      ],
+      "exclude_title_patterns": [
+        "直播|视频"
+      ],
       "body_container_patterns": [
         "<div[^>]+class=\\\"[^\\\"]*(?:articleBox|main_content|content|article)[^\\\"]*\\\"[^>]*>.*?</div>",
         "<article.*?</article>"
@@ -223,17 +388,153 @@
       "url": "https://www.csrc.gov.cn/",
       "source_trust": 1.0,
       "language": "zh",
-      "regions": ["CN"],
+      "regions": [
+        "CN"
+      ],
       "item_limit": 8,
       "detail_fetch_limit": 6,
-      "include_link_patterns": ["/csrc/.+\\.shtml"],
-      "exclude_link_patterns": ["index\\.shtml", "javascript:", "#", "\\.pdf$"],
-      "include_title_patterns": ["科技|芯片|半导体|人工智能|算法|数据|软件|网络|互联网|并购|重组|问询|立案|处罚|减持|异常波动|收购|审核"],
-      "exclude_title_patterns": ["English|移动端|微信|微博|首页|机构概况"],
-      "body_container_patterns": ["<div[^>]+class=\\\"TRS_Editor\\\"[^>]*>.*?</div>", "<article.*?</article>"],
+      "include_link_patterns": [
+        "/csrc/.+\\.shtml"
+      ],
+      "exclude_link_patterns": [
+        "index\\.shtml",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "科技|芯片|半导体|人工智能|算法|数据|软件|网络|互联网|并购|重组|问询|立案|处罚|减持|异常波动|收购|审核"
+      ],
+      "exclude_title_patterns": [
+        "English|移动端|微信|微博|首页|机构概况"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"TRS_Editor\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
       "metadata": {
         "source_category": "regulator",
         "compliance_policy": "metadata-and-features-only"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "cnsa-news",
+      "source_id": "gov-cnsa",
+      "url": "https://www.cnsa.gov.cn/n6758823/n6758838/index.html",
+      "source_trust": 0.98,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "technology",
+        "policy"
+      ],
+      "item_limit": 10,
+      "detail_fetch_limit": 6,
+      "include_link_patterns": [
+        "/n6758823/n6758838/c\\d+/content\\.html"
+      ],
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "商业航天|航天|卫星互联网|低轨|火箭|发射|星座|频率|许可|准入|标准|太空算力|太空制造|一站式|箭星场频网|北斗|遥感|空间应用"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*wz_conten[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<div[^>]+class=\\\"[^\\\"]*(?:wz_content|TRS_Editor|article|content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-policy",
+        "source_tier": "T1"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "spacechina-news",
+      "source_id": "spacechina-news",
+      "url": "https://www.spacechina.com/n25/n2014789/n2014804/index.html",
+      "source_trust": 0.96,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "technology",
+        "state-owned-enterprise"
+      ],
+      "item_limit": 10,
+      "detail_fetch_limit": 4,
+      "include_link_patterns": [
+        "/n25/n2014789/n2014804/c\\d+/content\\.html"
+      ],
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "商业航天|卫星互联网|低轨|火箭|发射|星座|卫星|航天|北斗|遥感|太空算力|太空制造|星网|千帆|可重复使用|重复使用|产业化"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*article_text[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-soe",
+        "source_tier": "T1"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "spacechina-innovation",
+      "source_id": "spacechina-innovation",
+      "url": "https://www.spacechina.com/n25/n1991299/n1991333/index.html",
+      "source_trust": 0.95,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "technology",
+        "industrial-chain"
+      ],
+      "item_limit": 8,
+      "detail_fetch_limit": 3,
+      "include_link_patterns": [
+        "/n25/n1991299/n1991333/c\\d+/content\\.html"
+      ],
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "商业航天|卫星互联网|低轨|火箭|发射|星座|卫星|航天|北斗|遥感|太空算力|太空制造|星网|可重复使用|产业化|标准|专利|创新"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*article_text[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-soe",
+        "source_tier": "T1"
       }
     },
     {
@@ -245,12 +546,23 @@
       "source_trust": 0.96,
       "timeout": 15,
       "language": "zh",
-      "regions": ["CN"],
-      "themes": ["technology", "policy"],
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "technology",
+        "policy"
+      ],
       "item_limit": 10,
       "detail_fetch_limit": 4,
-      "include_link_patterns": ["/zwgk/.+\\.html"],
-      "exclude_link_patterns": ["index\\.html$", "javascript:", "#"],
+      "include_link_patterns": [
+        "/zwgk/.+\\.html"
+      ],
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#"
+      ],
       "include_title_patterns": [
         "人工智能|芯片|半导体|机器人|新材料|软件|集成电路|通信|5G|6G|制造|数字|算力|储能|新能源|航空|航天|核电|工业互联网|工业母机|智能制造|信创|数据"
       ],
@@ -272,12 +584,23 @@
       "source_trust": 0.95,
       "timeout": 15,
       "language": "zh",
-      "regions": ["CN"],
-      "themes": ["technology", "policy"],
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "technology",
+        "policy"
+      ],
       "item_limit": 10,
       "detail_fetch_limit": 4,
-      "include_link_patterns": ["/xxgk/.+\\.html"],
-      "exclude_link_patterns": ["index\\.html$", "javascript:", "#"],
+      "include_link_patterns": [
+        "/xxgk/.+\\.html"
+      ],
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#"
+      ],
       "include_title_patterns": [
         "科技|创新|人工智能|量子|集成电路|生物|航天|新材料|新能源|数字|基础研究|重大专项|芯片|机器人"
       ],
@@ -299,12 +622,23 @@
       "source_trust": 0.95,
       "timeout": 15,
       "language": "zh",
-      "regions": ["CN"],
-      "themes": ["technology", "policy"],
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "technology",
+        "policy"
+      ],
       "item_limit": 10,
       "detail_fetch_limit": 4,
-      "include_link_patterns": ["/xxgk/.+/\\d+/t\\d+_\\d+\\.html"],
-      "exclude_link_patterns": ["index\\.html$", "javascript:", "#"],
+      "include_link_patterns": [
+        "/xxgk/.+/\\d+/t\\d+_\\d+\\.html"
+      ],
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#"
+      ],
       "include_title_patterns": [
         "高技术|战略性新兴|数字经济|新质生产力|储能|氢能|核电|半导体|算力|产业基金|创新|信息技术|智能"
       ],
@@ -314,6 +648,408 @@
       ],
       "metadata": {
         "source_category": "official-policy",
+        "source_tier": "T1"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "pbc-news",
+      "source_id": "gov-pbc",
+      "url": "https://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html",
+      "source_trust": 0.98,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "policy",
+        "financial"
+      ],
+      "item_limit": 8,
+      "detail_fetch_limit": 4,
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "货币政策|降准|降息|LPR|再贷款|金融市场|人民币|汇率|利率|债券|股票回购|增持|支付|征信|金融稳定|公开市场"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content|detail|page-content|main-content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-regulator",
+        "source_tier": "T1"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "nfra-news",
+      "source_id": "gov-nfra",
+      "url": "https://www.nfra.gov.cn/cn/view/pages/xinwenzixun/xinwenzixun.html",
+      "source_trust": 0.98,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "policy",
+        "financial"
+      ],
+      "item_limit": 8,
+      "detail_fetch_limit": 4,
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "银行|保险|券商|金融监管|资本|不良|信贷|理财|信托|风控|风险|处罚|牌照|监管"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content|detail|page-content|main-content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-regulator",
+        "source_tier": "T1"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "nhsa-news",
+      "source_id": "gov-nhsa",
+      "url": "https://www.nhsa.gov.cn/col/col14/index.html",
+      "source_trust": 0.98,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "policy",
+        "healthcare"
+      ],
+      "item_limit": 8,
+      "detail_fetch_limit": 4,
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "医保|医疗保障|药品|集采|目录|谈判|医疗服务|器械|创新药|支付|基金|价格|挂网"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content|detail|page-content|main-content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-regulator",
+        "source_tier": "T1"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "mofcom-news",
+      "source_id": "gov-mofcom",
+      "url": "https://www.mofcom.gov.cn/syxwfb/",
+      "source_trust": 0.97,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "policy",
+        "trade"
+      ],
+      "item_limit": 8,
+      "detail_fetch_limit": 4,
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "外贸|进出口|消费|零售|跨境|自贸|关税|合作|出海|出口|进口|投资|汽车|家电|贸易"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content|detail|page-content|main-content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-ministry",
+        "source_tier": "T1"
+      }
+    },
+    {
+      "enabled": false,
+      "type": "html_list_detail",
+      "name": "gacc-news",
+      "source_id": "gov-gacc",
+      "url": "https://www.customs.gov.cn/customs/xwfb34/index.html",
+      "source_trust": 0.97,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "policy",
+        "trade"
+      ],
+      "item_limit": 8,
+      "detail_fetch_limit": 4,
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "进出口|海关|关税|贸易|通关|出口|进口|跨境|税则|保税|口岸|物流"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content|detail|page-content|main-content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-ministry",
+        "source_tier": "T1"
+      },
+      "disabled_reason": "2026-07-30 实测返回 502/504 网关错误，为对方服务端故障；站点恢复后可重新启用"
+    },
+    {
+      "enabled": false,
+      "type": "html_list_detail",
+      "name": "mohurd-news",
+      "source_id": "gov-mohurd",
+      "url": "https://www.mohurd.gov.cn/xinwen/jsyw/",
+      "source_trust": 0.96,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "policy",
+        "real-estate",
+        "infrastructure"
+      ],
+      "item_limit": 8,
+      "detail_fetch_limit": 4,
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "住房|房地产|保障房|城中村|城市更新|公积金|建筑|基建|租赁|商品房|棚改|购房"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content|detail|page-content|main-content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-ministry",
+        "source_tier": "T1"
+      },
+      "disabled_reason": "2026-07-30 实测 DNS 无法解析(http/https/根域名均失败)，本机网络不可达；恢复网络后可重新启用"
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "mot-news",
+      "source_id": "gov-mot",
+      "url": "https://www.mot.gov.cn/xinwen/",
+      "source_trust": 0.96,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "policy",
+        "logistics",
+        "infrastructure"
+      ],
+      "item_limit": 8,
+      "detail_fetch_limit": 4,
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "交通|运输|航运|港口|物流|铁路|公路|机场|民航|货运|出行|高速"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content|detail|page-content|main-content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-ministry",
+        "source_tier": "T1"
+      },
+      "note": "2026-07-30 原 /xw/ 返回 404；实测 /xinwen/ 可用(200,101链接)"
+    },
+    {
+      "enabled": false,
+      "type": "html_list_detail",
+      "name": "sasac-news",
+      "source_id": "gov-sasac",
+      "url": "https://www.sasac.gov.cn/n2588025/n2588119/index.html",
+      "source_trust": 0.97,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "policy",
+        "state-owned-enterprise"
+      ],
+      "item_limit": 8,
+      "detail_fetch_limit": 4,
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "央企|国资|重组|并购|混改|央企改革|资产注入|股权|投资|改革|整合"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content|detail|page-content|main-content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-ministry",
+        "source_tier": "T1"
+      },
+      "disabled_reason": "2026-07-30 实测持续超时(连续259次失败)，站点从本机不可达；可用内地网络时再启用"
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "nda-news",
+      "source_id": "gov-nda",
+      "url": "https://www.nda.gov.cn/",
+      "source_trust": 0.97,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN"
+      ],
+      "themes": [
+        "policy",
+        "technology"
+      ],
+      "item_limit": 8,
+      "detail_fetch_limit": 4,
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "数据要素|数据资产|公共数据|数字经济|数据交易|数据基础设施|算力|数字中国|人工智能|信息化"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content|detail|page-content|main-content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-ministry",
+        "source_tier": "T1"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "sse-announcements",
+      "source_id": "sse_announcements",
+      "url": "https://www.sse.com.cn/disclosure/announcement/general/index.shtml",
+      "source_trust": 0.99,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN-A"
+      ],
+      "themes": [
+        "company",
+        "market"
+      ],
+      "item_limit": 8,
+      "detail_fetch_limit": 4,
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "公告|问询|重组|收购|回购|增持|减持|业绩|分红|停牌|复牌|发行|股份|股东|异常波动|审议"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content|detail|page-content|main-content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-exchange",
+        "source_tier": "T1"
+      }
+    },
+    {
+      "enabled": true,
+      "type": "html_list_detail",
+      "name": "szse-announcements",
+      "source_id": "szse_announcements",
+      "url": "https://www.szse.cn/disclosure/notice/general/index.html",
+      "source_trust": 0.99,
+      "timeout": 15,
+      "language": "zh",
+      "regions": [
+        "CN-A"
+      ],
+      "themes": [
+        "company",
+        "market"
+      ],
+      "item_limit": 8,
+      "detail_fetch_limit": 4,
+      "exclude_link_patterns": [
+        "index\\.html$",
+        "javascript:",
+        "#",
+        "\\.pdf$"
+      ],
+      "include_title_patterns": [
+        "公告|问询|重组|收购|回购|增持|减持|业绩|分红|停牌|复牌|发行|股份|股东|异常波动|审议"
+      ],
+      "body_container_patterns": [
+        "<div[^>]+class=\\\"[^\\\"]*(?:TRS_Editor|article|content|detail|page-content|main-content)[^\\\"]*\\\"[^>]*>.*?</div>",
+        "<article.*?</article>"
+      ],
+      "metadata": {
+        "source_category": "official-exchange",
         "source_tier": "T1"
       }
     }

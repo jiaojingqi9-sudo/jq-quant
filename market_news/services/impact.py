@@ -9,6 +9,32 @@ from market_news.common import clamp, tokenize, unique_preserve
 from market_news.domain.models import Direction, EventCluster, EventType, ImpactAssessment, Market
 
 
+ROUTINE_MARKET_INFRASTRUCTURE_PATTERNS = [
+    "主做市服务",
+    "质押式回购质押券折算率",
+    "质押券折算率",
+    "基金流动性服务商",
+]
+
+ORDER_LOSS_CONTEXT_PATTERNS = [
+    "失去订单",
+    "失去客户",
+    "采购订单取消",
+    "订单取消",
+    "采购取消",
+    "终止采购",
+    "终止合同",
+    "客户流失",
+    "客户暂停采购",
+    "lost order",
+    "lost customer",
+    "order cancellation",
+    "purchase order cancelled",
+    "purchase order canceled",
+    "contract termination",
+]
+
+
 @dataclass(slots=True)
 class ImpactRule:
     name: str
@@ -16,6 +42,7 @@ class ImpactRule:
     direction: Direction
     keywords: list[str]
     min_matches: int
+    min_source_trust: float
     themes: list[str]
     sectors: list[str]
     markets: list[Market]
@@ -37,6 +64,7 @@ class ConfigDrivenImpactAnalyzer:
                 direction=Direction(item["direction"]),
                 keywords=[keyword.lower() for keyword in item["keywords"]],
                 min_matches=int(item.get("min_matches", 1)),
+                min_source_trust=float(item.get("min_source_trust", 0.0)),
                 themes=item.get("themes", []),
                 sectors=item.get("sectors", []),
                 markets=[Market(market) for market in item.get("markets", [])],
@@ -49,12 +77,35 @@ class ConfigDrivenImpactAnalyzer:
 
     def assess(self, cluster: EventCluster) -> ImpactAssessment:
         text = cluster.combined_text.lower()
+        if self._is_routine_market_infrastructure(cluster):
+            return ImpactAssessment(
+                event_type=EventType.UNKNOWN,
+                direction=Direction.NEUTRAL,
+                affected_markets=[Market.CN_A],
+                affected_sectors=cluster.sectors,
+                affected_themes=cluster.themes,
+                severity=0.12,
+                confidence=clamp(0.45 + 0.25 * cluster.avg_source_trust),
+                matched_rules=["Routine Market Infrastructure"],
+                rationale=[
+                    "Routine Market Infrastructure: matched exchange plumbing notice, "
+                    "not a company catalyst or tradeable corporate event."
+                ],
+            )
         token_set = set(tokenize(text))
         matched_rules: list[tuple[ImpactRule, float, list[str]]] = []
         for rule in self.rules:
+            if cluster.avg_source_trust < rule.min_source_trust:
+                continue
+            if rule.name == "Major Contract Win" and any(
+                pattern.lower() in text for pattern in ORDER_LOSS_CONTEXT_PATTERNS
+            ):
+                continue
             matched_terms = self._match_terms(rule.keywords, text, token_set)
             if len(matched_terms) >= rule.min_matches:
-                coverage = len(matched_terms) / len(rule.keywords)
+                # Large synonym lists should not dilute a strong semantic hit.
+                coverage_denominator = min(len(rule.keywords), max(3, rule.min_matches * 3))
+                coverage = min(1.0, len(matched_terms) / coverage_denominator)
                 matched_rules.append((rule, coverage, matched_terms))
 
         if not matched_rules:
@@ -145,3 +196,15 @@ class ConfigDrivenImpactAnalyzer:
             if re.search(rf"\b{re.escape(normalized)}\b", text):
                 matched.append(normalized)
         return matched
+
+    def _is_routine_market_infrastructure(self, cluster: EventCluster) -> bool:
+        headline = cluster.headline.lower()
+        if any(pattern.lower() in headline for pattern in ROUTINE_MARKET_INFRASTRUCTURE_PATTERNS):
+            return True
+        if not cluster.documents:
+            return False
+        titles = [document.title.lower() for document in cluster.documents if document.title]
+        return bool(titles) and all(
+            any(pattern.lower() in title for pattern in ROUTINE_MARKET_INFRASTRUCTURE_PATTERNS)
+            for title in titles
+        )

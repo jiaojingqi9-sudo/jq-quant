@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
+import threading
 import time
 
 from market_news.application.health import (
@@ -17,7 +21,13 @@ from market_news.application.health import (
 from market_news.application.monitoring import DeliveryStateWriter, MonitorStateWriter
 from market_news.application.notify import NotificationResult, NotificationRunner
 from market_news.application.pipeline import MarketNewsPipeline
-from market_news.application.review_api import LexiconReviewService, ReviewApiStateWriter, serve_review_api
+from market_news.application.review_api import (
+    LexiconReviewService,
+    OpenClawReviewAssistant,
+    ReviewApiStateWriter,
+    serve_review_api,
+)
+from market_news.common import utcnow
 from market_news.dashboard import render_dashboard, watch_dashboard
 from market_news.domain.models import AlertLevel
 from market_news.infrastructure.collectors.factory import build_live_collector
@@ -36,6 +46,8 @@ from market_news.services.impact import ConfigDrivenImpactAnalyzer
 from market_news.services.lexicon_feedback import LexiconFeedbackStore
 from market_news.services.lexicon_suggester import LexiconSuggester
 from market_news.services.mapping import ConfigDrivenInstrumentMapper
+from market_news.services.model_judgement import build_model_judgement_stack
+from market_news.services.news_learning import build_news_learning_artifacts
 from market_news.services.normalization import DefaultNormalizer
 from market_news.services.ranking import WeightedEventRanker, WeightedInstrumentRanker
 from market_news.services.reporting import MarkdownJsonReporter, refresh_runtime_status_views
@@ -91,6 +103,26 @@ def default_health_history_path() -> Path:
     return project_root() / "reports" / "live" / "health_history.jsonl"
 
 
+def default_news_learning_status_path() -> Path:
+    return project_root() / "reports" / "live" / "news_learning_status.json"
+
+
+def default_news_learning_history_path() -> Path:
+    return project_root() / "reports" / "live" / "news_learning_history.jsonl"
+
+
+def default_news_learning_codex_review_status_path() -> Path:
+    return project_root() / "reports" / "live" / "news_learning_codex_review_status.json"
+
+
+def default_news_learning_codex_review_history_path() -> Path:
+    return project_root() / "reports" / "live" / "news_learning_codex_review_history.jsonl"
+
+
+def default_news_learning_codex_analysis_path() -> Path:
+    return project_root() / "reports" / "news_learning" / "news_learning_codex_analysis.md"
+
+
 def default_review_api_status_path() -> Path:
     return project_root() / "reports" / "live" / "review_api_status.json"
 
@@ -117,6 +149,26 @@ def default_lexicon_discovery_path() -> Path:
 
 def default_tech_block_config_path() -> Path:
     return project_root() / "config" / "tech_block.json"
+
+
+def default_model_judgement_config_path() -> Path:
+    return project_root() / "config" / "model_judgement.json"
+
+
+def default_news_learning_dir() -> Path:
+    return project_root() / "reports" / "news_learning"
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -206,6 +258,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("MARKET_NEWS_USER_AGENT", default_user_agent()),
         help="HTTP User-Agent for live source fetching.",
     )
+    live_parser.add_argument(
+        "--skip-news-learning",
+        action="store_true",
+        help="Do not generate news Evidence-to-Review artifacts after this live run.",
+    )
+    live_parser.add_argument(
+        "--news-learning-dir",
+        type=Path,
+        default=default_news_learning_dir(),
+        help="Directory for automatic news Evidence-to-Review artifacts.",
+    )
 
     collect_parser = subparsers.add_parser(
         "collect",
@@ -280,6 +343,29 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=300,
         help="Refresh interval in seconds when using --watch.",
+    )
+    collect_parser.add_argument(
+        "--auto-repair",
+        action="store_true",
+        default=_env_flag("MARKET_NEWS_AUTO_REPAIR"),
+        help="Retry an empty live collection once before marking the cycle degraded.",
+    )
+    collect_parser.add_argument(
+        "--repair-delay",
+        type=int,
+        default=20,
+        help="Seconds to wait before retrying an empty live collection when auto repair is enabled.",
+    )
+    collect_parser.add_argument(
+        "--skip-news-learning",
+        action="store_true",
+        help="Do not generate news Evidence-to-Review artifacts after each collection cycle.",
+    )
+    collect_parser.add_argument(
+        "--news-learning-dir",
+        type=Path,
+        default=default_news_learning_dir(),
+        help="Directory for automatic news Evidence-to-Review artifacts.",
     )
 
     dashboard_parser = subparsers.add_parser("dashboard", help="Render the latest console dashboard.")
@@ -578,6 +664,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Explicit status JSON file to check. Can be provided multiple times.",
     )
+    health_parser.add_argument(
+        "--auto-heal",
+        action="store_true",
+        help="Automatically restart stale or unhealthy runtime lines before writing the health snapshot.",
+    )
 
     review_api_parser = subparsers.add_parser(
         "review-api",
@@ -620,6 +711,31 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=60,
         help="Seconds between review-api heartbeats.",
+    )
+    review_api_parser.add_argument(
+        "--auto-review",
+        dest="auto_review",
+        action="store_true",
+        help="Automatically let AI accept or reject newly discovered lexicon terms.",
+    )
+    review_api_parser.add_argument(
+        "--no-auto-review",
+        dest="auto_review",
+        action="store_false",
+        help="Disable background AI lexicon auto-review.",
+    )
+    review_api_parser.set_defaults(auto_review=_env_flag("MARKET_NEWS_LEXICON_AUTO_REVIEW", True))
+    review_api_parser.add_argument(
+        "--auto-review-interval",
+        type=int,
+        default=int(os.environ.get("MARKET_NEWS_LEXICON_AUTO_REVIEW_INTERVAL", "900") or "900"),
+        help="Seconds between background AI lexicon auto-review cycles.",
+    )
+    review_api_parser.add_argument(
+        "--auto-review-batch-limit",
+        type=int,
+        default=int(os.environ.get("MARKET_NEWS_LEXICON_AUTO_REVIEW_BATCH_LIMIT", "40") or "40"),
+        help="Maximum lexicon candidates per AI auto-review call.",
     )
 
     lexicon_parser = subparsers.add_parser(
@@ -840,6 +956,305 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cookies_set_xueqiu_parser.add_argument("--cookie-file", type=Path, required=True, help="Source cookie JSON file.")
 
+    news_learning_parser = subparsers.add_parser(
+        "news-learning",
+        help="Generate research-only Evidence-to-Review artifacts for the news collector.",
+    )
+    news_learning_parser.add_argument(
+        "--report",
+        type=Path,
+        default=default_live_report_path(),
+        help="Input report JSON generated by the news collector.",
+    )
+    news_learning_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=default_news_learning_dir(),
+        help="Directory for generated evidence, attribution, candidates, and review packet.",
+    )
+    news_learning_parser.add_argument(
+        "--min-source-sample",
+        type=int,
+        default=3,
+        help="Minimum sample size before proposing source-level ranking candidates.",
+    )
+    news_learning_parser.add_argument(
+        "--min-topic-sample",
+        type=int,
+        default=3,
+        help="Minimum sample size before proposing topic-level candidates.",
+    )
+    news_learning_parser.add_argument(
+        "--stale-seconds",
+        type=int,
+        default=24 * 60 * 60,
+        help="Latency threshold after which a claim is labeled stale by default.",
+    )
+
+    news_learning_build_parser = subparsers.add_parser(
+        "news-learning-build",
+        help="Build news Evidence-to-Review artifacts and Codex handoff file.",
+    )
+    news_learning_build_parser.add_argument(
+        "--report",
+        type=Path,
+        default=default_live_report_path(),
+        help="Input report JSON generated by the news collector.",
+    )
+    news_learning_build_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=default_news_learning_dir(),
+        help="Directory for generated evidence, attribution, candidates, and review packet.",
+    )
+    news_learning_build_parser.add_argument(
+        "--min-source-sample",
+        type=int,
+        default=3,
+        help="Minimum sample size before proposing source-level ranking candidates.",
+    )
+    news_learning_build_parser.add_argument(
+        "--min-topic-sample",
+        type=int,
+        default=3,
+        help="Minimum sample size before proposing topic-level candidates.",
+    )
+    news_learning_build_parser.add_argument(
+        "--stale-seconds",
+        type=int,
+        default=24 * 60 * 60,
+        help="Latency threshold after which a claim is labeled stale by default.",
+    )
+
+    news_learning_export_parser = subparsers.add_parser(
+        "news-learning-export",
+        help="Build and export the latest news learning handoff for Codex review.",
+    )
+    news_learning_export_parser.add_argument(
+        "--report",
+        type=Path,
+        default=default_live_report_path(),
+        help="Input report JSON generated by the news collector.",
+    )
+    news_learning_export_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=default_news_learning_dir(),
+        help="Directory for generated evidence, attribution, candidates, and review packet.",
+    )
+    news_learning_export_parser.add_argument(
+        "--min-source-sample",
+        type=int,
+        default=3,
+        help="Minimum sample size before proposing source-level ranking candidates.",
+    )
+    news_learning_export_parser.add_argument(
+        "--min-topic-sample",
+        type=int,
+        default=3,
+        help="Minimum sample size before proposing topic-level candidates.",
+    )
+    news_learning_export_parser.add_argument(
+        "--stale-seconds",
+        type=int,
+        default=24 * 60 * 60,
+        help="Latency threshold after which a claim is labeled stale by default.",
+    )
+    news_learning_export_parser.add_argument(
+        "--copy",
+        dest="copy_to_clipboard",
+        action="store_true",
+        default=True,
+        help="Copy the Codex handoff Markdown to the macOS clipboard.",
+    )
+    news_learning_export_parser.add_argument(
+        "--no-copy",
+        dest="copy_to_clipboard",
+        action="store_false",
+        help="Do not copy the Codex handoff Markdown to the clipboard.",
+    )
+
+    news_learning_status_parser = subparsers.add_parser(
+        "news-learning-status",
+        help="Show the latest news Evidence-to-Review packet status.",
+    )
+    news_learning_status_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=default_news_learning_dir(),
+        help="Directory containing generated news Evidence-to-Review artifacts.",
+    )
+
+    news_learning_auto_parser = subparsers.add_parser(
+        "news-learning-auto",
+        help="Run one automated news learning export cycle and write health status.",
+    )
+    news_learning_auto_parser.add_argument(
+        "--report",
+        type=Path,
+        default=default_live_report_path(),
+        help="Input report JSON generated by the news collector.",
+    )
+    news_learning_auto_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=default_news_learning_dir(),
+        help="Directory for generated evidence, attribution, candidates, and review packet.",
+    )
+    news_learning_auto_parser.add_argument(
+        "--min-source-sample",
+        type=int,
+        default=3,
+        help="Minimum sample size before proposing source-level ranking candidates.",
+    )
+    news_learning_auto_parser.add_argument(
+        "--min-topic-sample",
+        type=int,
+        default=3,
+        help="Minimum sample size before proposing topic-level candidates.",
+    )
+    news_learning_auto_parser.add_argument(
+        "--stale-seconds",
+        type=int,
+        default=24 * 60 * 60,
+        help="Latency threshold after which a claim is labeled stale by default.",
+    )
+    news_learning_auto_parser.add_argument(
+        "--copy",
+        dest="copy_to_clipboard",
+        action="store_true",
+        default=False,
+        help="Copy the Codex handoff Markdown to the macOS clipboard.",
+    )
+    news_learning_auto_parser.add_argument(
+        "--no-copy",
+        dest="copy_to_clipboard",
+        action="store_false",
+        help="Do not copy the Codex handoff Markdown to the clipboard.",
+    )
+    news_learning_auto_parser.add_argument(
+        "--status-file",
+        type=Path,
+        default=default_news_learning_status_path(),
+        help="Path to the latest news-learning automation status JSON file.",
+    )
+    news_learning_auto_parser.add_argument(
+        "--history-file",
+        type=Path,
+        default=default_news_learning_history_path(),
+        help="Path to the append-only news-learning automation history JSONL file.",
+    )
+
+    news_learning_codex_review_parser = subparsers.add_parser(
+        "news-learning-codex-review",
+        help="Ask Codex to review the latest news learning packet and optionally notify you.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--report",
+        type=Path,
+        default=default_live_report_path(),
+        help="Input report JSON generated by the news collector.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=default_news_learning_dir(),
+        help="Directory for generated evidence, attribution, candidates, and review packet.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--analysis-path",
+        type=Path,
+        default=default_news_learning_codex_analysis_path(),
+        help="Where to write Codex's final review message.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--min-source-sample",
+        type=int,
+        default=3,
+        help="Minimum sample size before proposing source-level ranking candidates.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--min-topic-sample",
+        type=int,
+        default=3,
+        help="Minimum sample size before proposing topic-level candidates.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--stale-seconds",
+        type=int,
+        default=24 * 60 * 60,
+        help="Latency threshold after which a claim is labeled stale by default.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--status-file",
+        type=Path,
+        default=default_news_learning_codex_review_status_path(),
+        help="Path to the latest Codex-review automation status JSON file.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--history-file",
+        type=Path,
+        default=default_news_learning_codex_review_history_path(),
+        help="Path to the append-only Codex-review automation history JSONL file.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--codex-bin",
+        type=Path,
+        default=Path("/Applications/Codex.app/Contents/Resources/codex"),
+        help="Path to the Codex CLI binary.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--model",
+        default="",
+        help="Optional Codex model override. Leave empty to use the current Codex default.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=900,
+        help="Maximum seconds to wait for Codex analysis.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--notify",
+        dest="notify",
+        action="store_true",
+        default=True,
+        help="Send actionable review summaries through OpenClaw.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--no-notify",
+        dest="notify",
+        action="store_false",
+        help="Do not send OpenClaw notifications.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--notify-all",
+        action="store_true",
+        help="Notify even when Codex says no change is needed.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--channel",
+        default="whatsapp",
+        help="OpenClaw channel to use for actionable review messages.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--target",
+        default=None,
+        help="Explicit OpenClaw target. Defaults to the first allowFrom target in ~/.openclaw/openclaw.json.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--openclaw-bin",
+        type=Path,
+        default=Path.home() / ".openclaw" / "bin" / "openclaw",
+        help="Path to the OpenClaw CLI binary.",
+    )
+    news_learning_codex_review_parser.add_argument(
+        "--openclaw-config",
+        type=Path,
+        default=Path.home() / ".openclaw" / "openclaw.json",
+        help="Path to OpenClaw config.",
+    )
+
     monitor_parser = subparsers.add_parser(
         "monitor",
         help="Run the full live chain: refresh, rank, render dashboard, and push phone alerts.",
@@ -855,6 +1270,29 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=300,
         help="Refresh interval in seconds when using --watch.",
+    )
+    monitor_parser.add_argument(
+        "--auto-repair",
+        action="store_true",
+        default=_env_flag("MARKET_NEWS_AUTO_REPAIR"),
+        help="Retry an empty live collection once before marking the cycle degraded.",
+    )
+    monitor_parser.add_argument(
+        "--repair-delay",
+        type=int,
+        default=20,
+        help="Seconds to wait before retrying an empty live collection when auto repair is enabled.",
+    )
+    monitor_parser.add_argument(
+        "--skip-news-learning",
+        action="store_true",
+        help="Do not generate news Evidence-to-Review artifacts after each monitor cycle.",
+    )
+    monitor_parser.add_argument(
+        "--news-learning-dir",
+        type=Path,
+        default=default_news_learning_dir(),
+        help="Directory for automatic news Evidence-to-Review artifacts.",
     )
     monitor_parser.add_argument(
         "--watch",
@@ -974,6 +1412,31 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Generate the phone-alert preview without sending it.",
     )
+
+    # AH multi-factor scanner — additive subcommand. Reads from Futu OpenD,
+    # writes report sidecars under reports/live/. Independent of the live /
+    # collect / notify lines.
+    ah_scan_parser = subparsers.add_parser(
+        "ah-scan",
+        help="Run the AH multi-factor scanner (limit-up streak / volume shrink / near ATH) via Futu OpenD.",
+    )
+    ah_scan_parser.add_argument(
+        "--markets",
+        default=os.environ.get("MARKET_NEWS_AH_SCANNER_MARKETS", "HK,SH,SZ"),
+        help="Comma-separated market codes to include (HK,SH,SZ,US). Default HK,SH,SZ.",
+    )
+    ah_scan_parser.add_argument(
+        "--top",
+        type=int,
+        default=int(os.environ.get("MARKET_NEWS_AH_SCANNER_TOP_N", "30")),
+        help="Max rows per board. Default 30.",
+    )
+    ah_scan_parser.add_argument(
+        "--update-universe",
+        action="store_true",
+        help="Also write a config/tech_universe_cn_hk.dynamic.json file. Off by default; "
+             "even when written, the pipeline only loads it if MARKET_NEWS_TECH_UNIVERSE_DYNAMIC=1.",
+    )
     return parser
 
 
@@ -986,8 +1449,25 @@ def build_pipeline(
     report_dir: Path,
     top: int,
 ) -> MarketNewsPipeline:
+    base_impact_analyzer = ConfigDrivenImpactAnalyzer.from_file(rules)
+    base_instrument_mapper = ConfigDrivenInstrumentMapper.from_file(universe)
+    impact_analyzer, instrument_mapper, _ = build_model_judgement_stack(
+        config_path=default_model_judgement_config_path(),
+        project_root=project_root(),
+        base_impact_analyzer=base_impact_analyzer,
+        base_instrument_mapper=base_instrument_mapper,
+        candidate_instruments=_load_model_candidate_instruments(base_instrument_mapper),
+    )
+    # Optional: AH scanner-built dynamic universe (default off).
+    # Behavior is bit-for-bit identical to the static universe when the flag
+    # is off OR when the dynamic file does not exist. Existing pipelines see
+    # no change unless the user explicitly opts in.
+    _static_universe_path = project_root() / "config" / "tech_universe_cn_hk.json"
+    _dynamic_universe_path = project_root() / "config" / "tech_universe_cn_hk.dynamic.json"
+    _use_dynamic = _env_flag("MARKET_NEWS_TECH_UNIVERSE_DYNAMIC") and _dynamic_universe_path.exists()
+    _universe_path = _dynamic_universe_path if _use_dynamic else _static_universe_path
     tech_block = AHShareTechFeatureBlock.from_files(
-        universe_path=project_root() / "config" / "tech_universe_cn_hk.json",
+        universe_path=_universe_path,
         lexicon_path=project_root() / "config" / "tech_lexicon.json",
         lexicon_release_path=project_root() / "config" / "tech_lexicon_release.json",
         graph_path=project_root() / "config" / "tech_impact_graph.json",
@@ -1000,9 +1480,9 @@ def build_pipeline(
         normalizer=DefaultNormalizer(),
         deduplicator=FingerprintDeduplicator(),
         clusterer=KeywordEventClusterer(),
-        impact_analyzer=ConfigDrivenImpactAnalyzer.from_file(rules),
+        impact_analyzer=impact_analyzer,
         event_ranker=WeightedEventRanker(),
-        instrument_mapper=ConfigDrivenInstrumentMapper.from_file(universe),
+        instrument_mapper=instrument_mapper,
         instrument_ranker=WeightedInstrumentRanker(),
         alert_engine=RuleBasedAlertEngine(),
         store=SQLiteRunStore(database),
@@ -1015,6 +1495,60 @@ def build_pipeline(
         ),
         feature_modules=[tech_block],
     )
+
+
+def _load_model_candidate_instruments(
+    base_mapper: ConfigDrivenInstrumentMapper,
+) -> list[object]:
+    instruments = list(base_mapper.instruments)
+    seen = {instrument.symbol.upper() for instrument in instruments}
+    tech_path = project_root() / "config" / "tech_universe_cn_hk.json"
+    if not tech_path.exists():
+        return instruments
+    try:
+        payload = json.loads(tech_path.read_text(encoding="utf-8"))
+    except Exception:
+        return instruments
+    if not isinstance(payload, list):
+        return instruments
+    from market_news.domain.models import InstrumentDescriptor, Market
+
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol") or "").strip()
+        market = str(item.get("market") or "").strip()
+        if not symbol or not market or symbol.upper() in seen:
+            continue
+        try:
+            descriptor = InstrumentDescriptor(
+                symbol=symbol,
+                market=Market(market),
+                asset_type=str(item.get("asset_type") or "stock"),
+                name=str(item.get("name") or symbol),
+                sectors=[
+                    str(value).strip()
+                    for value in item.get("sectors", [])
+                    if str(value).strip()
+                ],
+                themes=[
+                    str(value).strip()
+                    for value in item.get("themes", [])
+                    if str(value).strip()
+                ],
+                aliases=[
+                    str(value).strip()
+                    for value in item.get("aliases", [])
+                    if str(value).strip()
+                ],
+                liquidity_score=float(item.get("liquidity_score", 0.6)),
+                metadata={"generated_from": "tech_universe_cn_hk"},
+            )
+        except (TypeError, ValueError):
+            continue
+        instruments.append(descriptor)
+        seen.add(symbol.upper())
+    return instruments
 
 
 def _report_has_content(report_path: Path) -> bool:
@@ -1161,6 +1695,38 @@ def run_pipeline(args: argparse.Namespace) -> int:
     return 0
 
 
+def _attach_news_learning_artifacts(
+    snapshot: object,
+    *,
+    report_path: Path,
+    output_dir: Path,
+) -> None:
+    """Generate research-only news learning artifacts without affecting collection decisions."""
+    artifacts = getattr(snapshot, "artifacts", None)
+    if not isinstance(artifacts, dict):
+        return
+    if not _report_has_content(report_path):
+        artifacts["news_learning_status"] = "skipped-empty-report"
+        artifacts["news_learning_error"] = "report has no ranked events or latest feed"
+        return
+    try:
+        result = build_news_learning_artifacts(report_path=report_path, output_dir=output_dir)
+    except Exception as exc:
+        artifacts["news_learning_status"] = "error"
+        artifacts["news_learning_error"] = str(exc)
+        return
+    artifacts.update(
+        {
+            "news_learning_status": "ok",
+            "news_learning_output_dir": str(result.output_dir),
+            "news_learning_review_packet_md": str(result.artifact_paths["news_learning_review_packet_md"]),
+            "news_learning_review_packet_json": str(result.artifact_paths["news_learning_review_packet_json"]),
+            "news_learning_codex_handoff": str(result.artifact_paths["news_learning_codex_handoff"]),
+            "news_learning_candidate_count": len(result.candidates),
+        }
+    )
+
+
 def execute_live_pipeline(args: argparse.Namespace) -> object:
     previous_report_bundle = _backup_report_bundle(args.report_dir)
     pipeline = build_pipeline(
@@ -1181,12 +1747,144 @@ def execute_live_pipeline(args: argparse.Namespace) -> object:
         }
     )
     if len(snapshot.raw_records) == 0 and len(snapshot.documents) == 0:
+        snapshot.artifacts["report_fallback_applied"] = bool(previous_report_bundle)
         if previous_report_bundle:
             _restore_report_bundle(args.report_dir, previous_report_bundle)
-        raise RuntimeError(
-            "Live collection returned 0 records, so the last non-empty report was preserved instead of blanking the dashboard."
+        snapshot.artifacts["cycle_warning"] = (
+            "Live collection returned 0 records; the last non-empty report was preserved."
+        )
+    if not bool(getattr(args, "skip_news_learning", False)):
+        _attach_news_learning_artifacts(
+            snapshot,
+            report_path=Path(snapshot.artifacts["json_report"]),
+            output_dir=Path(getattr(args, "news_learning_dir", default_news_learning_dir())),
         )
     return snapshot
+
+
+def _execute_live_pipeline_with_auto_repair(args: argparse.Namespace) -> object:
+    snapshot = execute_live_pipeline(args)
+    warning = str(snapshot.artifacts.get("cycle_warning") or "").strip()
+    if not warning or not bool(getattr(args, "auto_repair", False)):
+        return snapshot
+    repair_delay = max(int(getattr(args, "repair_delay", 20) or 0), 0)
+    if repair_delay > 0:
+        print(f"Auto-repair: empty live collection detected, retrying in {repair_delay}s...")
+        time.sleep(repair_delay)
+    repaired_snapshot = execute_live_pipeline(args)
+    repaired_warning = str(repaired_snapshot.artifacts.get("cycle_warning") or "").strip()
+    if not repaired_warning:
+        repaired_snapshot.artifacts["repair_attempts"] = 1
+        repaired_snapshot.artifacts["repair_status"] = "recovered"
+        repaired_snapshot.artifacts["repair_note"] = warning
+        return repaired_snapshot
+    repaired_snapshot.artifacts["repair_attempts"] = 2
+    repaired_snapshot.artifacts["repair_status"] = "still-empty"
+    repaired_snapshot.artifacts["repair_note"] = warning
+    return repaired_snapshot
+
+
+def _collection_overall_status_override(snapshot: object) -> str | None:
+    cycle_warning = str(snapshot.artifacts.get("cycle_warning", "") or "").strip()
+    if not cycle_warning:
+        return None
+    if bool(snapshot.artifacts.get("report_fallback_applied")):
+        return None
+    return "degraded"
+
+
+def _refresh_health_snapshot_from_runtime(*, max_age_seconds: int = 900) -> None:
+    status_writer = HealthStateWriter(
+        status_path=default_health_status_path(),
+        history_path=default_health_history_path(),
+    )
+    snapshot = evaluate_status_files(
+        status_files=discover_status_files(
+            [
+                ("collect", default_collect_status_path()),
+                ("delivery", default_delivery_status_path()),
+                ("news_learning", default_news_learning_status_path()),
+                ("review_api", default_review_api_status_path()),
+                ("monitor", default_monitor_status_path()),
+            ]
+        ),
+        max_age_seconds=max_age_seconds,
+    )
+    status_writer.write(snapshot)
+
+
+def _stack_agents_file() -> Path:
+    return project_root() / "runtime" / "stack_agents.txt"
+
+
+def _load_stack_agents() -> dict[str, str]:
+    path = _stack_agents_file()
+    if not path.exists():
+        return {}
+    labels: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        labels[key.strip()] = value.strip()
+    return labels
+
+
+def _launchctl_kickstart(label: str) -> tuple[bool, str]:
+    if not label:
+        return False, "missing launchd label"
+    domain = f"gui/{os.getuid()}/{label}"
+    try:
+        subprocess.run(
+            ["launchctl", "kickstart", "-k", domain],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return True, domain
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        return False, detail
+
+
+def _touch_status_timestamp(status_path: Path) -> bool:
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    payload["timestamp"] = utcnow().isoformat()
+    try:
+        status_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    except Exception:
+        return False
+    return True
+
+
+def _auto_heal_health_checks(checks: list[object]) -> list[str]:
+    labels = _load_stack_agents()
+    heal_map = {
+        "collect": labels.get("collect_label", ""),
+        "delivery": labels.get("notify_label", ""),
+        "news_learning": labels.get("news_learning_label", ""),
+        "review_api": labels.get("review_api_label", ""),
+    }
+    repairs: list[str] = []
+    for check in checks:
+        name = str(getattr(check, "name", "") or "").strip()
+        status = str(getattr(check, "status", "") or "").strip().lower()
+        if name not in heal_map:
+            continue
+        if status not in {"stale", "error", "degraded", "missing"}:
+            continue
+        ok, detail = _launchctl_kickstart(heal_map[name])
+        action = "restarted" if ok else "restart-failed"
+        if ok:
+            _touch_status_timestamp(Path(getattr(check, "status_path", "")))
+        repairs.append(f"{name}:{action}:{detail}")
+    return repairs
 
 
 def run_live_pipeline(args: argparse.Namespace) -> int:
@@ -1357,7 +2055,7 @@ def run_notify(args: argparse.Namespace) -> int:
         preview_path = _resolve_preview_path(args.preview, report_path)
         try:
             if args.refresh:
-                snapshot = execute_live_pipeline(args)
+                snapshot = _execute_live_pipeline_with_auto_repair(args)
                 report_path = Path(snapshot.artifacts["json_report"])
             preview_path = _resolve_preview_path(args.preview, report_path)
             result, exit_code = _deliver_notification(
@@ -1373,6 +2071,7 @@ def run_notify(args: argparse.Namespace) -> int:
                 preview_path=preview_path,
                 notification_result=result,
             )
+            _refresh_health_snapshot_from_runtime()
             refresh_runtime_status_views(report_path)
             print(f"Status: {result.status}")
             print(f"Channel: {result.channel}")
@@ -1387,6 +2086,7 @@ def run_notify(args: argparse.Namespace) -> int:
                 report_path=report_path,
                 preview_path=preview_path,
             )
+            _refresh_health_snapshot_from_runtime()
             refresh_runtime_status_views(report_path)
             raise
 
@@ -1425,16 +2125,43 @@ def run_collect(args: argparse.Namespace) -> int:
 
     def cycle() -> int:
         preview_path = _resolve_preview_path(args.preview, default_live_report_path())
+
+        def touch_running() -> None:
+            state_writer.write_running(
+                report_path=default_live_report_path(),
+                preview_path=preview_path,
+            )
+            _refresh_health_snapshot_from_runtime()
+            refresh_runtime_status_views(default_live_report_path())
+
+        stop_running_heartbeat = threading.Event()
+
+        def running_heartbeat_loop() -> None:
+            while not stop_running_heartbeat.wait(60):
+                touch_running()
+
+        touch_running()
+        running_heartbeat = threading.Thread(
+            target=running_heartbeat_loop,
+            daemon=True,
+            name="collect-running-heartbeat",
+        )
+        running_heartbeat.start()
         try:
-            snapshot = execute_live_pipeline(args)
+            snapshot = _execute_live_pipeline_with_auto_repair(args)
+            stop_running_heartbeat.set()
+            running_heartbeat.join(timeout=1.0)
             report_path = Path(snapshot.artifacts["json_report"])
             preview_path = _resolve_preview_path(args.preview, report_path)
+            cycle_warning = str(snapshot.artifacts.get("cycle_warning", "") or "").strip()
             state_writer.write_cycle(
                 snapshot=snapshot,
                 report_path=report_path,
                 preview_path=preview_path,
                 notification_result=None,
+                overall_status_override=_collection_overall_status_override(snapshot),
             )
+            _refresh_health_snapshot_from_runtime()
             refresh_runtime_status_views(report_path)
             _clear_console()
             print(
@@ -1444,12 +2171,19 @@ def run_collect(args: argparse.Namespace) -> int:
                     status_path=state_writer.status_path,
                 )
             )
+            if snapshot.artifacts.get("repair_status") == "recovered":
+                print("Auto-repair: empty cycle recovered on the second attempt.")
+            elif cycle_warning:
+                print(f"Warning: {cycle_warning}")
             return 0
         except Exception as exc:
+            stop_running_heartbeat.set()
+            running_heartbeat.join(timeout=1.0)
             state_writer.write_failure(
                 error_message=str(exc),
                 preview_path=preview_path,
             )
+            _refresh_health_snapshot_from_runtime()
             refresh_runtime_status_views(default_live_report_path())
             _clear_console()
             print(
@@ -1485,6 +2219,7 @@ def run_health(args: argparse.Namespace) -> int:
             [
                 ("collect", default_collect_status_path()),
                 ("delivery", default_delivery_status_path()),
+                ("news_learning", default_news_learning_status_path()),
                 ("review_api", default_review_api_status_path()),
                 ("monitor", default_monitor_status_path()),
             ]
@@ -1495,10 +2230,21 @@ def run_health(args: argparse.Namespace) -> int:
             status_files=resolve_inputs(),
             max_age_seconds=args.max_age,
         )
+        repair_actions: list[str] = []
+        if bool(getattr(args, "auto_heal", False)) and snapshot.overall_status in {"stale", "degraded", "error"}:
+            repair_actions = _auto_heal_health_checks(snapshot.checks)
+            if repair_actions:
+                time.sleep(2)
+                snapshot = evaluate_status_files(
+                    status_files=resolve_inputs(),
+                    max_age_seconds=args.max_age,
+                )
         state_writer.write(snapshot)
         refresh_runtime_status_views(default_live_report_path())
         _clear_console()
         print(render_health_screen(snapshot, status_path=state_writer.status_path))
+        if repair_actions:
+            print("Auto-heal: " + "; ".join(repair_actions))
         return exit_code_for(snapshot)
 
     if not args.watch:
@@ -1526,6 +2272,13 @@ def run_review_api(args: argparse.Namespace) -> int:
         ),
         host=args.host,
         port=args.port,
+        ai_client=OpenClawReviewAssistant(
+            config_path=default_model_judgement_config_path(),
+            project_root=project_root(),
+        ),
+        auto_review_enabled=bool(args.auto_review),
+        auto_review_interval_seconds=args.auto_review_interval,
+        auto_review_batch_limit=args.auto_review_batch_limit,
     )
     print(f"Lexicon review API listening on http://{args.host}:{args.port}")
     try:
@@ -1552,9 +2305,10 @@ def run_monitor(args: argparse.Namespace) -> int:
         preview_path = args.preview
         notification_result = None
         try:
-            snapshot = execute_live_pipeline(args)
+            snapshot = _execute_live_pipeline_with_auto_repair(args)
             report_path = Path(snapshot.artifacts["json_report"])
             preview_path = _resolve_preview_path(args.preview, report_path)
+            cycle_warning = str(snapshot.artifacts.get("cycle_warning", "") or "").strip()
             exit_code = 0
             if runner is not None:
                 notification_result, exit_code = _deliver_notification(
@@ -1570,7 +2324,9 @@ def run_monitor(args: argparse.Namespace) -> int:
                 report_path=report_path,
                 preview_path=preview_path,
                 notification_result=notification_result,
+                overall_status_override=_collection_overall_status_override(snapshot),
             )
+            _refresh_health_snapshot_from_runtime()
             _clear_console()
             print(
                 _render_monitor_screen(
@@ -1580,6 +2336,10 @@ def run_monitor(args: argparse.Namespace) -> int:
                     status_path=state_writer.status_path,
                 )
             )
+            if snapshot.artifacts.get("repair_status") == "recovered":
+                print("Auto-repair: empty cycle recovered on the second attempt.")
+            elif cycle_warning:
+                print(f"Warning: {cycle_warning}")
             return exit_code
         except Exception as exc:
             state_writer.write_failure(
@@ -1588,6 +2348,7 @@ def run_monitor(args: argparse.Namespace) -> int:
                 preview_path=preview_path,
                 notification_result=notification_result,
             )
+            _refresh_health_snapshot_from_runtime()
             _clear_console()
             print(
                 _render_monitor_failure_screen(
@@ -1854,6 +2615,521 @@ def run_cookies(args: argparse.Namespace) -> int:
     return 0 if failed == 0 else 1
 
 
+def run_news_learning(args: argparse.Namespace) -> int:
+    result = _build_news_learning_from_args(args)
+    print("News learning artifacts generated.")
+    print(f"output_dir: {result.output_dir}")
+    for name, path in result.artifact_paths.items():
+        print(f"{name}: {path}")
+    print(f"candidates: {len(result.candidates)}")
+    print(f"review_packet_md: {result.artifact_paths['news_learning_review_packet_md']}")
+    print(f"review_packet_json: {result.artifact_paths['news_learning_review_packet_json']}")
+    print(f"codex_handoff: {result.artifact_paths['news_learning_codex_handoff']}")
+    return 0
+
+
+def _build_news_learning_from_args(args: argparse.Namespace) -> object:
+    return build_news_learning_artifacts(
+        report_path=args.report,
+        output_dir=args.output_dir,
+        min_source_sample=args.min_source_sample,
+        min_topic_sample=args.min_topic_sample,
+        stale_seconds=args.stale_seconds,
+    )
+
+
+def _copy_text_to_clipboard(text: str) -> tuple[bool, str]:
+    try:
+        subprocess.run(["pbcopy"], input=text, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        return False, str(exc)
+    return True, "copied"
+
+
+def run_news_learning_export(args: argparse.Namespace) -> int:
+    result = _build_news_learning_from_args(args)
+    handoff_path = result.artifact_paths["news_learning_codex_handoff"]
+    handoff_text = handoff_path.read_text(encoding="utf-8")
+    copied = False
+    copy_detail = "disabled"
+    if bool(getattr(args, "copy_to_clipboard", False)):
+        copied, copy_detail = _copy_text_to_clipboard(handoff_text)
+    print("News learning Codex handoff exported.")
+    print(f"codex_handoff: {handoff_path}")
+    print(f"review_packet_md: {result.artifact_paths['news_learning_review_packet_md']}")
+    print(f"review_packet_json: {result.artifact_paths['news_learning_review_packet_json']}")
+    print(f"candidates: {len(result.candidates)}")
+    print(f"clipboard: {'copied' if copied else copy_detail}")
+    print("\n这份 handoff 是给 Codex 复核的交接消息；JSON/Markdown 是可校验证据包。")
+    return 0
+
+
+def run_news_learning_status(args: argparse.Namespace) -> int:
+    output_dir = Path(args.output_dir)
+    packet_path = output_dir / "news_learning_review_packet.json"
+    attribution_path = output_dir / "news_attribution.json"
+    candidates_path = output_dir / "news_upgrade_candidates.jsonl"
+    promotion_path = output_dir / "news_promotion_report.json"
+    handoff_path = output_dir / "news_learning_codex_handoff.md"
+    packet = _load_json(packet_path) if packet_path.exists() else {}
+    attribution = _load_json(attribution_path) if attribution_path.exists() else {}
+    promotion = _load_json(promotion_path) if promotion_path.exists() else {}
+    candidates = []
+    if candidates_path.exists():
+        candidates = [
+            json.loads(line)
+            for line in candidates_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    rows = [
+        ("generated_at", packet.get("generated_at", attribution.get("generated_at", "none")) if isinstance(packet, dict) else "none"),
+        ("codex_handoff", handoff_path if handoff_path.exists() else "missing"),
+        ("review_packet_md", output_dir / "news_learning_review_packet.md" if (output_dir / "news_learning_review_packet.md").exists() else "missing"),
+        ("review_packet_json", packet_path if packet_path.exists() else "missing"),
+        ("sample_size", attribution.get("sample_size", 0) if isinstance(attribution, dict) else 0),
+        ("candidate_count", len(candidates)),
+        (
+            "ready_for_codex_review",
+            promotion.get("ready_for_codex_review_count", 0) if isinstance(promotion, dict) else 0,
+        ),
+        ("auto_code_changes_allowed", False),
+        ("auto_live_config_changes_allowed", False),
+    ]
+    for key, value in rows:
+        print(f"{key}: {value}")
+    if isinstance(attribution, dict):
+        best_sources = ", ".join(str(item.get("name")) for item in attribution.get("best_sources", [])[:5])
+        best_topics = ", ".join(str(item.get("name")) for item in attribution.get("best_topics", [])[:8])
+        print(f"best_sources: {best_sources}")
+        print(f"best_topics: {best_topics}")
+    return 0
+
+
+def _write_news_learning_automation_status(
+    *,
+    status_path: Path,
+    history_path: Path,
+    payload: dict[str, object],
+) -> None:
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    status_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with history_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def run_news_learning_auto(args: argparse.Namespace) -> int:
+    timestamp = utcnow().isoformat()
+    try:
+        result = _build_news_learning_from_args(args)
+        handoff_path = result.artifact_paths["news_learning_codex_handoff"]
+        copied = False
+        copy_detail = "disabled"
+        if bool(getattr(args, "copy_to_clipboard", False)):
+            copied, copy_detail = _copy_text_to_clipboard(handoff_path.read_text(encoding="utf-8"))
+        promotion_path = result.artifact_paths["news_promotion_report"]
+        promotion = _load_json(promotion_path) if promotion_path.exists() else {}
+        ready_count = (
+            int(promotion.get("ready_for_codex_review_count", 0) or 0)
+            if isinstance(promotion, dict)
+            else 0
+        )
+        payload = {
+            "timestamp": timestamp,
+            "overall_status": "ok",
+            "artifacts": {
+                "json_report": str(args.report),
+                "news_learning_output_dir": str(result.output_dir),
+                "news_learning_codex_handoff": str(handoff_path),
+                "news_learning_review_packet_md": str(result.artifact_paths["news_learning_review_packet_md"]),
+                "news_learning_review_packet_json": str(result.artifact_paths["news_learning_review_packet_json"]),
+            },
+            "counts": {
+                "memory_records": int(result.attribution.get("sample_size", 0) or 0),
+                "candidate_count": len(result.candidates),
+                "ready_for_codex_review": ready_count,
+            },
+            "modules": [
+                {
+                    "name": "news_learning",
+                    "status": "ok",
+                    "detail": "Codex handoff generated automatically",
+                    "count": len(result.candidates),
+                }
+            ],
+            "clipboard": "copied" if copied else copy_detail,
+            "errors": [],
+        }
+        _write_news_learning_automation_status(
+            status_path=args.status_file,
+            history_path=args.history_file,
+            payload=payload,
+        )
+        print("News learning automation cycle complete.")
+        print(f"status: {args.status_file}")
+        print(f"codex_handoff: {handoff_path}")
+        print(f"candidates: {len(result.candidates)}")
+        print(f"ready_for_codex_review: {ready_count}")
+        return 0
+    except Exception as exc:
+        payload = {
+            "timestamp": timestamp,
+            "overall_status": "error",
+            "artifacts": {
+                "json_report": str(getattr(args, "report", "")),
+                "news_learning_output_dir": str(getattr(args, "output_dir", "")),
+            },
+            "counts": {
+                "memory_records": 0,
+                "candidate_count": 0,
+                "ready_for_codex_review": 0,
+            },
+            "modules": [
+                {
+                    "name": "news_learning",
+                    "status": "error",
+                    "detail": "automation cycle failed",
+                    "count": 0,
+                }
+            ],
+            "errors": [str(exc)],
+        }
+        _write_news_learning_automation_status(
+            status_path=args.status_file,
+            history_path=args.history_file,
+            payload=payload,
+        )
+        print(f"News learning automation failed: {exc}", file=sys.stderr)
+        return 1
+
+
+def _resolve_codex_binary(candidate: Path) -> Path:
+    if candidate.exists():
+        return candidate
+    resolved = shutil.which("codex")
+    if resolved:
+        return Path(resolved)
+    raise FileNotFoundError(f"Codex CLI not found: {candidate}")
+
+
+def _resolve_review_binary(candidate: Path) -> tuple[Path, str]:
+    """Pick the reviewer CLI and report which flavour it is.
+
+    Returns ``(path, kind)`` where kind is ``"codex"`` or ``"claude"``. Codex is
+    tried first so an existing paid setup keeps working; Claude Code is used when
+    Codex is absent or unusable, since the two CLIs need different arguments.
+    """
+
+    try:
+        return _resolve_codex_binary(candidate), "codex"
+    except FileNotFoundError:
+        pass
+    from market_news.services.model_judgement import _resolve_claude_binary
+
+    claude = _resolve_claude_binary(Path("/opt/homebrew/bin/claude"))
+    if claude:
+        return Path(claude), "claude"
+    raise FileNotFoundError(
+        f"No reviewer CLI found (looked for Codex at {candidate}, then claude)."
+    )
+
+
+def _compose_news_learning_codex_review_prompt(
+    *,
+    handoff_path: Path,
+    review_packet_json_path: Path,
+    review_packet_md_path: Path,
+    analysis_path: Path,
+) -> str:
+    return f"""
+你是 Codex。请只读审阅市场新闻收集系统的 Evidence-to-Review 学习包，判断是否值得建议用户下一步修改代码或采集策略。
+
+工作目录：
+`{project_root()}`
+
+请读取：
+- `{handoff_path}`
+- `{review_packet_json_path}`
+- `{review_packet_md_path}`
+
+硬性限制：
+- 严禁自动改代码。
+- 严禁自动改 live/news production 配置。
+- 严禁改股票系统。
+- 严禁改 crypto 系统。
+- 候选建议只能停留在 research/review 级别。
+- 只有当你认为“值得用户下一步下指令让 Codex 改代码或策略”时，才明确提出变更建议。
+
+请重点判断：
+- 哪些来源值得升权、降权、拉黑或要求交叉验证。
+- 哪些主题真的有预测价值，哪些只是噪声。
+- 是否有重复率、滞后率、反驳率、来源单一依赖过高的问题。
+- 是否有重要新闻被低质量来源抢先、官方来源滞后、或者抓取链路遗漏。
+- 哪些 candidate_id 值得下一步让 Codex 评估或修改。
+- 如果 market_impact_after_5m/30m/1d 仍为空，请判断是否已经值得建议接入市场反应标签。
+
+输出要求：
+如果没有值得用户采取行动的变更，请只输出：
+新闻学习审阅：暂不建议改代码或采集策略。
+原因：<一句话说明最主要原因>
+
+如果值得用户判断是否变更，请输出：
+新闻学习审阅：建议用户确认是否变更。
+
+最值得看的问题：
+1. <问题和证据>
+2. <问题和证据>
+
+建议动作：
+1. <candidate_id> <action> <target>：<为什么值得做>
+2. <candidate_id> <action> <target>：<为什么值得做>
+
+不建议现在做的事：
+1. <噪声/样本不足/风险>
+
+如果用户同意，建议下一条指令：
+<一句可以直接发给 Codex 的中文指令>
+
+判断标准：
+- 样本不足时不要建议改代码，只建议继续观察。
+- 单一新闻不能直接证明要改策略，除非它暴露出明确来源缺口或重大漏抓。
+- 只有连续出现同类证据时，才建议升权、降权或拉黑来源。
+- 微博/雪球只能作为热度或线索，不应单独触发生产策略变更。
+- 官方公告、交易所、财联社、新华社、部委、权威财经源优先级更高。
+- 如果某主题能更早捕捉基本面变化、订单变化、需求链变化、政策需求或估值修复，优先提出。
+- 如果只是事后价格波动、泛泛讨论、没有实体和可验证事实，不要建议变更。
+
+请把最终回复控制在 1200 字以内。最终内容会保存到：
+`{analysis_path}`
+""".strip()
+
+
+def _news_learning_review_is_actionable(text: str) -> bool:
+    normalized = text.strip()
+    if "暂不建议改代码或采集策略" in normalized:
+        return False
+    return any(
+        marker in normalized
+        for marker in (
+            "建议用户确认是否变更",
+            "建议动作",
+            "candidate_id",
+            "建议下一条指令",
+        )
+    )
+
+
+def _news_learning_review_digest(text: str) -> str:
+    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
+
+
+def _news_learning_review_already_sent(text: str, status_path: Path) -> bool:
+    """True when this exact analysis was already pushed on a previous run."""
+
+    try:
+        if not status_path.exists():
+            return False
+        previous = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(previous, dict):
+        return False
+    notification = previous.get("notification")
+    if not isinstance(notification, dict) or not notification.get("sent"):
+        return False
+    return str(notification.get("analysis_digest", "")) == _news_learning_review_digest(text)
+
+
+def _truncate_notification(text: str, *, limit: int = 3200) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 80].rstrip() + "\n\n...[已截断，完整内容见本地 analysis 文件]"
+
+
+def run_news_learning_codex_review(args: argparse.Namespace) -> int:
+    timestamp = utcnow().isoformat()
+    payload: dict[str, object]
+    notified = False
+    notify_error = ""
+    codex_returncode = 1
+    analysis_text = ""
+    try:
+        learning_result = _build_news_learning_from_args(args)
+        handoff_path = learning_result.artifact_paths["news_learning_codex_handoff"]
+        review_packet_json_path = learning_result.artifact_paths["news_learning_review_packet_json"]
+        review_packet_md_path = learning_result.artifact_paths["news_learning_review_packet_md"]
+        args.analysis_path.parent.mkdir(parents=True, exist_ok=True)
+
+        prompt = _compose_news_learning_codex_review_prompt(
+            handoff_path=handoff_path,
+            review_packet_json_path=review_packet_json_path,
+            review_packet_md_path=review_packet_md_path,
+            analysis_path=args.analysis_path,
+        )
+        codex_bin, reviewer_kind = _resolve_review_binary(args.codex_bin)
+        if reviewer_kind == "claude":
+            # Claude Code takes the prompt as an argument and prints to stdout;
+            # it has no --output-last-message, so the analysis file is written
+            # from stdout further below.
+            command = [str(codex_bin), "-p", prompt]
+            if args.model:
+                command.extend(["--model", str(args.model)])
+            stdin_text: str | None = None
+        else:
+            command = [
+                str(codex_bin),
+                "-a",
+                "never",
+                "exec",
+                "-C",
+                str(project_root()),
+                "-s",
+                "read-only",
+                "--output-last-message",
+                str(args.analysis_path),
+            ]
+            if args.model:
+                command.extend(["-m", str(args.model)])
+            command.append("-")
+            stdin_text = prompt
+
+        completed = subprocess.run(
+            command,
+            input=stdin_text,
+            text=True,
+            capture_output=True,
+            timeout=int(args.timeout),
+            check=False,
+        )
+        if reviewer_kind == "claude" and completed.returncode == 0:
+            args.analysis_path.write_text(
+                (completed.stdout or "").strip() + "\n", encoding="utf-8"
+            )
+        codex_returncode = completed.returncode
+        if args.analysis_path.exists():
+            analysis_text = args.analysis_path.read_text(encoding="utf-8")
+        else:
+            analysis_text = completed.stdout.strip() or completed.stderr.strip()
+            args.analysis_path.write_text(analysis_text + "\n", encoding="utf-8")
+
+        actionable = _news_learning_review_is_actionable(analysis_text)
+        # Guard 1: a failed reviewer must never notify. Previously a non-zero exit
+        # (e.g. quota exhausted) left the PREVIOUS run's analysis file on disk, which
+        # was then re-read, re-judged "actionable", and re-sent every single hour.
+        if codex_returncode != 0:
+            actionable = False
+        # Guard 2: never send the same analysis twice, even across restarts.
+        elif _news_learning_review_already_sent(analysis_text, args.status_file):
+            actionable = False
+        should_notify = bool(args.notify) and (bool(args.notify_all) or actionable)
+        if should_notify:
+            message = _truncate_notification(
+                "新闻学习审阅自动化\n\n"
+                f"{analysis_text.strip()}\n\n"
+                f"完整分析：{args.analysis_path}\n"
+                f"Review packet：{review_packet_md_path}"
+            )
+            notifier = OpenClawNotifier(
+                binary_path=args.openclaw_bin,
+                config_path=args.openclaw_config,
+            )
+            target = notifier.resolve_target(args.channel, args.target)
+            try:
+                notifier.send(channel=args.channel, target=target, message=message)
+                notified = True
+            except Exception as exc:
+                notify_error = str(exc)
+
+        overall_status = "ok" if codex_returncode == 0 and not notify_error else "degraded"
+        payload = {
+            "timestamp": timestamp,
+            "overall_status": overall_status,
+            "artifacts": {
+                "analysis": str(args.analysis_path),
+                "news_learning_codex_handoff": str(handoff_path),
+                "news_learning_review_packet_md": str(review_packet_md_path),
+                "news_learning_review_packet_json": str(review_packet_json_path),
+            },
+            "counts": {
+                "candidate_count": len(learning_result.candidates),
+                "ready_for_codex_review": int(
+                    _load_json(learning_result.artifact_paths["news_promotion_report"]).get(
+                        "ready_for_codex_review_count", 0
+                    )
+                ),
+            },
+            "modules": [
+                {
+                    "name": "news_learning_codex_review",
+                    "status": overall_status,
+                    "detail": "Codex reviewed the news learning packet",
+                    "count": len(learning_result.candidates),
+                }
+            ],
+            "codex": {
+                "returncode": codex_returncode,
+                "model": str(args.model or "default"),
+                "reviewer": reviewer_kind,
+                "binary": str(codex_bin),
+            },
+            "notification": {
+                "attempted": should_notify,
+                "sent": notified,
+                "error": notify_error,
+                "analysis_digest": _news_learning_review_digest(analysis_text),
+            },
+            "actionable": actionable,
+            "errors": [] if codex_returncode == 0 else [completed.stderr.strip() or completed.stdout.strip()],
+        }
+        _write_news_learning_automation_status(
+            status_path=args.status_file,
+            history_path=args.history_file,
+            payload=payload,
+        )
+        print("News learning Codex review complete.")
+        print(f"analysis: {args.analysis_path}")
+        print(f"actionable: {actionable}")
+        print(f"notified: {notified}")
+        if notify_error:
+            print(f"notification_error: {notify_error}", file=sys.stderr)
+        return 0 if codex_returncode == 0 and not notify_error else 1
+    except Exception as exc:
+        payload = {
+            "timestamp": timestamp,
+            "overall_status": "error",
+            "artifacts": {
+                "analysis": str(getattr(args, "analysis_path", "")),
+                "news_learning_output_dir": str(getattr(args, "output_dir", "")),
+            },
+            "counts": {
+                "candidate_count": 0,
+                "ready_for_codex_review": 0,
+            },
+            "modules": [
+                {
+                    "name": "news_learning_codex_review",
+                    "status": "error",
+                    "detail": "Codex review automation failed",
+                    "count": 0,
+                }
+            ],
+            "notification": {
+                "attempted": False,
+                "sent": False,
+                "error": "",
+            },
+            "actionable": False,
+            "errors": [str(exc)],
+        }
+        _write_news_learning_automation_status(
+            status_path=args.status_file,
+            history_path=args.history_file,
+            payload=payload,
+        )
+        print(f"News learning Codex review failed: {exc}", file=sys.stderr)
+        return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1877,7 +3153,72 @@ def main(argv: list[str] | None = None) -> int:
         return run_lexicon(args)
     if args.command == "cookies":
         return run_cookies(args)
+    if args.command in {"news-learning", "news-learning-build"}:
+        return run_news_learning(args)
+    if args.command == "news-learning-export":
+        return run_news_learning_export(args)
+    if args.command == "news-learning-status":
+        return run_news_learning_status(args)
+    if args.command == "news-learning-auto":
+        return run_news_learning_auto(args)
+    if args.command == "news-learning-codex-review":
+        return run_news_learning_codex_review(args)
     if args.command == "monitor":
         return run_monitor(args)
+    if args.command == "ah-scan":
+        return run_ah_scan(args)
     parser.error(f"Unsupported command: {args.command}")
     return 2
+
+
+def run_ah_scan(args: argparse.Namespace) -> int:
+    """Driver for the AH multi-factor scanner. Best-effort; always exits 0
+    unless something truly catastrophic happens, so launchd / cron retries
+    don't go into back-off."""
+
+    from market_news.services import ah_scanner
+
+    markets_raw = getattr(args, "markets", None) or "HK,SH,SZ"
+    markets = tuple(
+        part.strip().upper() for part in markets_raw.split(",") if part.strip()
+    ) or ("HK", "SH", "SZ")
+    cfg = ah_scanner.ScannerConfig.from_env()
+    cfg = ah_scanner.ScannerConfig(
+        markets=markets,
+        top_n=int(getattr(args, "top", cfg.top_n) or cfg.top_n),
+        volume_shrink_ratio=cfg.volume_shrink_ratio,
+        volume_lookback_days=cfg.volume_lookback_days,
+        limit_up_lookback_days=cfg.limit_up_lookback_days,
+        ath_pct=cfg.ath_pct,
+        ath_lookback_days=cfg.ath_lookback_days,
+        history_per_call_cap=cfg.history_per_call_cap,
+        universe_size_cap=cfg.universe_size_cap,
+    )
+    try:
+        report = ah_scanner.run_scan(cfg)
+    except Exception as exc:
+        print(f"[ah-scan] scan failed: {exc}")
+        return 0
+    reports_dir = project_root() / "reports" / "live"
+    paths = ah_scanner.write_reports(report, reports_dir=reports_dir)
+    print(f"[ah-scan] wrote {len(paths)} files to {reports_dir}")
+    print(f"  candidates: {report.candidate_count}, universe: {len(report.universe)}")
+    print(
+        f"  limit_up_streak: {len(report.limit_up_streak)}, "
+        f"volume_shrink_up: {len(report.volume_shrink_up)}, "
+        f"near_ath: {len(report.near_ath)}"
+    )
+    if getattr(args, "update_universe", False):
+        config_dir = project_root() / "config"
+        dyn_path = ah_scanner.write_dynamic_universe(report, config_dir=config_dir)
+        if dyn_path is not None:
+            print(f"[ah-scan] wrote dynamic universe -> {dyn_path}")
+            print("[ah-scan] note: pipeline still uses the static universe unless "
+                  "MARKET_NEWS_TECH_UNIVERSE_DYNAMIC=1 is set.")
+        else:
+            print("[ah-scan] dynamic universe was empty — static file remains in use.")
+    if report.skipped_reason:
+        print(f"[ah-scan] skipped: {report.skipped_reason}")
+    if report.errors:
+        print(f"[ah-scan] {len(report.errors)} non-fatal errors during scan (see scan_summary.json).")
+    return 0

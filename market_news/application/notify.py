@@ -3,11 +3,42 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import json
+import logging
+import os
 from pathlib import Path
 
 from market_news.domain.models import AlertLevel
 from market_news.domain.ports import DeliveryStore, Notifier
 from market_news.services.notification import AlertDigestBuilder
+
+
+_log = logging.getLogger(__name__)
+
+
+def _futu_enrichment_enabled() -> bool:
+    raw = os.getenv("MARKET_NEWS_FUTU_ENRICHMENT", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _maybe_write_futu_enrichment(payload: dict, preview_path: Path) -> None:
+    """Sidecar write — best effort, never raises.
+
+    Reads ``MARKET_NEWS_FUTU_ENRICHMENT``. When the flag is off, returns
+    immediately so the notify path keeps its current behavior bit-for-bit.
+    When the flag is on, asks the futu_enrichment service for extra context
+    and writes a sidecar JSON next to the preview file. The phone-alert
+    preview text and the WhatsApp send are untouched.
+    """
+
+    if not _futu_enrichment_enabled():
+        return
+    try:
+        from market_news.services import futu_enrichment
+
+        report = futu_enrichment.build_report(payload, enabled=True)
+        futu_enrichment.write_sidecar(report, preview_path=preview_path)
+    except Exception as exc:  # never break notify
+        _log.warning("futu enrichment sidecar failed (notify continues normally): %s", exc)
 
 
 @dataclass(slots=True)
@@ -81,13 +112,24 @@ class NotificationRunner:
                 cluster_ids=[],
                 detail=message,
                 modules=[
-                    {"name": "core_alerts", "status": "idle", "count": 0, "detail": "high/critical alert stream"},
-                    {"name": "tech_block", "status": "idle", "count": 0, "detail": "A/H tech catalyst stream"},
+                    {
+                        "name": "core_alerts",
+                        "status": "idle",
+                        "count": 0,
+                        "detail": "AI fully screened high/critical alert stream",
+                    },
+                    {
+                        "name": "tech_block",
+                        "status": "idle",
+                        "count": 0,
+                        "detail": "AI fully screened A/H tech catalyst stream",
+                    },
                 ],
             )
 
         plan.preview_path.parent.mkdir(parents=True, exist_ok=True)
         plan.preview_path.write_text(plan.message + "\n", encoding="utf-8")
+        _maybe_write_futu_enrichment(payload, plan.preview_path)
 
         if dry_run:
             return NotificationResult(
@@ -101,11 +143,26 @@ class NotificationRunner:
                 modules=plan.modules,
             )
 
-        transport_detail = self.notifier.send(
-            channel=plan.channel,
-            target=plan.target,
-            message=plan.message,
-        )
+        try:
+            transport_detail = self.notifier.send(
+                channel=plan.channel,
+                target=plan.target,
+                message=plan.message,
+            )
+        except Exception as exc:
+            return NotificationResult(
+                status="preview",
+                channel=plan.channel,
+                target=plan.target,
+                alert_count=plan.alert_count,
+                preview_path=plan.preview_path,
+                cluster_ids=plan.cluster_ids,
+                detail=(
+                    "Phone delivery is temporarily unavailable; the alert preview was kept locally. "
+                    f"{exc}"
+                ),
+                modules=plan.modules,
+            )
         run_id = str(payload.get("run_id", "")).strip() or "unknown-run"
         self.store.persist_alert_delivery(
             run_id=run_id,

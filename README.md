@@ -134,6 +134,12 @@ Unified stack launcher:
 
 - `scripts/market_news_stack.command`
 - `scripts/market_news_stack_stop.command`
+- `scripts/market_news_learning_auto.command`
+- `scripts/market_news_learning_auto_stop.command`
+- `scripts/market_news_codex_review_auto.command`
+- `scripts/market_news_codex_review_auto_stop.command`
+- `scripts/market_news_thread_review_auto.command`
+- `scripts/market_news_thread_review_auto_stop.command`
 
 Desktop shortcuts:
 
@@ -141,12 +147,55 @@ Desktop shortcuts:
 
 The stack launcher will:
 
-- install or refresh three user `LaunchAgent` jobs
+- install or refresh user `LaunchAgent` jobs for collection, notification, health, news learning, and review API
 - schedule `collect` every 5 minutes
 - schedule `notify` every 5 minutes
 - schedule `health` every 60 seconds
+- schedule `news-learning-auto` every 5 minutes
 - open the latest web board automatically
 - write logs to `runtime/logs/`
+
+If you only want the Evidence-to-Review learning loop, without restarting collection or notification:
+
+```bash
+./scripts/market_news_learning_auto.command
+```
+
+Stop only that learning loop:
+
+```bash
+./scripts/market_news_learning_auto_stop.command
+```
+
+If you want Codex itself to review the generated learning packet hourly and send actionable findings to your phone:
+
+```bash
+./scripts/market_news_codex_review_auto.command
+```
+
+Stop only that Codex-review automation:
+
+```bash
+./scripts/market_news_codex_review_auto_stop.command
+```
+
+The Codex-review automation runs read-only and writes:
+
+- `reports/news_learning/news_learning_codex_analysis.md`
+- `reports/live/news_learning_codex_review_status.json`
+- `reports/live/news_learning_codex_review_history.jsonl`
+
+If you want the review to come back into this existing Codex chat thread instead of going to your phone:
+
+```bash
+./scripts/market_news_thread_review_auto.command
+```
+
+Stop that thread-based review:
+
+```bash
+./scripts/market_news_thread_review_auto_stop.command
+```
 
 Archived desktop helpers are kept in `runtime/desktop_archive/` and no longer clutter the desktop.
 
@@ -259,6 +308,109 @@ In the web board, the `AH Tech Catalyst Block` panel lets you:
 - jump from a signal back into the shared event-detail panel
 - review the ranked A/H tech candidate ladder
 - review the `Lexicon Discovery` queue for new pending theme terms
+
+## Model backends (Claude CLI / OpenAI / OpenClaw)
+
+The judgement layer tries backends in order and uses the first one that answers:
+
+```text
+OpenAI HTTP (needs OPENAI_API_KEY)  ->  Claude Code CLI (local)  ->  OpenClaw/Codex
+```
+
+Claude Code CLI is the current working backend. It shells out to the locally
+installed `claude` binary in non-interactive mode (`claude -p`), so it needs no
+API key and no network credentials of its own.
+
+```json
+"claude_enabled": true,
+"claude_bin": "/opt/homebrew/bin/claude",
+"claude_model": "",
+"claude_timeout": 180,
+"claude_max_screening_calls_per_run": 8,
+"claude_max_asset_calls_per_run": 3
+```
+
+Two things to know:
+
+- **Use an absolute path for `claude_bin`.** launchd jobs run with
+  `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, which does not include Homebrew, so a bare
+  `claude` resolves fine in your shell but not under launchd.
+- **Judgement caches are namespaced per backend** (`claude-screen`, `openclaw-screen`, …),
+  so verdicts from different models never share a cache slot.
+
+`openclaw_enabled` is currently `false`: that path is a Codex subscription that
+exhausted its quota, and every attempt still consumed a slot from the shared daily
+budget, so leaving it enabled starved the working backend.
+
+### Delivery must not depend on the model being alive
+
+Alert delivery used to require a full model verdict
+(`screening_status == "used"`) for every alert. When the model layer went down,
+that gate silently dropped **100%** of alerts — the pipeline kept collecting and
+ranking news, and nothing reached the phone.
+
+Delivery now fails open, but at a stricter bar:
+
+- if at least one event in the report carries a real verdict, the model layer is
+  considered alive and its verdicts stay authoritative — including its rejections
+- if **no** event carries a verdict, the layer is treated as down: alerts are
+  gated by rules at `critical`/`high` only, and the message is tagged
+  `⚙️ AI 筛选层不可用，本条按规则筛选（仅高危级）`
+- A/H tech-catalyst signals are muted in the degraded path, because separating a
+  real catalyst from boilerplate is exactly what the rules cannot do alone
+
+Regression tests: `tests/test_notifications.py::test_digest_fails_open_when_model_layer_never_ran`
+and `::test_degraded_mode_still_respects_level_bar`.
+
+## GPT judgement layer
+
+The rule/lexicon system is now wrapped by an optional GPT judgement layer.
+
+It is designed as a plug-in layer rather than a replacement for the core pipeline:
+
+- the original rule engine still runs first
+- the default focus is fundamental: earnings, revenue, cash flow, margin, ROE, durable demand, and valuation repair
+- GPT screening then decides whether a clean-source fundamental event is worth attention
+- GPT asset mapping only runs after screening and must explain the stock impact chain
+- Weibo and Xueqiu remain heat sources only; they cannot independently create a tradable event
+- regulatory investigations, penalties, abnormal trading, pledges, and reductions are kept as risk memos; they are not allowed to crowd out earnings or valuation work
+- if `OPENAI_API_KEY` is not configured, the system safely falls back to the existing rules
+- if OpenClaw is logged in, the system can optionally use `openclaw agent --session-id market-news-judge --json` as a fallback model backend
+
+Config:
+
+- `config/model_judgement.json`
+
+Environment:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export MARKET_NEWS_MODEL_JUDGE=1
+export MARKET_NEWS_SCREENING_MODEL="gpt-4.1-mini"
+export MARKET_NEWS_ASSET_MODEL="gpt-4.1"
+```
+
+For the desktop/launchd stack, put the key in a local private env file instead:
+
+```bash
+mkdir -p ~/.market_news
+printf 'export OPENAI_API_KEY="sk-..."\n' > ~/.market_news/openai_env
+chmod 600 ~/.market_news/openai_env
+```
+
+Operational split:
+
+- screening model: cheaper/fast model for "is this news worth attention?"
+- asset model: stronger model for "which A/H/US instruments could move, and why?"
+- attention gate: model calls require a simple fundamental or durable-demand chain; phone alerts require an even higher "actionability" gate
+- attention gate adds weight for quantified earnings/cash-flow/margin evidence, valuation terms, durable policy demand, high-trust sources, and direct company evidence
+- attention gate subtracts weight for low-predictability risk events, routine exchange plumbing, after-the-fact price reaction headlines, and news that cannot support valuation work
+- leading signals such as customer loss, order cancellation, purchase termination, backlog decline, or contract termination are promoted because they can appear before the price reaction
+- cache: `data/model_judgement_cache.json`, so repeated dashboard refreshes do not keep asking the same question
+- news judgement budget: `data/model_judgement_budget.json`; default `model_daily_call_limit` is `30`
+- OpenClaw fallback: enabled in `config/model_judgement.json`, capped at `4` screening calls per collection cycle and `1` asset-mapping call per cycle by default
+- lexicon/manual review budget: `data/review_api_model_budget.json`; default `MARKET_NEWS_MANUAL_AI_DAILY_LIMIT` is `12`, separated from news judgement so vocabulary work cannot crowd out important news
+- emergency off switch: set `MARKET_NEWS_MODEL_JUDGE_DISABLED=1` before starting the stack
 
 Lexicon maintenance commands:
 

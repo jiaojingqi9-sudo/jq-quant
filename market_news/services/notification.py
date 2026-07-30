@@ -90,12 +90,23 @@ class AlertDigestBuilder:
         include_existing: bool = False,
         max_tech_signals: int = 2,
         min_tech_attention: float = 55.0,
+        require_full_model_judgement: bool = True,
+        min_model_confidence: float = 0.65,
+        degraded_min_level: AlertLevel = AlertLevel.HIGH,
+        mute_tech_when_model_down: bool = True,
     ) -> None:
         self.min_level = min_level
         self.max_alerts = max_alerts
         self.include_existing = include_existing
         self.max_tech_signals = max_tech_signals
         self.min_tech_attention = min_tech_attention
+        self.require_full_model_judgement = require_full_model_judgement
+        self.min_model_confidence = min_model_confidence
+        # Level bar applied when the model layer is unavailable and we fall back
+        # to rules. Kept at HIGH so a dead model does not open the floodgates.
+        self.degraded_min_level = degraded_min_level
+        self.mute_tech_when_model_down = mute_tech_when_model_down
+        self._model_layer_down = False
 
     def compose(
         self,
@@ -108,6 +119,15 @@ class AlertDigestBuilder:
     ) -> NotificationPlan | None:
         sent_cluster_ids = sent_cluster_ids or set()
         event_lookup = self._build_event_lookup(payload)
+        # Fail-open: if the model layer produced no usable judgement anywhere in
+        # this report (no API key, quota exhausted, backend down), requiring a
+        # model verdict would silently mute every alert. In that case fall back
+        # to rule-based gating at a stricter level instead of going dark.
+        self._model_layer_down = self._model_judgement_unavailable(event_lookup)
+        require_model = self.require_full_model_judgement and not self._model_layer_down
+        effective_min_level = self.min_level
+        if self._model_layer_down:
+            effective_min_level = self.degraded_min_level
         selected_core_alerts: list[dict[str, object]] = []
         for alert in payload.get("alerts", []):
             if not isinstance(alert, dict):
@@ -115,11 +135,15 @@ class AlertDigestBuilder:
             cluster_id = str(alert.get("cluster_id", "")).strip()
             if not cluster_id:
                 continue
-            if not self._passes_level(str(alert.get("level", "medium"))):
+            if not self._passes_level(str(alert.get("level", "medium")), effective_min_level):
                 continue
             if not self.include_existing and not bool(alert.get("is_new", False)):
                 continue
             if cluster_id in sent_cluster_ids:
+                continue
+            if require_model and not self._has_full_model_judgement(
+                event_lookup.get(cluster_id, {})
+            ):
                 continue
             selected_core_alerts.append(alert)
             if len(selected_core_alerts) >= self.max_alerts:
@@ -130,11 +154,20 @@ class AlertDigestBuilder:
             for alert in selected_core_alerts
             if str(alert.get("cluster_id", "")).strip()
         }
-        selected_tech_signals = self._select_tech_signals(
-            payload,
-            selected_cluster_ids=selected_cluster_ids,
-            sent_cluster_ids=sent_cluster_ids,
-        )
+        # Tech-catalyst signals lean on the model to separate a real catalyst from
+        # boilerplate (an auditor's filing scored "hot" and mapped to Tencent, an
+        # index-commentary headline, etc.). With the model down the rules cannot
+        # make that call, so the degraded path carries core alerts only.
+        if self._model_layer_down and self.mute_tech_when_model_down:
+            selected_tech_signals: list[dict[str, object]] = []
+        else:
+            selected_tech_signals = self._select_tech_signals(
+                payload,
+                event_lookup=event_lookup,
+                selected_cluster_ids=selected_cluster_ids,
+                sent_cluster_ids=sent_cluster_ids,
+                require_model=require_model,
+            )
 
         if not selected_core_alerts and not selected_tech_signals:
             return None
@@ -161,6 +194,8 @@ class AlertDigestBuilder:
         if tech_count:
             summary_parts.append(f"🧬 科技 {tech_count} 条")
         lines.append(" | ".join(summary_parts))
+        if self._model_layer_down:
+            lines.append("⚙️ _AI 筛选层不可用，本条按规则筛选（仅高危级）_")
         lines.append(_DIVIDER)
 
         # ── core alerts ───────────────────────────────────────────────────────
@@ -292,13 +327,13 @@ class AlertDigestBuilder:
                 "name": "core_alerts",
                 "status": "active" if selected_core_alerts else "idle",
                 "count": len(selected_core_alerts),
-                "detail": "high/critical alert stream",
+                "detail": "AI fully screened high/critical alert stream",
             },
             {
                 "name": "tech_block",
                 "status": "active" if selected_tech_signals else "idle",
                 "count": len(selected_tech_signals),
-                "detail": "A/H tech catalyst stream",
+                "detail": "AI fully screened A/H tech catalyst stream",
             },
         ]
         return NotificationPlan(
@@ -317,8 +352,10 @@ class AlertDigestBuilder:
         self,
         payload: dict[str, object],
         *,
+        event_lookup: dict[str, dict[str, object]],
         selected_cluster_ids: set[str],
         sent_cluster_ids: set[str],
+        require_model: bool = True,
     ) -> list[dict[str, object]]:
         tech_block = payload.get("tech_block", {})
         if not isinstance(tech_block, dict):
@@ -331,6 +368,10 @@ class AlertDigestBuilder:
             cluster_id = str(signal.get("cluster_id", "")).strip()
             if not cluster_id:
                 continue
+            if require_model and not self._has_full_model_judgement(
+                event_lookup.get(cluster_id, {})
+            ):
+                continue
             attention_score = float(signal.get("trading_attention_score", 0.0) or 0.0)
             tier = str(signal.get("attention_tier", "watch")).strip().lower()
             if attention_score < self.min_tech_attention and tier not in {"hot", "warm"}:
@@ -342,12 +383,30 @@ class AlertDigestBuilder:
                 break
         return selected
 
-    def _passes_level(self, level_value: str) -> bool:
+    def _passes_level(self, level_value: str, min_level: AlertLevel | None = None) -> bool:
         try:
             level = AlertLevel(level_value)
         except ValueError:
             return False
-        return LEVEL_ORDER[level] >= LEVEL_ORDER[self.min_level]
+        return LEVEL_ORDER[level] >= LEVEL_ORDER[min_level or self.min_level]
+
+    def _model_judgement_unavailable(self, event_lookup: dict[str, dict[str, object]]) -> bool:
+        """True when no event in this report carries a usable model verdict.
+
+        Distinguishes "the model looked and said no" from "the model never ran".
+        Only the latter should relax the gate: if at least one event was actually
+        screened, the layer is alive and its verdicts stay authoritative.
+        """
+
+        if not event_lookup:
+            return False
+        for event in event_lookup.values():
+            judgement = event.get("model_judgement", {})
+            if not isinstance(judgement, dict):
+                continue
+            if str(judgement.get("screening_status", "")).lower() == "used":
+                return False
+        return True
 
     def _build_event_lookup(self, payload: dict[str, object]) -> dict[str, dict[str, object]]:
         lookup: dict[str, dict[str, object]] = {}
@@ -358,7 +417,32 @@ class AlertDigestBuilder:
                 cluster_id = str(event.get("cluster_id", "")).strip()
                 if cluster_id and cluster_id not in lookup:
                     lookup[cluster_id] = event
+        ai_judgement = payload.get("ai_judgement", {})
+        if isinstance(ai_judgement, dict):
+            for event in ai_judgement.get("events", []):
+                if not isinstance(event, dict):
+                    continue
+                cluster_id = str(event.get("cluster_id", "")).strip()
+                if cluster_id and cluster_id not in lookup:
+                    lookup[cluster_id] = event
         return lookup
+
+    def _has_full_model_judgement(self, event: dict[str, object]) -> bool:
+        judgement = event.get("model_judgement", {})
+        if not isinstance(judgement, dict):
+            return False
+        screening = judgement.get("screening", {})
+        if not isinstance(screening, dict):
+            return False
+        if str(judgement.get("screening_status", "")).lower() != "used":
+            return False
+        if screening.get("worth_attention") is not True:
+            return False
+        try:
+            confidence = float(screening.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        return confidence >= self.min_model_confidence
 
     def _resolve_symbols(
         self,
@@ -391,6 +475,11 @@ class AlertDigestBuilder:
             for item in event.get("rationale", [])
             if str(item).strip()
         ]
+        judgement = event.get("model_judgement", {})
+        screening = judgement.get("screening", {}) if isinstance(judgement, dict) else {}
+        model_reason = str(screening.get("reason", "")).strip() if isinstance(screening, dict) else ""
+        if model_reason:
+            return "AI完整判断: " + self._truncate(model_reason, 68)
         if rationale:
             return "；".join(rationale[:2])
         reason = str(alert.get("reason", "")).strip()

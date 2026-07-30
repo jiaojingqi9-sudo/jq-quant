@@ -62,7 +62,7 @@ def clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
 
 
 def tokenize(text: str) -> list[str]:
-    return re.findall(r"[a-zA-Z0-9\.\-\+]{2,}", text.lower())
+    return re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z0-9\.\-\+]{2,}", text.lower())
 
 
 def significant_tokens(text: str, extra_stop_words: Iterable[str] | None = None) -> list[str]:
@@ -98,4 +98,3 @@ def jaccard_similarity(left: Iterable[str], right: Iterable[str]) -> float:
     intersection = len(left_set & right_set)
     union = len(left_set | right_set)
     return intersection / union
-

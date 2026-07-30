@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from difflib import SequenceMatcher
 import json
 import math
 from pathlib import Path
 import re
 from typing import Any
 
-from market_news.common import clamp, tokenize, unique_preserve, utcnow
+from market_news.common import clamp, jaccard_similarity, significant_tokens, tokenize, unique_preserve, utcnow
 from market_news.domain.models import Direction, EventCluster, EventType, PipelineSnapshot, RankedEvent, RankedInstrument
 from market_news.services.tech_lexicon_store import VersionedTechLexiconStore
 
@@ -18,12 +19,24 @@ SOURCE_CREDIBILITY_MULTIPLIER = {
     "eastmoney-focus": 1.18,
     "eastmoney-ann": 1.15,
     "eastmoney-news": 1.05,
+    "eastmoney-topic": 1.10,
     "xinhua-finance": 1.20,
     "xinhua-tech": 1.20,
     "csrc_home": 1.10,
     "gov-miit": 1.15,
     "gov-most": 1.12,
     "gov-ndrc": 1.10,
+    "gov-pbc": 1.12,
+    "gov-nfra": 1.12,
+    "gov-nhsa": 1.10,
+    "gov-mofcom": 1.08,
+    "gov-gacc": 1.08,
+    "gov-mohurd": 1.08,
+    "gov-mot": 1.08,
+    "gov-sasac": 1.08,
+    "gov-nda": 1.10,
+    "sse_announcements": 1.15,
+    "szse_announcements": 1.15,
     "36kr": 0.92,
     "huxiu": 0.90,
     "tmtpost": 0.88,
@@ -230,6 +243,7 @@ class AHShareTechFeatureBlock:
                 return None
 
         evidence_docs, social_docs = self._partition_documents(cluster)
+        evidence_docs = self._filter_coherent_evidence_docs(cluster, evidence_docs)
         if self.min_evidence_docs and len(evidence_docs) < self.min_evidence_docs:
             return None
 
@@ -241,6 +255,10 @@ class AHShareTechFeatureBlock:
         text_parts = [cluster.headline, cluster.summary]
         text_parts.extend(document.combined_text for document in evidence_docs)
         text = "\n".join(part for part in text_parts if part).lower()
+        frontier_text_parts = [cluster.headline, cluster.summary]
+        for document in evidence_docs:
+            frontier_text_parts.extend([document.title, document.summary])
+        frontier_text = "\n".join(part for part in frontier_text_parts if part).lower()
         cluster_entities = {
             item.lower()
             for item in (
@@ -297,7 +315,7 @@ class AHShareTechFeatureBlock:
             hit_terms = [
                 keyword
                 for keyword in entry.get("cn_breakthrough_keywords", [])
-                if self._contains(text, keyword)
+                if self._contains(frontier_text, keyword)
             ]
             if not hit_terms:
                 continue
@@ -693,6 +711,77 @@ class AHShareTechFeatureBlock:
                 continue
             evidence_docs.append(document)
         return evidence_docs, social_docs
+
+    def _filter_coherent_evidence_docs(
+        self,
+        cluster: EventCluster,
+        evidence_docs: list[Any],
+    ) -> list[Any]:
+        if len(evidence_docs) <= 1:
+            return evidence_docs
+
+        coherent_docs: list[Any] = []
+        for document in evidence_docs:
+            if self._document_matches_cluster(cluster, document):
+                coherent_docs.append(document)
+
+        if coherent_docs:
+            return coherent_docs
+
+        representative = max(
+            evidence_docs,
+            key=lambda item: (float(getattr(item, "source_trust", 0.0)), item.published_at.timestamp()),
+        )
+        return [representative]
+
+    def _document_matches_cluster(self, cluster: EventCluster, document: Any) -> bool:
+        if document.title == cluster.headline:
+            return True
+
+        title_ratio = SequenceMatcher(None, cluster.headline, document.title).ratio()
+        summary_ratio = SequenceMatcher(None, cluster.headline, document.summary or "").ratio()
+        if max(title_ratio, summary_ratio) >= 0.34:
+            return True
+
+        cluster_entities = {
+            item.strip().lower()
+            for item in cluster.entities
+            if str(item).strip()
+        }
+        document_entities = {
+            str(item).strip().lower()
+            for item in getattr(document, "entities", [])
+            if str(item).strip()
+        }
+        if cluster_entities and document_entities and cluster_entities.intersection(document_entities):
+            return True
+
+        cluster_title_tokens = set(significant_tokens(cluster.headline))
+        document_title_tokens = set(significant_tokens(document.title))
+        if cluster_title_tokens and document_title_tokens:
+            if jaccard_similarity(cluster_title_tokens, document_title_tokens) >= 0.34:
+                return True
+
+        headline_ngrams = self._headline_ngrams(cluster.headline)
+        doc_text = " ".join(
+            part for part in [document.title, document.summary or ""] if part
+        )
+        if headline_ngrams and any(ngram in doc_text for ngram in headline_ngrams):
+            return True
+
+        return False
+
+    def _headline_ngrams(self, text: str) -> list[str]:
+        compact = "".join(char for char in text if "\u4e00" <= char <= "\u9fff")
+        if len(compact) < 4:
+            return []
+        ngrams: list[str] = []
+        for size in (6, 5, 4):
+            if len(compact) < size:
+                continue
+            for index in range(0, len(compact) - size + 1):
+                ngrams.append(compact[index : index + size])
+        return unique_preserve(ngrams)
 
     def _source_quality(self, *, official_doc_count: int, evidence_source_ids: list[str]) -> str:
         evidence_source_count = len(evidence_source_ids)

@@ -7,7 +7,7 @@ from pathlib import Path
 from market_news.common import parse_datetime, utcnow
 
 
-HEALTHY_STATUSES = {"ok", "idle"}
+HEALTHY_STATUSES = {"ok", "idle", "running"}
 
 
 @dataclass(slots=True)

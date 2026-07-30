@@ -117,6 +117,7 @@ class ImpactAssessment:
     confidence: float
     matched_rules: list[str]
     rationale: list[str]
+    model_judgement: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

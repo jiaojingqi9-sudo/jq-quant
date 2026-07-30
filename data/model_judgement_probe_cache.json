@@ -1,0 +1,13 @@
+{
+  "openclaw-screen:market-news-judge:71521a87940950e4fa836ef9fe534023e130fe5cd618038e7cc7e15a9f7e4c0c": {
+    "created_at": "2026-04-27T12:51:40.311935+00:00",
+    "value": {
+      "worth_attention": true,
+      "event_type": "policy",
+      "direction": "positive",
+      "confidence": 0.75,
+      "severity": 0.7,
+      "reason": "高可信来源（财联社）且为工信部官方政策发布，包含明确增量事实（算力基础设施与国产芯片适配推进），属于可交易催化。"
+    }
+  }
+}

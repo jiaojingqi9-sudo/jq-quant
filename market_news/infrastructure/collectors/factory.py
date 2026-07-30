@@ -10,6 +10,10 @@ from market_news.infrastructure.collectors.cninfo import (
 from market_news.infrastructure.collectors.cls import ClsTelegraphCollector
 from market_news.infrastructure.collectors.composite import CompositeCollector
 from market_news.infrastructure.collectors.eastmoney import EastmoneyCollector
+from market_news.infrastructure.collectors.eastmoney_topic import (
+    EastmoneyTopicCollector,
+    EastmoneyTopicSpec,
+)
 from market_news.infrastructure.collectors.full_text import FullTextEnrichingCollector
 from market_news.infrastructure.collectors.gelonghui import GelonghuiLiveCollector
 from market_news.infrastructure.collectors.html_source import (
@@ -17,6 +21,10 @@ from market_news.infrastructure.collectors.html_source import (
     HtmlSourceSpec,
 )
 from market_news.infrastructure.collectors.rss import FeedSpec, RSSCollector
+from market_news.infrastructure.collectors.sfc_offer_periods import (
+    SFCOfferPeriodsCollector,
+    SFCOfferPeriodsSpec,
+)
 from market_news.infrastructure.collectors.weibo import WeiboCollector
 from market_news.infrastructure.collectors.xueqiu import XueqiuCollector
 from market_news.infrastructure.cookie_store import resolve_cookie_path
@@ -49,6 +57,11 @@ def build_live_collector(config_path: Path, user_agent: str) -> CompositeCollect
 
     rss_config = payload.get("rss", {})
     for item in rss_config.get("feeds", []) if isinstance(rss_config, dict) else []:
+        # RSS feeds honour `enabled` the same way html_sources do. Without this
+        # check the flag was silently ignored, so a feed marked disabled (e.g. a
+        # dead upstream returning 404 every cycle) kept being fetched forever.
+        if not bool(item.get("enabled", True)):
+            continue
         client = _select_rss_client(item=item, default_http_client=default_http_client, official_http_client=official_http_client)
         collectors.append(
             RSSCollector(
@@ -81,6 +94,43 @@ def build_live_collector(config_path: Path, user_agent: str) -> CompositeCollect
                 tech_focus_include_patterns=eastmoney_config.get("tech_focus_include_patterns", []),
                 tech_focus_boost_patterns=eastmoney_config.get("tech_focus_boost_patterns", []),
                 tech_focus_exclude_patterns=eastmoney_config.get("tech_focus_exclude_patterns", []),
+            )
+        )
+
+    eastmoney_topic_config = payload.get("eastmoney_topic", {})
+    if isinstance(eastmoney_topic_config, dict) and bool(eastmoney_topic_config.get("enabled", False)):
+        collectors.append(
+            EastmoneyTopicCollector(
+                default_http_client,
+                EastmoneyTopicSpec(
+                    source_id=eastmoney_topic_config.get("source_id", "eastmoney-topic"),
+                    name=eastmoney_topic_config.get("name", "eastmoney-topic"),
+                    source_trust=float(eastmoney_topic_config.get("source_trust", 0.83)),
+                    language=eastmoney_topic_config.get("language", "zh"),
+                    homepage_limit=int(eastmoney_topic_config.get("homepage_limit", 10)),
+                    history_limit=int(eastmoney_topic_config.get("history_limit", 10)),
+                    metadata=eastmoney_topic_config.get("metadata", {}),
+                ),
+            )
+        )
+
+    sfc_offer_periods_config = payload.get("sfc_offer_periods", {})
+    if isinstance(sfc_offer_periods_config, dict) and bool(sfc_offer_periods_config.get("enabled", False)):
+        collectors.append(
+            SFCOfferPeriodsCollector(
+                official_http_client,
+                SFCOfferPeriodsSpec(
+                    source_id=sfc_offer_periods_config.get("source_id", "sfc-offer-periods"),
+                    name=sfc_offer_periods_config.get("name", "sfc-offer-periods"),
+                    url=sfc_offer_periods_config.get(
+                        "url",
+                        "https://www.sfc.hk/en/Regulatory-functions/Corporates/Takeovers-and-mergers/offer-periods",
+                    ),
+                    source_trust=float(sfc_offer_periods_config.get("source_trust", 0.99)),
+                    language=sfc_offer_periods_config.get("language", "en"),
+                    item_limit=int(sfc_offer_periods_config.get("item_limit", 10)),
+                    metadata=sfc_offer_periods_config.get("metadata", {}),
+                ),
             )
         )
 
@@ -151,9 +201,15 @@ def build_live_collector(config_path: Path, user_agent: str) -> CompositeCollect
                 cookie_path=resolve_cookie_path(weibo_config.get("cookie_path", "~/.market_news/weibo_cookies.json")),
                 http_client=default_http_client,
                 max_results_per_query=int(weibo_config.get("max_results_per_query", 20)),
+                max_queries_per_cycle=(
+                    int(weibo_config.get("max_queries_per_cycle", 0))
+                    if int(weibo_config.get("max_queries_per_cycle", 0) or 0) > 0
+                    else None
+                ),
                 sleep_range=(float(sleep_range[0]), float(sleep_range[1])),
                 browser_timeout_ms=int(weibo_config.get("browser_timeout_ms", 15000)),
                 browser_warmup_ms=int(weibo_config.get("browser_warmup_ms", 1200)),
+                browser_fallback_enabled=bool(weibo_config.get("browser_fallback_enabled", False)),
             )
         )
 

@@ -2171,5 +2171,881 @@
     "heat_weight": 0.6,
     "importance_weight": 0.65,
     "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "战争",
+    "term_type": "risk",
+    "synonyms": [
+      "战争"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.8,
+      "new-materials": 0.547,
+      "chip-design": 0.432,
+      "advanced-manufacturing": 0.352,
+      "ai-compute": 0.06
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "上海市人民政府",
+    "term_type": "policy",
+    "synonyms": [
+      "上海市人民政府"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "domestic-substitution": 0.453,
+      "ai-compute": 0.335,
+      "model-applications": 0.304,
+      "capital-support": 0.301,
+      "robotics": 0.164
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "普惠算力",
+    "term_type": "tech",
+    "synonyms": [
+      "普惠算力"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "ai-compute": 0.441,
+      "server-chain": 0.374,
+      "data-center": 0.32,
+      "optical-interconnect": 0.296,
+      "domestic-substitution": 0.218
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "中小企业",
+    "term_type": "policy",
+    "synonyms": [
+      "中小企业"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "ai-compute": 0.441,
+      "server-chain": 0.374,
+      "data-center": 0.32,
+      "optical-interconnect": 0.296,
+      "domestic-substitution": 0.218
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "工信部",
+    "term_type": "policy",
+    "synonyms": [
+      "工信部"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "ai-compute": 0.441,
+      "server-chain": 0.374,
+      "data-center": 0.32,
+      "optical-interconnect": 0.296,
+      "domestic-substitution": 0.218
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "新能源",
+    "term_type": "tech",
+    "synonyms": [
+      "新能源"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.675,
+      "new-materials": 0.473,
+      "chip-design": 0.324,
+      "order-momentum": 0.173,
+      "model-applications": 0.115
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "美军",
+    "term_type": "risk",
+    "synonyms": [
+      "美军"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.955,
+      "new-materials": 0.653,
+      "chip-design": 0.474,
+      "advanced-manufacturing": 0.437,
+      "autonomous-driving": 0.045
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "伊斯兰",
+    "term_type": "risk",
+    "synonyms": [
+      "伊斯兰"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.875,
+      "new-materials": 0.599,
+      "chip-design": 0.452,
+      "advanced-manufacturing": 0.366,
+      "ai-compute": 0.031
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "伊斯兰堡",
+    "term_type": "risk",
+    "synonyms": [
+      "伊斯兰堡"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.945,
+      "new-materials": 0.647,
+      "chip-design": 0.472,
+      "advanced-manufacturing": 0.415,
+      "autonomous-driving": 0.036
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "停火",
+    "term_type": "risk",
+    "synonyms": [
+      "停火"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.928,
+      "new-materials": 0.634,
+      "chip-design": 0.461,
+      "advanced-manufacturing": 0.416,
+      "autonomous-driving": 0.032
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "美伊",
+    "term_type": "risk",
+    "synonyms": [
+      "美伊"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.782,
+      "new-materials": 0.534,
+      "chip-design": 0.39,
+      "advanced-manufacturing": 0.362,
+      "order-momentum": 0.076
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "遭袭",
+    "term_type": "risk",
+    "synonyms": [
+      "遭袭"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.995,
+      "new-materials": 0.683,
+      "chip-design": 0.491,
+      "advanced-manufacturing": 0.379,
+      "autonomous-driving": 0.005
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "黎巴嫩",
+    "term_type": "risk",
+    "synonyms": [
+      "黎巴嫩"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.818,
+      "new-materials": 0.56,
+      "chip-design": 0.406,
+      "advanced-manufacturing": 0.368,
+      "autonomous-driving": 0.063
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "欧盟",
+    "term_type": "policy",
+    "synonyms": [
+      "欧盟"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.889,
+      "new-materials": 0.608,
+      "chip-design": 0.441,
+      "advanced-manufacturing": 0.382,
+      "autonomous-driving": 0.111
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "天然气",
+    "term_type": "theme",
+    "synonyms": [
+      "天然气"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.85,
+      "new-materials": 0.584,
+      "chip-design": 0.419,
+      "advanced-manufacturing": 0.311,
+      "autonomous-driving": 0.1
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "巴基斯坦",
+    "term_type": "risk",
+    "synonyms": [
+      "巴基斯坦"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.85,
+      "new-materials": 0.58,
+      "chip-design": 0.425,
+      "advanced-manufacturing": 0.414,
+      "order-momentum": 0.041
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "港交所",
+    "term_type": "policy",
+    "synonyms": [
+      "港交所"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "model-applications": 0.436,
+      "cloud-software": 0.416,
+      "ai-compute": 0.314,
+      "aerospace-defense": 0.229,
+      "new-materials": 0.155
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive"
+  },
+  {
+    "canonical_text": "美联储",
+    "term_type": "policy",
+    "synonyms": [
+      "美联储"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.8,
+      "new-materials": 0.548,
+      "chip-design": 0.396,
+      "advanced-manufacturing": 0.33,
+      "autonomous-driving": 0.2
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.93,
+      "reason": "核心政策主体，能稳定连接利率与流动性对科技估值链条影响。",
+      "reviewed_at": "2026-04-27T15:43:27.066676+00:00"
+    }
+  },
+  {
+    "canonical_text": "霍尔木兹海峡",
+    "term_type": "risk",
+    "synonyms": [
+      "霍尔木兹海峡"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.8,
+      "new-materials": 0.545,
+      "advanced-manufacturing": 0.409,
+      "chip-design": 0.399,
+      "order-momentum": 0.103
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.95,
+      "reason": "关键能源地缘风险锚点，可稳定映射油气与成本冲击链。",
+      "reviewed_at": "2026-04-27T15:43:27.104506+00:00"
+    }
+  },
+  {
+    "canonical_text": "军事行动",
+    "term_type": "risk",
+    "synonyms": [
+      "军事行动"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.906,
+      "new-materials": 0.619,
+      "chip-design": 0.453,
+      "advanced-manufacturing": 0.426,
+      "autonomous-driving": 0.044
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.84,
+      "reason": "可稳定表征地缘升级事件，属于可交易风险类型词。",
+      "reviewed_at": "2026-04-27T15:43:27.246484+00:00"
+    }
+  },
+  {
+    "canonical_text": "CFTC",
+    "term_type": "policy",
+    "synonyms": [
+      "CFTC"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.8,
+      "new-materials": 0.548,
+      "chip-design": 0.396,
+      "advanced-manufacturing": 0.33,
+      "autonomous-driving": 0.2
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.9,
+      "reason": "明确监管机构缩写，可稳定识别美国商品监管与仓位数据政策链。",
+      "reviewed_at": "2026-04-27T15:44:28.177413+00:00"
+    }
+  },
+  {
+    "canonical_text": "英特尔",
+    "term_type": "company",
+    "synonyms": [
+      "英特尔"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "order-momentum": 0.36,
+      "ai-compute": 0.25,
+      "advanced-process": 0.25,
+      "chip-manufacturing": 0.215,
+      "server-chain": 0.205
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.98,
+      "reason": "核心半导体公司实体，科技产业链识别价值稳定。",
+      "reviewed_at": "2026-04-27T15:44:28.264897+00:00"
+    }
+  },
+  {
+    "canonical_text": "科技部",
+    "term_type": "policy",
+    "synonyms": [
+      "科技部"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "domestic-substitution": 0.435,
+      "capital-support": 0.303,
+      "ai-compute": 0.25,
+      "energy-storage": 0.154,
+      "model-applications": 0.133
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.97,
+      "reason": "关键政策部门主体，可稳定连接科技政策与项目支持链条。",
+      "reviewed_at": "2026-04-27T15:44:28.283313+00:00"
+    }
+  },
+  {
+    "canonical_text": "拦截",
+    "term_type": "risk",
+    "synonyms": [
+      "拦截"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.995,
+      "new-materials": 0.679,
+      "chip-design": 0.495,
+      "advanced-manufacturing": 0.474,
+      "autonomous-driving": 0.005
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.88,
+      "reason": "可稳定表征军事冲突升级事件，属于明确风险类型词。",
+      "reviewed_at": "2026-04-27T15:44:28.346722+00:00"
+    }
+  },
+  {
+    "canonical_text": "冲突",
+    "term_type": "risk",
+    "synonyms": [
+      "冲突"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.575,
+      "new-materials": 0.395,
+      "chip-design": 0.284,
+      "order-momentum": 0.27,
+      "advanced-manufacturing": 0.213
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.9,
+      "reason": "可稳定识别地缘与供应链扰动风险主线。",
+      "reviewed_at": "2026-04-27T15:44:28.486077+00:00"
+    }
+  },
+  {
+    "canonical_text": "华为",
+    "term_type": "company",
+    "synonyms": [
+      "华为"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "ai-compute": 0.683,
+      "model-applications": 0.404,
+      "domestic-substitution": 0.307,
+      "optical-interconnect": 0.218,
+      "server-chain": 0.205
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.97,
+      "reason": "核心科技公司实体词，稳定对应国产算力与产业链新闻，识别价值高且可复用。",
+      "reviewed_at": "2026-04-29T00:53:41.582175+00:00"
+    }
+  },
+  {
+    "canonical_text": "减值",
+    "term_type": "risk",
+    "synonyms": [
+      "减值"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.8,
+      "new-materials": 0.544,
+      "advanced-manufacturing": 0.44,
+      "chip-design": 0.4,
+      "domestic-substitution": 0.116
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.84,
+      "reason": "财务风险事件核心词，可稳定识别商誉/资产减值类负面催化。",
+      "reviewed_at": "2026-04-30T13:17:17.985814+00:00"
+    }
+  },
+  {
+    "canonical_text": "纳斯达克",
+    "term_type": "theme",
+    "synonyms": [
+      "纳斯达克"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "cloud-software": 0.363,
+      "model-applications": 0.308,
+      "compliance-risk": 0.23,
+      "order-momentum": 0.184,
+      "ai-compute": 0.176
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.91,
+      "reason": "可稳定指向美股科技指数体系与风险偏好变化，对港A科技映射有持续参考价值。",
+      "reviewed_at": "2026-04-30T16:21:58.036045+00:00"
+    }
+  },
+  {
+    "canonical_text": "防空",
+    "term_type": "theme",
+    "synonyms": [
+      "防空"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.993,
+      "new-materials": 0.677,
+      "chip-design": 0.494,
+      "advanced-manufacturing": 0.482,
+      "autonomous-driving": 0.007
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.74,
+      "reason": "可稳定指向军工防务场景，与无人机/导弹拦截等细分链条关联明确。",
+      "reviewed_at": "2026-05-05T15:30:33.642178+00:00"
+    }
+  },
+  {
+    "canonical_text": "长安汽车",
+    "term_type": "company",
+    "synonyms": [
+      "长安汽车"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "capital-support": 0.667,
+      "aerospace-defense": 0.267,
+      "new-materials": 0.181,
+      "advanced-manufacturing": 0.147,
+      "chip-design": 0.133
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.96,
+      "reason": "明确上市公司实体，可稳定用于车链与智能电动化相关新闻归类。",
+      "reviewed_at": "2026-05-05T15:30:33.667177+00:00"
+    }
+  },
+  {
+    "canonical_text": "赛力斯",
+    "term_type": "company",
+    "synonyms": [
+      "赛力斯"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "capital-support": 1.0
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.97,
+      "reason": "明确上市公司实体，在新能源车与产业链新闻中具备稳定识别价值。",
+      "reviewed_at": "2026-05-05T15:30:33.678044+00:00"
+    }
+  },
+  {
+    "canonical_text": "思科",
+    "term_type": "company",
+    "synonyms": [
+      "思科"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "order-momentum": 0.714,
+      "ai-compute": 0.111,
+      "server-chain": 0.083,
+      "chip-design": 0.066,
+      "optical-interconnect": 0.056
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.95,
+      "reason": "明确公司实体且在科技基础设施与订单相关新闻中高频出现，可稳定提升实体识别。",
+      "reviewed_at": "2026-05-13T21:22:40.147513+00:00"
+    }
+  },
+  {
+    "canonical_text": "集成电路",
+    "term_type": "theme",
+    "synonyms": [
+      "集成电路"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "chip-manufacturing": 1.0,
+      "domestic-substitution": 0.88,
+      "advanced-process": 0.62
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.95,
+      "reason": "属于半导体核心产业主题词，跨公司和跨场景稳定指向科技产业链，识别价值高。",
+      "reviewed_at": "2026-05-21T19:50:09.694966+00:00"
+    }
+  },
+  {
+    "canonical_text": "ETF",
+    "term_type": "theme",
+    "synonyms": [
+      "ETF"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 1.0,
+      "new-materials": 0.7,
+      "chip-design": 0.48
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.88,
+      "reason": "标准金融产品缩写，能稳定识别被动资金与主题资金流相关科技行情语境。",
+      "reviewed_at": "2026-05-25T00:30:43.048916+00:00"
+    }
   }
 ]

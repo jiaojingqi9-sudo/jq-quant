@@ -33,6 +33,19 @@ write_agent() {
   </array>
   <key>WorkingDirectory</key>
   <string>$workdir</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/jiao</string>
+    <key>USER</key>
+    <string>jiao</string>
+    <key>LOGNAME</key>
+    <string>jiao</string>
+    <key>OPENCLAW_CONFIG_PATH</key>
+    <string>/Users/jiao/.openclaw/openclaw.json</string>
+    <key>OPENCLAW_STATE_DIR</key>
+    <string>/Users/jiao/.openclaw</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>StartInterval</key>
@@ -68,6 +81,19 @@ write_keepalive_agent() {
   </array>
   <key>WorkingDirectory</key>
   <string>$workdir</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/jiao</string>
+    <key>USER</key>
+    <string>jiao</string>
+    <key>LOGNAME</key>
+    <string>jiao</string>
+    <key>OPENCLAW_CONFIG_PATH</key>
+    <string>/Users/jiao/.openclaw/openclaw.json</string>
+    <key>OPENCLAW_STATE_DIR</key>
+    <string>/Users/jiao/.openclaw</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -84,17 +110,19 @@ EOF
 collect_label="ai.codex.marketnews.collect"
 notify_label="ai.codex.marketnews.notify"
 health_label="ai.codex.marketnews.health"
+news_learning_label="ai.codex.marketnews.newslearning"
 review_api_label="ai.codex.marketnews.reviewapi"
 
 collect_plist="$agents_dir/$collect_label.plist"
 notify_plist="$agents_dir/$notify_label.plist"
 health_plist="$agents_dir/$health_label.plist"
+news_learning_plist="$agents_dir/$news_learning_label.plist"
 review_api_plist="$agents_dir/$review_api_label.plist"
 
 write_agent \
   "$collect_label" \
   "300" \
-  "export MARKET_NEWS_USER_AGENT='MarketNewsCollector/0.1 (launchd collect)'; '$python_bin' -m market_news collect" \
+  "export MARKET_NEWS_USER_AGENT='MarketNewsCollector/0.1 (Jiao Jingqi jiaojingqi9@gmail.com)'; export MARKET_NEWS_AUTO_REPAIR=1; '$python_bin' -m market_news collect --watch --interval 300" \
   "$log_dir/collect.launchd.log" \
   "$log_dir/collect.launchd.err.log" \
   "$collect_plist"
@@ -102,7 +130,7 @@ write_agent \
 write_agent \
   "$notify_label" \
   "300" \
-  "export MARKET_NEWS_USER_AGENT='MarketNewsCollector/0.1 (launchd notify)'; '$python_bin' -m market_news notify" \
+  "export MARKET_NEWS_USER_AGENT='MarketNewsCollector/0.1 (launchd notify)'; [ -f \"\$HOME/.market_news/futu_env\" ] && . \"\$HOME/.market_news/futu_env\"; '$python_bin' -m market_news notify" \
   "$log_dir/notify.launchd.log" \
   "$log_dir/notify.launchd.err.log" \
   "$notify_plist"
@@ -110,10 +138,18 @@ write_agent \
 write_agent \
   "$health_label" \
   "60" \
-  "'$python_bin' -m market_news health" \
+  "'$python_bin' -m market_news health --auto-heal" \
   "$log_dir/health.launchd.log" \
   "$log_dir/health.launchd.err.log" \
   "$health_plist"
+
+write_agent \
+  "$news_learning_label" \
+  "300" \
+  "'$python_bin' -m market_news news-learning-auto --no-copy" \
+  "$log_dir/news_learning.launchd.log" \
+  "$log_dir/news_learning.launchd.err.log" \
+  "$news_learning_plist"
 
 write_keepalive_agent \
   "$review_api_label" \
@@ -122,23 +158,27 @@ write_keepalive_agent \
   "$log_dir/review_api.launchd.err.log" \
   "$review_api_plist"
 
-pkill -f "python3 -m market_news collect --watch --interval 300" >/dev/null 2>&1 || true
-pkill -f "python3 -m market_news notify --watch --interval 300" >/dev/null 2>&1 || true
-pkill -f "python3 -m market_news health --watch --interval 60" >/dev/null 2>&1 || true
-pkill -f "python3 -m market_news monitor --watch --interval 300" >/dev/null 2>&1 || true
+pkill -f "python3 -m market_news collect" >/dev/null 2>&1 || true
+pkill -f "python3 -m market_news notify" >/dev/null 2>&1 || true
+pkill -f "python3 -m market_news health" >/dev/null 2>&1 || true
+pkill -f "python3 -m market_news news-learning-auto" >/dev/null 2>&1 || true
+pkill -f "python3 -m market_news monitor" >/dev/null 2>&1 || true
+pkill -f "python3 -m market_news review-api" >/dev/null 2>&1 || true
 
-for plist in "$collect_plist" "$notify_plist" "$health_plist" "$review_api_plist"; do
+for plist in "$collect_plist" "$notify_plist" "$health_plist" "$news_learning_plist" "$review_api_plist"; do
   launchctl bootout "gui/$user_id" "$plist" >/dev/null 2>&1 || true
 done
 
 launchctl bootstrap "gui/$user_id" "$collect_plist"
 launchctl bootstrap "gui/$user_id" "$notify_plist"
 launchctl bootstrap "gui/$user_id" "$health_plist"
+launchctl bootstrap "gui/$user_id" "$news_learning_plist"
 launchctl bootstrap "gui/$user_id" "$review_api_plist"
 
 launchctl kickstart -k "gui/$user_id/$collect_label"
 launchctl kickstart -k "gui/$user_id/$notify_label"
 launchctl kickstart -k "gui/$user_id/$health_label"
+launchctl kickstart -k "gui/$user_id/$news_learning_label"
 launchctl kickstart -k "gui/$user_id/$review_api_label"
 
 sleep 2
@@ -147,10 +187,12 @@ cat >"$runtime_dir/stack_agents.txt" <<EOF
 collect_label=$collect_label
 notify_label=$notify_label
 health_label=$health_label
+news_learning_label=$news_learning_label
 review_api_label=$review_api_label
 collect_plist=$collect_plist
 notify_plist=$notify_plist
 health_plist=$health_plist
+news_learning_plist=$news_learning_plist
 review_api_plist=$review_api_plist
 started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
@@ -162,6 +204,7 @@ echo "Market news stack started through launchd."
 echo "collect label: $collect_label"
 echo "notify label: $notify_label"
 echo "health label: $health_label"
+echo "news learning label: $news_learning_label"
 echo "review api label: $review_api_label"
 echo "dashboard: $dashboard_url"
 echo "logs: $log_dir"

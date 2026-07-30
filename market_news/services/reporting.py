@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 import json
 from pathlib import Path
+import re
 from string import Template
 
 from market_news.domain.models import Direction, EventCluster, NewsDocument, PipelineSnapshot
@@ -69,6 +70,11 @@ class MarkdownJsonReporter:
             cluster_by_id,
         )
         lexicon_discovery = self._load_lexicon_discovery()
+        ai_judgement = self._build_ai_judgement(
+            snapshot.ranked_events,
+            cluster_by_id,
+            grouped_instruments,
+        )
 
         json_payload = {
             "run_id": snapshot.run_id,
@@ -148,6 +154,7 @@ class MarkdownJsonReporter:
             "feature_blocks": snapshot.feature_blocks,
             "tech_block": tech_block,
             "lexicon_discovery": lexicon_discovery,
+            "ai_judgement": ai_judgement,
             "runtime_status": runtime_status,
         }
         json_path.write_text(json.dumps(json_payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -456,6 +463,7 @@ class MarkdownJsonReporter:
             "sectors": cluster.sectors[:6] if cluster is not None else [],
             "regions": cluster.regions[:6] if cluster is not None else [],
             "rationale": event.impact.rationale,
+            "model_judgement": event.impact.model_judgement,
             "source_ids": cluster.source_ids if cluster is not None else [],
             "doc_count": cluster.doc_count if cluster is not None else len(related_documents),
             "first_seen_at": cluster.first_seen_at.isoformat() if cluster is not None else "",
@@ -463,6 +471,198 @@ class MarkdownJsonReporter:
             "top_instruments": top_instruments,
             "related_documents": related_documents,
         }
+
+    def _build_ai_judgement(
+        self,
+        ranked_events: list[object],
+        cluster_by_id: dict[str, EventCluster],
+        grouped_instruments: dict[str, list[dict[str, object]]],
+    ) -> dict[str, object]:
+        ai_events: list[dict[str, object]] = []
+        instrument_by_key: dict[str, dict[str, object]] = {}
+        limit = self.top_n * 2
+
+        for event in ranked_events:
+            if not self._is_ai_selected_event(event):
+                continue
+            payload = self._event_payload(
+                event,
+                cluster_by_id.get(event.cluster_id),
+                grouped_instruments.get(event.cluster_id, [])[:5],
+            )
+            selection = self._ai_selection_payload(event)
+            payload["ai_selection"] = selection
+            ai_events.append(payload)
+
+            for instrument in payload.get("top_instruments", []):
+                if not isinstance(instrument, dict):
+                    continue
+                self._add_ai_instrument(instrument_by_key, instrument, payload, selection)
+            for instrument in self._fallback_ai_instruments(payload):
+                self._add_ai_instrument(instrument_by_key, instrument, payload, selection)
+
+            if len(ai_events) >= limit:
+                break
+
+        instruments = list(instrument_by_key.values())[:limit]
+        return {
+            "summary": {
+                "event_count": len(ai_events),
+                "instrument_count": len(instruments),
+                "description": "通过AI判断或注意力门槛的新闻与候选标的。",
+            },
+            "events": ai_events,
+            "instruments": instruments,
+        }
+
+    def _add_ai_instrument(
+        self,
+        instrument_by_key: dict[str, dict[str, object]],
+        instrument: dict[str, object],
+        event_payload: dict[str, object],
+        selection: dict[str, object],
+    ) -> None:
+        symbol = str(instrument.get("symbol") or "").strip()
+        market = str(instrument.get("market") or "").strip()
+        if not symbol:
+            return
+        key = f"{market}:{symbol}"
+        if key in instrument_by_key:
+            return
+        instrument_by_key[key] = {
+            **instrument,
+            "cluster_id": event_payload["cluster_id"],
+            "headline": event_payload["headline"],
+            "ai_score": selection.get("score", 0),
+            "ai_tier": selection.get("tier", ""),
+            "ai_reason": selection.get("summary_reason", ""),
+        }
+
+    def _fallback_ai_instruments(self, event_payload: dict[str, object]) -> list[dict[str, object]]:
+        """Extract explicit stock codes from clean source text for display only.
+
+        This keeps the AI panel useful even when the main universe has not yet
+        learned a newly mentioned A/H stock. It does not feed back into ranking.
+        """
+        text_parts = [
+            str(event_payload.get("headline") or ""),
+            str(event_payload.get("summary") or ""),
+        ]
+        for document in event_payload.get("related_documents", []):
+            if not isinstance(document, dict):
+                continue
+            text_parts.extend([
+                str(document.get("title") or ""),
+                str(document.get("summary") or ""),
+            ])
+        text = "\n".join(text_parts)
+        instruments: list[dict[str, object]] = []
+        seen: set[str] = set()
+
+        for match in re.finditer(r"([\u4e00-\u9fffA-Za-z0-9·]{2,24})[（(](\d{5,6})\.(SH|SZ|BJ|HK)[)）]", text, re.IGNORECASE):
+            name, code, suffix = match.groups()
+            suffix = suffix.upper()
+            symbol = f"{code}.{suffix}"
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            instruments.append(self._fallback_instrument_payload(event_payload, symbol, suffix, name))
+
+        shorthand_name = self._extract_security_name(text)
+        for code in re.findall(r"证券代码[：: ]+(\d{5,6})", text):
+            suffix = self._infer_cn_suffix(code)
+            symbol = f"{code}.{suffix}"
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            instruments.append(self._fallback_instrument_payload(event_payload, symbol, suffix, shorthand_name or code))
+
+        return instruments
+
+    def _fallback_instrument_payload(
+        self,
+        event_payload: dict[str, object],
+        symbol: str,
+        suffix: str,
+        name: str,
+    ) -> dict[str, object]:
+        return {
+            "symbol": symbol,
+            "market": "HK" if suffix == "HK" else "CN-A",
+            "name": name.strip(" ：:，,") or symbol,
+            "direction": event_payload.get("direction") or "neutral",
+            "final_score": event_payload.get("final_score") or 0,
+            "reasons": ["source text code match"],
+        }
+
+    def _extract_security_name(self, text: str) -> str:
+        match = re.search(r"证券简称[：: ]+([\u4e00-\u9fffA-Za-z0-9·]+)", text)
+        return match.group(1) if match else ""
+
+    def _infer_cn_suffix(self, code: str) -> str:
+        if code.startswith(("6", "9")):
+            return "SH"
+        if code.startswith(("8", "4")) or code.startswith("920"):
+            return "BJ"
+        return "SZ"
+
+    def _is_ai_selected_event(self, event: object) -> bool:
+        judgement = self._model_judgement(event)
+        if not judgement:
+            return False
+        screening = judgement.get("screening")
+        status = str(judgement.get("screening_status") or "").lower()
+        if status == "used":
+            return isinstance(screening, dict) and screening.get("worth_attention") is True
+
+        gate = judgement.get("attention_gate")
+        if not isinstance(gate, dict):
+            return False
+        tier = str(gate.get("tier") or "").lower()
+        score = self._safe_float(gate.get("score"))
+        return tier in {"model", "notify"} and score >= 50
+
+    def _ai_selection_payload(self, event: object) -> dict[str, object]:
+        judgement = self._model_judgement(event)
+        screening = judgement.get("screening")
+        gate = judgement.get("attention_gate")
+        screening_dict = screening if isinstance(screening, dict) else {}
+        gate_dict = gate if isinstance(gate, dict) else {}
+        gate_reasons = gate_dict.get("reasons")
+        reasons = [str(item) for item in gate_reasons] if isinstance(gate_reasons, list) else []
+        model_reason = str(
+            screening_dict.get("reason")
+            or screening_dict.get("reject_reason")
+            or judgement.get("screening_reason")
+            or ""
+        ).strip()
+        summary_parts = []
+        if model_reason:
+            summary_parts.append(model_reason)
+        if reasons:
+            summary_parts.append("；".join(reasons[:4]))
+        selected_by = "gpt" if str(judgement.get("screening_status") or "").lower() == "used" else "attention_gate"
+        return {
+            "selected_by": selected_by,
+            "status": judgement.get("screening_status") or "attention_gate",
+            "tier": gate_dict.get("tier") or "",
+            "score": self._safe_float(gate_dict.get("score")),
+            "reasons": reasons,
+            "model_reason": model_reason,
+            "summary_reason": "；".join(summary_parts) or "通过AI注意力门槛。",
+            "worth_attention": screening_dict.get("worth_attention"),
+        }
+
+    def _model_judgement(self, event: object) -> dict[str, object]:
+        impact = getattr(event, "impact", None)
+        judgement = getattr(impact, "model_judgement", {}) if impact is not None else {}
+        return judgement if isinstance(judgement, dict) else {}
+
+    def _safe_float(self, value: object) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
 
     def _document_payload(self, document: NewsDocument) -> dict[str, object]:
         summary = document.summary.strip() or self._truncate(document.body.strip(), 220)
@@ -554,6 +754,8 @@ class MarkdownJsonReporter:
             ),
             self._runtime_health_line(health_payload),
             self._runtime_cookie_line(),
+            self._runtime_futu_enrichment_line(),
+            self._runtime_ah_scanner_line(),
         ]
 
         if not collect_payload and not delivery_payload and monitor_payload:
@@ -703,6 +905,161 @@ class MarkdownJsonReporter:
             "source_status": overall,
             "status_path": str(cookie_dir),
             "report_path": None,
+            "modules": modules,
+        }
+
+    def _runtime_futu_enrichment_line(self) -> dict[str, object]:
+        """Status card for the Futu news-alert enrichment sidecar.
+
+        Reads two pieces of evidence (no Futu calls — purely file-based):
+        1. ~/.market_news/futu_env: presence + content tells us if user has
+           clicked Enable_Futu_Enrichment.command.
+        2. reports/live/latest_phone_alert_enriched.json: the sidecar artifact
+           the notify line produces when enrichment is on.
+        """
+
+        import os as _os
+        from datetime import datetime, timezone as _tz
+
+        toggle_path = Path(_os.path.expanduser("~/.market_news/futu_env"))
+        enabled = False
+        if toggle_path.exists():
+            try:
+                content = toggle_path.read_text(encoding="utf-8")
+                # Treat the var as enabled when set to a truthy value.
+                for line in content.splitlines():
+                    if "MARKET_NEWS_FUTU_ENRICHMENT" in line and "=1" in line:
+                        enabled = True
+                        break
+            except Exception:
+                pass
+
+        sidecar = self.output_dir / "latest_phone_alert_enriched.json"
+        modules: list[dict[str, object]] = []
+        last_update: str | None = None
+        age_seconds: float | None = None
+        sidecar_alerts = 0
+        if sidecar.exists():
+            try:
+                payload = json.loads(sidecar.read_text(encoding="utf-8"))
+                last_update = str(payload.get("generated_at", "")) or None
+                alerts = payload.get("alerts") or []
+                sidecar_alerts = len(alerts) if isinstance(alerts, list) else 0
+                if last_update:
+                    dt = datetime.fromisoformat(last_update.replace("Z", "+00:00"))
+                    age_seconds = max(0.0, (datetime.now(_tz.utc) - dt).total_seconds())
+            except Exception:
+                pass
+
+        if not enabled and not sidecar.exists():
+            overall = "missing"
+            detail = "未启用 — 双击 Enable_Futu_Enrichment.command 开启"
+        elif enabled and not sidecar.exists():
+            overall = "idle"
+            detail = "已启用，等待下一轮 notify 写入增强数据"
+        elif enabled and sidecar.exists():
+            overall = "ok"
+            detail = f"最近增强了 {sidecar_alerts} 条告警"
+            modules.append({"name": "capital_flow", "status": "ok"})
+            modules.append({"name": "capital_distribution", "status": "ok"})
+            modules.append({"name": "community_sentiment", "status": "ok"})
+        else:
+            overall = "idle"
+            detail = "未启用 — 历史 enriched 文件仍保留"
+
+        return {
+            "name": "futu_enrichment",
+            "status": overall,
+            "detail": detail,
+            "last_update": last_update,
+            "age_seconds": age_seconds,
+            "source_status": overall,
+            "status_path": str(toggle_path),
+            "report_path": str(sidecar) if sidecar.exists() else None,
+            "modules": modules,
+        }
+
+    def _runtime_ah_scanner_line(self) -> dict[str, object]:
+        """Status card for the AH multi-factor scanner.
+
+        Reads `reports/live/scan_summary.json` if present. No Futu calls.
+        """
+
+        from datetime import datetime, timezone as _tz
+
+        summary_path = self.output_dir / "scan_summary.json"
+        if not summary_path.exists():
+            return {
+                "name": "ah_scanner",
+                "status": "missing",
+                "detail": "还没跑过 — 双击 AH_Multi_Factor_Scanner.command",
+                "last_update": None,
+                "age_seconds": None,
+                "source_status": "missing",
+                "status_path": str(summary_path),
+                "report_path": None,
+                "modules": [],
+            }
+
+        try:
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {
+                "name": "ah_scanner",
+                "status": "error",
+                "detail": "scan_summary.json 读取失败",
+                "last_update": None,
+                "age_seconds": None,
+                "source_status": "error",
+                "status_path": str(summary_path),
+                "report_path": None,
+                "modules": [],
+            }
+
+        last_update = str(payload.get("generated_at", "")) or None
+        age_seconds: float | None = None
+        if last_update:
+            try:
+                dt = datetime.fromisoformat(last_update.replace("Z", "+00:00"))
+                age_seconds = max(0.0, (datetime.now(_tz.utc) - dt).total_seconds())
+            except Exception:
+                pass
+
+        u = int(payload.get("universe_count", 0) or 0)
+        s = int(payload.get("limit_up_streak_count", 0) or 0)
+        v = int(payload.get("volume_shrink_up_count", 0) or 0)
+        a = int(payload.get("near_ath_count", 0) or 0)
+        errors = payload.get("errors") or []
+
+        modules = [
+            {"name": f"universe {u}", "status": "ok" if u else "idle"},
+            {"name": f"连板 {s}", "status": "ok" if s else "idle"},
+            {"name": f"缩量上涨 {v}", "status": "ok" if v else "idle"},
+            {"name": f"近新高 {a}", "status": "ok" if a else "idle"},
+        ]
+
+        if payload.get("skipped_reason"):
+            status = "degraded"
+            detail = f"跳过：{payload.get('skipped_reason')}"
+        elif errors:
+            status = "degraded"
+            detail = f"{u} 候选；{len(errors)} 个非致命错误"
+        elif u == 0:
+            status = "idle"
+            detail = "扫描完成但 universe 为空（OpenD 是否在线？）"
+        else:
+            status = "ok"
+            detail = f"扫描 {u} 候选 → {s} 连板 / {v} 缩量上涨 / {a} 近新高"
+
+        return {
+            "name": "ah_scanner",
+            "status": status,
+            "detail": detail,
+            "last_update": last_update,
+            "age_seconds": age_seconds,
+            "source_status": status,
+            "status_path": str(summary_path),
+            "report_path": str(self.output_dir),
             "modules": modules,
         }
 
@@ -1213,6 +1570,98 @@ class MarkdownJsonReporter:
       color: var(--ink);
     }
 
+    .ask-panel {
+      display: grid;
+      gap: 14px;
+    }
+
+    .ask-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+      gap: 14px;
+    }
+
+    .ask-input,
+    .ask-question {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.92);
+      color: var(--ink);
+      font: inherit;
+      outline: none;
+      resize: vertical;
+    }
+
+    .ask-input {
+      min-height: 160px;
+      padding: 14px 16px;
+      line-height: 1.6;
+    }
+
+    .ask-question {
+      min-height: 72px;
+      padding: 12px 14px;
+      line-height: 1.5;
+    }
+
+    .drop-zone {
+      border: 1px dashed rgba(17, 32, 45, 0.24);
+      border-radius: 18px;
+      padding: 14px;
+      background: rgba(17, 32, 45, 0.03);
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .drop-zone.dragover {
+      border-color: rgba(13, 111, 111, 0.45);
+      background: rgba(13, 111, 111, 0.08);
+      color: var(--ink);
+    }
+
+    .drag-news-card {
+      cursor: grab;
+      user-select: none;
+    }
+
+    .drag-news-card:active {
+      cursor: grabbing;
+    }
+
+    .drag-news-card.dragging {
+      opacity: 0.62;
+      transform: translateY(-2px);
+    }
+
+    .ai-answer {
+      border-radius: var(--radius-md);
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.88);
+      padding: 14px 16px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .ai-answer strong {
+      color: var(--ink);
+    }
+
+    .ai-review-box {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(13, 111, 111, 0.06);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .ai-review-box .ai-review-action {
+      color: var(--ink);
+      font-weight: 700;
+    }
+
     .search {
       width: min(340px, 46vw);
       padding: 11px 14px;
@@ -1309,6 +1758,48 @@ class MarkdownJsonReporter:
       display: grid;
       gap: 12px;
       align-content: start;
+    }
+
+    .ai-group-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-top: 2px;
+    }
+
+    .ai-judgement-panel {
+      border-color: rgba(13, 111, 111, 0.18);
+      background:
+        linear-gradient(135deg, rgba(219, 236, 252, 0.88), rgba(255, 255, 255, 0.86)),
+        var(--card);
+    }
+
+    .ai-workspace-list {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: start;
+    }
+
+    .ai-judgement-panel .event-card,
+    .ai-judgement-panel .instrument-card {
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .ai-reason {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      background: rgba(13, 111, 111, 0.08);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .alert-card,
@@ -1597,6 +2088,10 @@ class MarkdownJsonReporter:
         grid-template-columns: 1fr;
       }
 
+      .ai-workspace-list {
+        grid-template-columns: 1fr;
+      }
+
       .column-scroll {
         height: auto;
         overflow: visible;
@@ -1618,6 +2113,10 @@ class MarkdownJsonReporter:
       }
 
       .toolbar {
+        grid-template-columns: 1fr;
+      }
+
+      .ask-grid {
         grid-template-columns: 1fr;
       }
 
@@ -1673,6 +2172,26 @@ class MarkdownJsonReporter:
         <div class="tiny" id="runtimeOverallLabel"></div>
       </div>
       <div class="runtime-grid" id="runtimeStatusGrid"></div>
+    </section>
+
+    <section class="panel ask-panel">
+      <div class="section-header">
+        <div>
+          <h2>主动问AI</h2>
+          <div class="panel-subtitle">把新闻、公告或网页文字拖进来，主动问“这条消息值不值得看、影响哪些票”。点击才会调用模型。</div>
+        </div>
+        <button id="aiAskButton" class="review-action approve" type="button">分析这条新闻</button>
+      </div>
+      <div class="ask-grid">
+        <div>
+          <textarea id="aiAskInput" class="ask-input" placeholder="把新闻卡片拖到右侧框，或把新闻正文、公告内容、网页文字粘贴到这里。"></textarea>
+        </div>
+        <div class="tech-stack">
+          <textarea id="aiQuestionInput" class="ask-question" placeholder="可选：你想重点问什么？比如：这是不是领先信号？影响哪些港A股？"></textarea>
+          <div id="aiDropZone" class="drop-zone">把你看中的新闻卡片拖到这里；也支持 .txt/.md 文件或网页选中文字。</div>
+        </div>
+      </div>
+      <div id="aiAskResult" class="ai-answer">还没有主动分析。这个入口不会自动消耗模型额度，只有点击“分析这条新闻”才会请求AI。</div>
     </section>
 
     <section class="workspace active" id="coreWorkspace" data-view="core">
@@ -1739,6 +2258,19 @@ class MarkdownJsonReporter:
       </section>
     </section>
 
+    <section class="workspace" id="aiWorkspace" data-view="ai">
+      <section class="panel ai-judgement-panel">
+        <div class="section-header">
+          <div>
+            <h2>AI判断</h2>
+            <div class="panel-subtitle">把通过AI判断或注意力门槛的新闻和候选股票集中放这里。</div>
+          </div>
+          <div class="tiny" id="aiJudgementCountLabel"></div>
+        </div>
+        <div class="stack ai-workspace-list" id="aiJudgementList"></div>
+      </section>
+    </section>
+
     <section class="workspace" id="techWorkspace" data-view="tech">
       <section class="layout">
         <section class="column column-scroll left-column" id="techLeftColumn" data-scroll-key="tech-left">
@@ -1792,9 +2324,12 @@ class MarkdownJsonReporter:
             <div class="section-header">
               <div>
                 <h2>Lexicon Discovery</h2>
-                <div class="panel-subtitle">把这轮新冒出来、还没进正式词库的词放到一个待审核队列里。</div>
+                <div class="panel-subtitle">新冒出来的词会先进入队列，再由 AI 自动收录或删除。</div>
               </div>
-              <div class="tiny" id="lexiconDiscoveryCountLabel"></div>
+              <div class="review-row">
+                <button id="lexiconAiReviewButton" class="review-action approve" type="button">立即AI自动处理</button>
+                <div class="tiny" id="lexiconDiscoveryCountLabel"></div>
+              </div>
             </div>
             <div class="review-note" id="lexiconReviewNote"></div>
             <div class="tech-stack" id="lexiconDiscoveryList"></div>
@@ -1883,6 +2418,9 @@ class MarkdownJsonReporter:
     })();
 
     const report = JSON.parse(document.getElementById("report-data").textContent);
+    const aiJudgement = report.ai_judgement || { summary: {}, events: [], instruments: [] };
+    const aiJudgementEvents = Array.isArray(aiJudgement.events) ? aiJudgement.events : [];
+    const aiJudgementInstruments = Array.isArray(aiJudgement.instruments) ? aiJudgement.instruments : [];
     const unionEvents = [];
     const seenEventIds = new Set();
     ["top_events", "negative_risks", "positive_catalysts", "watchlist"].forEach(function (key) {
@@ -1892,6 +2430,12 @@ class MarkdownJsonReporter:
           unionEvents.push(event);
         }
       });
+    });
+    aiJudgementEvents.forEach(function (event) {
+      if (!seenEventIds.has(event.cluster_id)) {
+        seenEventIds.add(event.cluster_id);
+        unionEvents.push(event);
+      }
     });
 
     const eventByCluster = new Map(unionEvents.map(function (event) {
@@ -1914,6 +2458,7 @@ class MarkdownJsonReporter:
     ];
     let reviewApiOnline = false;
     let lexiconReviewMessage = "";
+    const lexiconAiReviewByTerm = new Map();
     let pendingReviewRequest = false;
     let lastInteractionAt = Date.now();
     let restoreScrollPending = true;
@@ -1954,11 +2499,14 @@ class MarkdownJsonReporter:
       delivery: "DELIVERY",
       review_api: "REVIEW API",
       health: "HEALTH",
-      cookies: "COOKIES"
+      cookies: "COOKIES",
+      futu_enrichment: "富途增强",
+      ah_scanner: "AH 扫描器"
     };
 
     const viewLabels = {
       core: "全市场消息",
+      ai: "AI判断",
       tech: "港A股消息",
       frontier: "科技前沿"
     };
@@ -2024,7 +2572,7 @@ class MarkdownJsonReporter:
         }
         const payload = JSON.parse(raw);
         if (payload && typeof payload === "object") {
-          if (payload.view === "core" || payload.view === "tech" || payload.view === "frontier") {
+          if (payload.view === "core" || payload.view === "ai" || payload.view === "tech" || payload.view === "frontier") {
             state.view = payload.view;
           }
           if (payload.direction === "all" || payload.direction === "negative" || payload.direction === "positive" || payload.direction === "neutral") {
@@ -2091,7 +2639,7 @@ class MarkdownJsonReporter:
 
     function reviewStatusText() {
       if (reviewApiOnline) {
-        return lexiconReviewMessage || "网页里可以直接收录、忽略待审核新词，也可以删除已收录词。";
+        return lexiconReviewMessage || "词库候选词会由 AI 自动收录或删除；你只需要在正式词库里删除误收录词。";
       }
       return "审核服务还没连上，所以这里只显示队列。启动总控后刷新页面即可。";
     }
@@ -2116,6 +2664,20 @@ class MarkdownJsonReporter:
       lexiconDiscovery.summary = payload.summary || {};
       lexiconDiscovery.candidates = payload.candidates || [];
       lexiconDiscovery.accepted_terms = payload.accepted_terms || [];
+      if (Array.isArray(payload.ai_review)) {
+        payload.ai_review.forEach(function (item) {
+          const term = String(item.term || "").trim().toLowerCase();
+          if (term) {
+            lexiconAiReviewByTerm.set(term, item);
+          }
+        });
+      }
+      lexiconDiscovery.candidates.forEach(function (candidate) {
+        const term = String(candidate.text || "").trim().toLowerCase();
+        if (term && candidate.ai_review) {
+          lexiconAiReviewByTerm.set(term, candidate.ai_review);
+        }
+      });
       if (payload.message) {
         lexiconReviewMessage = payload.message;
       }
@@ -2189,6 +2751,115 @@ class MarkdownJsonReporter:
       renderTechBlock();
     }
 
+    async function requestLexiconAiReview(triggerButton) {
+      markInteraction();
+      pendingReviewRequest = true;
+      if (triggerButton) {
+        triggerButton.disabled = true;
+      }
+      lexiconReviewMessage = "AI正在自动审核待处理词：会直接收录高置信词，删除噪声词。";
+      renderTechBlock();
+      try {
+        const result = await fetchReviewApi(
+          "/api/lexicon/ai-review",
+          {
+            method: "POST",
+            body: JSON.stringify({ limit: 24 })
+          }
+        );
+        reviewApiOnline = true;
+        applyDiscoveryPayload(result);
+      } catch (error) {
+        reviewApiOnline = false;
+        lexiconReviewMessage = "AI自动审核失败：" + String(error.message || error);
+      } finally {
+        pendingReviewRequest = false;
+        if (triggerButton) {
+          triggerButton.disabled = false;
+        }
+        markInteraction();
+      }
+      renderTechBlock();
+    }
+
+    async function submitManualNewsAnalysis() {
+      markInteraction();
+      const input = document.getElementById("aiAskInput");
+      const questionInput = document.getElementById("aiQuestionInput");
+      const button = document.getElementById("aiAskButton");
+      const resultHost = document.getElementById("aiAskResult");
+      const text = input ? String(input.value || "").trim() : "";
+      const question = questionInput ? String(questionInput.value || "").trim() : "";
+      if (!text) {
+        resultHost.innerHTML = "先把新闻、公告或网页文字粘贴进来，我再帮你拆影响链。";
+        return;
+      }
+      if (button) {
+        button.disabled = true;
+      }
+      resultHost.innerHTML = "AI正在判断：先看这是不是领先基本面信号，再看可能影响哪些港A美标的。";
+      try {
+        const payload = await fetchReviewApi(
+          "/api/ai/analyze-news",
+          {
+            method: "POST",
+            body: JSON.stringify({ text: text, question: question })
+          }
+        );
+        renderManualAnalysisResult(payload.analysis || {});
+      } catch (error) {
+        resultHost.innerHTML = "主动分析失败：" + escapeHtml(String(error.message || error));
+      } finally {
+        if (button) {
+          button.disabled = false;
+        }
+        markInteraction();
+      }
+    }
+
+    function renderManualAnalysisResult(analysis) {
+      const host = document.getElementById("aiAskResult");
+      if (!host) {
+        return;
+      }
+      const assets = Array.isArray(analysis.affected_assets) ? analysis.affected_assets : [];
+      const impactLogic = Array.isArray(analysis.impact_logic) ? analysis.impact_logic : [];
+      const watchPoints = Array.isArray(analysis.watch_points) ? analysis.watch_points : [];
+      const missingEvidence = Array.isArray(analysis.missing_evidence) ? analysis.missing_evidence : [];
+      const attention = score(analysis.attention_score || 0);
+      const confidence = score((Number(analysis.confidence || 0) || 0) * 100);
+      host.innerHTML =
+        '<div class="card-topline">'
+        + '<span class="badge ' + (analysis.worth_attention ? 'dir-positive' : 'dir-neutral') + '">'
+        + (analysis.worth_attention ? "值得继续看" : "暂不优先") + "</span>"
+        + '<span>关注分 ' + escapeHtml(attention) + "</span>"
+        + '<span>置信度 ' + escapeHtml(confidence) + "%</span>"
+        + "</div>"
+        + '<p><strong>一句话：</strong>' + escapeHtml(analysis.summary || analysis.conclusion || "暂无摘要") + "</p>"
+        + (impactLogic.length
+            ? '<p><strong>影响逻辑：</strong></p><ul>'
+              + impactLogic.slice(0, 5).map(function (item) {
+                  return "<li>" + escapeHtml(item) + "</li>";
+                }).join("")
+              + "</ul>"
+            : "")
+        + (assets.length
+            ? '<p><strong>可能相关标的：</strong></p><ul>'
+              + assets.slice(0, 8).map(function (item) {
+                  return "<li>" + escapeHtml([item.symbol, item.name, item.market, item.direction].filter(Boolean).join(" · "))
+                    + (item.reason ? "：" + escapeHtml(item.reason) : "") + "</li>";
+                }).join("")
+              + "</ul>"
+            : '<p><strong>可能相关标的：</strong>证据不足，暂不硬配票。</p>')
+        + (watchPoints.length
+            ? '<p><strong>后续验证：</strong>' + escapeHtml(watchPoints.slice(0, 4).join("；")) + "</p>"
+            : "")
+        + (missingEvidence.length
+            ? '<p><strong>缺失证据：</strong>' + escapeHtml(missingEvidence.slice(0, 4).join("；")) + "</p>"
+            : "")
+        + '<p><strong>结论：</strong>' + escapeHtml(analysis.conclusion || "暂无结论") + "</p>";
+    }
+
     function tokensForEvent(event) {
       return [
         event.headline,
@@ -2212,9 +2883,198 @@ class MarkdownJsonReporter:
       return String(text || "").toLowerCase().indexOf(state.query) !== -1;
     }
 
+    const dragNewsPayloadById = new Map();
+
+    function compactText(value, fallback) {
+      const text = String(value || fallback || "").replace(/\s+/g, " ").trim();
+      return text || "n/a";
+    }
+
+    function listText(values, limit) {
+      if (!Array.isArray(values)) {
+        return "n/a";
+      }
+      const items = values.map(function (value) {
+        return compactText(value, "");
+      }).filter(function (value) {
+        return value && value !== "n/a";
+      }).slice(0, limit || 6);
+      return items.join("，") || "n/a";
+    }
+
+    function instrumentLine(item) {
+      if (!item) {
+        return "";
+      }
+      return [
+        item.symbol,
+        item.name,
+        item.market,
+        item.direction,
+        item.final_score !== undefined ? ("score " + score(item.final_score)) : "",
+        item.ai_score !== undefined ? ("AI " + score(item.ai_score)) : ""
+      ].filter(Boolean).join(" · ");
+    }
+
+    function documentLine(doc) {
+      if (!doc) {
+        return "";
+      }
+      return [
+        compactText(doc.published_at, ""),
+        compactText(doc.source_id, ""),
+        compactText(doc.title, ""),
+        compactText(doc.url, "")
+      ].filter(function (value) {
+        return value && value !== "n/a";
+      }).join(" · ");
+    }
+
+    function relatedDocumentText(docs) {
+      const items = Array.isArray(docs) ? docs.slice(0, 5).map(documentLine).filter(Boolean) : [];
+      return items.length ? items.map(function (line) { return "- " + line; }).join("\\n") : "- n/a";
+    }
+
+    function eventForClusterId(clusterId) {
+      return eventByCluster.get(clusterId) || null;
+    }
+
+    function registerNewsDragPayload(prefix, key, payload) {
+      const id = String(prefix || "news") + ":" + String(key || dragNewsPayloadById.size);
+      dragNewsPayloadById.set(id, String(payload || "").slice(0, 20000));
+      return id;
+    }
+
+    function formatDraggedEvent(event, label) {
+      const selection = event.ai_selection || {};
+      const judgement = event.model_judgement || {};
+      const instruments = (event.top_instruments || []).slice(0, 8).map(instrumentLine).filter(Boolean);
+      const reasons = []
+        .concat(Array.isArray(event.rationale) ? event.rationale : [])
+        .concat(selection.summary_reason ? [selection.summary_reason] : [])
+        .concat(selection.model_reason ? [selection.model_reason] : [])
+        .concat(judgement.screening_reason ? [judgement.screening_reason] : []);
+      return [
+        "【来自看板拖入：" + compactText(label, "新闻事件") + "】",
+        "标题：" + compactText(event.headline, ""),
+        "摘要：" + compactText(event.summary, ""),
+        "方向/类型/分数：" + [event.direction, event.event_type, score(event.final_score)].filter(Boolean).join(" · "),
+        "主题：" + listText(event.themes, 8),
+        "实体：" + listText(event.entities, 8),
+        "来源：" + listText(event.source_ids, 8),
+        "候选标的：" + (instruments.join("；") || "n/a"),
+        "系统理由：" + listText(reasons, 8),
+        "原文证据：",
+        relatedDocumentText(event.related_documents),
+        "我想问：这条消息是否值得继续看？它是不是领先的基本面/需求/估值信号？可能影响哪些港A股、美股或A股？"
+      ].join("\\n");
+    }
+
+    function formatDraggedAlert(alert) {
+      const event = eventForClusterId(alert.cluster_id);
+      if (event) {
+        return formatDraggedEvent(event, "提醒卡片");
+      }
+      return [
+        "【来自看板拖入：提醒卡片】",
+        "标题：" + compactText(alert.headline, ""),
+        "方向/级别/分数：" + [alert.direction, alert.level, score(alert.final_score)].filter(Boolean).join(" · "),
+        "关联标的：" + listText(alert.symbols, 8),
+        "提醒理由：" + compactText(alert.reason, ""),
+        "我想问：这条提醒是否值得继续跟踪？影响哪些股票？"
+      ].join("\\n");
+    }
+
+    function formatDraggedInstrument(item, label) {
+      const event = eventForClusterId(item.cluster_id);
+      const base = event
+        ? formatDraggedEvent(event, label || "候选标的卡片")
+        : [
+            "【来自看板拖入：" + compactText(label, "候选标的卡片") + "】",
+            "标题：" + compactText(item.headline, ""),
+            "方向/分数：" + [item.direction, score(item.final_score)].filter(Boolean).join(" · ")
+          ].join("\\n");
+      return base + "\\n\\n【当前拖入的关联标的】\\n" + instrumentLine(item);
+    }
+
+    function formatDraggedFeed(item) {
+      return [
+        "【来自看板拖入：原始消息流】",
+        "标题：" + compactText(item.title, ""),
+        "摘要：" + compactText(item.summary, ""),
+        "来源/时间：" + [item.source_id, item.published_at].filter(Boolean).join(" · "),
+        "主题：" + listText(item.themes, 8),
+        "实体：" + listText(item.entities, 8),
+        "原文：" + compactText(item.url, ""),
+        "我想问：这条原始消息能不能形成清晰投资逻辑？是否值得进入重点看板？"
+      ].join("\\n");
+    }
+
+    function formatDraggedTechSignal(signal, label) {
+      const linkedEvent = eventForClusterId(signal.cluster_id);
+      const docs = Array.isArray(signal.related_documents) && signal.related_documents.length
+        ? signal.related_documents
+        : (linkedEvent && linkedEvent.related_documents ? linkedEvent.related_documents : []);
+      const assets = (signal.candidate_assets || []).slice(0, 8).map(instrumentLine).filter(Boolean);
+      const matchedTerms = (signal.matched_terms || []).slice(0, 8).map(function (item) {
+        return [item.term, item.term_type, listText(item.matched_terms, 4)].filter(Boolean).join(" · ");
+      });
+      return [
+        "【来自看板拖入：" + compactText(label, "专题信号") + "】",
+        "标题：" + compactText(signal.headline, ""),
+        "方向/关注分：" + [signal.direction, score(signal.trading_attention_score)].filter(Boolean).join(" · "),
+        "触发标签：" + listText(signal.trigger_tags, 10),
+        "命中词库：" + (matchedTerms.join("；") || "n/a"),
+        "专题逻辑：" + listText(signal.rationale, 8),
+        "候选标的：" + (assets.join("；") || "n/a"),
+        "主证据：",
+        relatedDocumentText(docs),
+        "我想问：这个专题是否真的有基本面或需求变化？候选股票里谁更直接、谁只是蹭概念？"
+      ].join("\\n");
+    }
+
+    function attachNewsDragHandlers(host) {
+      if (!host) {
+        return;
+      }
+      host.querySelectorAll("[data-drag-news-id]").forEach(function (node) {
+        if (node.getAttribute("data-drag-ready") === "1") {
+          return;
+        }
+        node.setAttribute("data-drag-ready", "1");
+        node.setAttribute("title", "拖到“主动问AI”里分析");
+        node.addEventListener("dragstart", function (event) {
+          const key = node.getAttribute("data-drag-news-id") || "";
+          const payload = dragNewsPayloadById.get(key) || "";
+          if (!payload || !event.dataTransfer) {
+            return;
+          }
+          event.dataTransfer.effectAllowed = "copy";
+          event.dataTransfer.setData("text/plain", payload);
+          event.dataTransfer.setData("application/x-market-news-card", key);
+          node.classList.add("dragging");
+        });
+        node.addEventListener("dragend", function () {
+          node.classList.remove("dragging");
+        });
+      });
+    }
+
+    function loadAskDraftFromText(text, label) {
+      if (!aiAskInput) {
+        return;
+      }
+      aiAskInput.value = String(text || "").slice(0, 20000);
+      aiAskInput.focus();
+      const resultHost = document.getElementById("aiAskResult");
+      if (resultHost) {
+        resultHost.innerHTML = '<strong>' + escapeHtml(label || "已放入这条新闻") + '</strong>。你可以补一句问题，然后点“分析这条新闻”。';
+      }
+    }
+
     function renderViewSwitch() {
       const host = document.getElementById("viewSwitch");
-      const views = ["core", "tech", "frontier"];
+      const views = ["core", "ai", "tech", "frontier"];
       host.innerHTML = views.map(function (view) {
         const active = state.view === view ? " active" : "";
         return '<button class="view-button' + active + '" type="button" data-view="' + view + '">'
@@ -2238,6 +3098,27 @@ class MarkdownJsonReporter:
     function filteredEvents() {
       return unionEvents.filter(function (event) {
         return matchesDirection(event) && matchesQuery(tokensForEvent(event));
+      });
+    }
+
+    function filteredAiJudgementEvents() {
+      return aiJudgementEvents.filter(function (event) {
+        return matchesDirection(event) && matchesQuery(tokensForEvent(event));
+      });
+    }
+
+    function filteredAiJudgementInstruments() {
+      return aiJudgementInstruments.filter(function (instrument) {
+        const event = eventByCluster.get(instrument.cluster_id);
+        const text = [
+          instrument.symbol,
+          instrument.name,
+          instrument.headline,
+          instrument.ai_tier,
+          instrument.ai_reason,
+          (instrument.reasons || []).join(" ")
+        ].join(" ").toLowerCase();
+        return matchesQuery(text) && (!event || matchesDirection(event));
       });
     }
 
@@ -2669,8 +3550,9 @@ class MarkdownJsonReporter:
           const assetsText = (signal.candidate_assets || []).slice(0, 3).map(function (item) {
             return item.symbol;
           }).join(", ") || "n/a";
+          const dragId = registerNewsDragPayload("tech-signal", signal.cluster_id, formatDraggedTechSignal(signal, "港A股消息专题"));
           return '<div class="tech-card' + active + '">'
-            + '<button type="button" data-tech-cluster="' + escapeHtml(signal.cluster_id) + '">'
+            + '<button class="drag-news-card" type="button" draggable="true" data-drag-news-id="' + escapeHtml(dragId) + '" data-tech-cluster="' + escapeHtml(signal.cluster_id) + '">'
             + '<div class="card-topline">'
             + '<span class="badge dir-' + escapeHtml(signal.direction) + '">' + escapeHtml(signal.direction) + '</span>'
             + '<span class="badge level-medium">' + escapeHtml(String(signal.attention_tier || "watch").toUpperCase()) + '</span>'
@@ -2699,6 +3581,7 @@ class MarkdownJsonReporter:
             renderDetail();
           });
         });
+        attachNewsDragHandlers(signalHost);
       }
 
       if (!themes.length) {
@@ -2787,6 +3670,16 @@ class MarkdownJsonReporter:
             return entry[0] + ":" + score(entry[1]);
           }).join(", ") || "n/a";
           const snippets = Array.isArray(candidate.example_snippets) ? candidate.example_snippets.slice(0, 2) : [];
+          const termKey = String(candidate.text || "").trim().toLowerCase();
+          const aiReview = candidate.ai_review || lexiconAiReviewByTerm.get(termKey);
+          const aiReviewHtml = aiReview
+            ? '<div class="ai-review-box">'
+              + '<div><span class="ai-review-action">AI判断：' + escapeHtml(aiReview.action || "reject")
+              + '</span> · ' + escapeHtml(aiReview.term_type || "theme")
+              + ' · confidence ' + escapeHtml(score(aiReview.confidence || 0)) + "</div>"
+              + '<div>' + escapeHtml(aiReview.reason || "暂无理由") + "</div>"
+              + "</div>"
+            : "";
           return '<div class="theme-card">'
             + '<div class="card-topline">'
             + '<span class="badge type-company">pending</span>'
@@ -2802,30 +3695,10 @@ class MarkdownJsonReporter:
                     }).join("")
                   + "</div>"
                 : "")
-            + '<div class="review-row">'
-            + '<select class="review-select" data-lexicon-type>'
-            + lexiconTypeOptions.map(function (option) {
-                return '<option value="' + escapeHtml(option.value) + '">' + escapeHtml(option.label) + "</option>";
-              }).join("")
-            + "</select>"
-            + '<button type="button" class="review-action approve" data-lexicon-add="' + escapeHtml(candidate.text || "") + '">收录</button>'
-            + '<button type="button" class="review-action reject" data-lexicon-reject="' + escapeHtml(candidate.text || "") + '">忽略</button>'
-            + "</div>"
+            + aiReviewHtml
+            + '<p class="instrument-note">等待 AI 自动审核；确定有用会进入正式词库，不确定或噪声会自动删除。</p>'
             + "</div>";
         }).join("");
-        discoveryHost.querySelectorAll("[data-lexicon-add]").forEach(function (button) {
-          button.addEventListener("click", function () {
-            const card = button.closest(".theme-card");
-            const select = card ? card.querySelector("[data-lexicon-type]") : null;
-            const termType = select ? select.value : "theme";
-            submitDiscoveryAction("add", button.getAttribute("data-lexicon-add"), termType, button);
-          });
-        });
-        discoveryHost.querySelectorAll("[data-lexicon-reject]").forEach(function (button) {
-          button.addEventListener("click", function () {
-            submitDiscoveryAction("reject", button.getAttribute("data-lexicon-reject"), "theme", button);
-          });
-        });
       }
 
       if (!acceptedTerms.length) {
@@ -2930,8 +3803,9 @@ class MarkdownJsonReporter:
           const frontierSummary = (signal.frontier_hits || []).map(function (item) {
             return item.cn_label || item.frontier_id;
           }).slice(0, 3).join("，") || "暂无前沿命中";
+          const dragId = registerNewsDragPayload("frontier-signal", signal.cluster_id, formatDraggedTechSignal(signal, "科技前沿信号"));
           return '<div class="tech-card' + active + '">'
-            + '<button type="button" data-frontier-signal="' + escapeHtml(signal.cluster_id) + '">'
+            + '<button class="drag-news-card" type="button" draggable="true" data-drag-news-id="' + escapeHtml(dragId) + '" data-frontier-signal="' + escapeHtml(signal.cluster_id) + '">'
             + '<div class="card-topline">'
             + '<span class="badge dir-' + escapeHtml(signal.direction) + '">' + escapeHtml(signal.direction) + '</span>'
             + '<span class="badge level-medium">' + escapeHtml(String(signal.attention_tier || "watch").toUpperCase()) + '</span>'
@@ -2963,6 +3837,7 @@ class MarkdownJsonReporter:
             renderFrontierWorkspace();
           });
         });
+        attachNewsDragHandlers(signalHost);
       }
 
       renderTechSignalDetail(detailHost, currentSignal, "科技前沿突破", "frontierDetailCountLabel");
@@ -2985,6 +3860,75 @@ class MarkdownJsonReporter:
       });
     }
 
+    function renderAiJudgement() {
+      const events = filteredAiJudgementEvents();
+      const instruments = filteredAiJudgementInstruments();
+      document.getElementById("aiJudgementCountLabel").textContent =
+        events.length + " 条 · " + instruments.length + " 票";
+
+      const host = document.getElementById("aiJudgementList");
+      if (!events.length && !instruments.length) {
+        host.innerHTML = '<div class="empty">当前还没有通过AI判断的新闻或候选股票。</div>';
+        return;
+      }
+
+      const eventCards = events.map(function (event) {
+        const active = event.cluster_id === state.selectedClusterId ? " active" : "";
+        const selection = event.ai_selection || {};
+        const topSymbols = (event.top_instruments || []).map(function (item) {
+          return item.symbol;
+        }).slice(0, 4).join(", ") || "暂无候选";
+        const reason = selection.summary_reason
+          || selection.model_reason
+          || ((selection.reasons || []).join("；"))
+          || "通过AI注意力门槛。";
+        const selectedBy = selection.selected_by === "gpt" ? "AI" : "门槛";
+        const dragId = registerNewsDragPayload("ai-event", event.cluster_id, formatDraggedEvent(event, "AI判断新闻"));
+        return '<div class="event-card' + active + '">'
+          + '<button class="card-button drag-news-card" type="button" draggable="true" data-drag-news-id="' + escapeHtml(dragId) + '" data-ai-cluster="' + escapeHtml(event.cluster_id) + '">'
+          + '<div class="card-topline">'
+          + '<span class="badge dir-' + escapeHtml(event.direction) + '">' + escapeHtml(event.direction) + '</span>'
+          + '<span class="badge type-company">' + escapeHtml(selectedBy) + '</span>'
+          + '<span>AI ' + escapeHtml(score(selection.score || event.final_score)) + "</span>"
+          + '<span>标的 ' + escapeHtml(topSymbols) + "</span>"
+          + "</div>"
+          + '<div class="headline">' + escapeHtml(event.headline) + "</div>"
+          + '<p class="summary">' + escapeHtml(event.summary || "暂无摘要。") + "</p>"
+          + '<div class="ai-reason">' + escapeHtml(reason) + "</div>"
+          + "</button></div>";
+      }).join("");
+
+      const instrumentCards = instruments.map(function (item) {
+        const active = item.cluster_id === state.selectedClusterId ? " active" : "";
+        const dragId = registerNewsDragPayload("ai-instrument", item.symbol || item.cluster_id, formatDraggedInstrument(item, "AI判断关联股票"));
+        return '<div class="instrument-card' + active + '">'
+          + '<button class="card-button drag-news-card" type="button" draggable="true" data-drag-news-id="' + escapeHtml(dragId) + '" data-ai-cluster="' + escapeHtml(item.cluster_id) + '">'
+          + '<div class="card-topline">'
+          + '<span class="badge dir-' + escapeHtml(item.direction) + '">' + escapeHtml(item.direction) + '</span>'
+          + '<span>' + escapeHtml(item.market) + "</span>"
+          + '<span>AI ' + escapeHtml(score(item.ai_score)) + "</span>"
+          + '<span>score ' + escapeHtml(score(item.final_score)) + "</span>"
+          + "</div>"
+          + '<div class="headline">' + escapeHtml(item.symbol + " · " + item.name) + "</div>"
+          + '<p class="summary">' + escapeHtml(item.headline || "暂无对应新闻标题") + "</p>"
+          + "</button></div>";
+      }).join("");
+
+      host.innerHTML =
+        '<div class="ai-group-title"><span>选中新闻</span><span>' + escapeHtml(events.length) + '</span></div>'
+        + (eventCards || '<div class="empty">当前筛选下没有AI选中的新闻。</div>')
+        + '<div class="ai-group-title"><span>关联股票</span><span>' + escapeHtml(instruments.length) + '</span></div>'
+        + (instrumentCards || '<div class="empty">当前筛选下没有AI关联股票。</div>');
+
+      host.querySelectorAll("[data-ai-cluster]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          state.selectedClusterId = button.getAttribute("data-ai-cluster");
+          render();
+        });
+      });
+      attachNewsDragHandlers(host);
+    }
+
     function renderAlerts() {
       const alerts = (report.alerts || []).filter(function (alert) {
         const text = [alert.headline, alert.reason, (alert.symbols || []).join(" ")].join(" ").toLowerCase();
@@ -3001,8 +3945,9 @@ class MarkdownJsonReporter:
       host.innerHTML = alerts.map(function (alert) {
         const active = alert.cluster_id === state.selectedClusterId ? " active" : "";
         const prefix = alert.is_new ? '<span class="badge level-medium">NEW</span>' : "";
+        const dragId = registerNewsDragPayload("alert", alert.cluster_id, formatDraggedAlert(alert));
         return '<div class="alert-card' + active + '">'
-          + '<button class="card-button" type="button" data-cluster="' + escapeHtml(alert.cluster_id) + '">'
+          + '<button class="card-button drag-news-card" type="button" draggable="true" data-drag-news-id="' + escapeHtml(dragId) + '" data-cluster="' + escapeHtml(alert.cluster_id) + '">'
           + '<div class="card-topline">'
           + '<span class="badge level-' + escapeHtml(alert.level) + '">' + escapeHtml(alert.level.toUpperCase()) + '</span>'
           + '<span class="badge dir-' + escapeHtml(alert.direction) + '">' + escapeHtml(alert.direction) + '</span>'
@@ -3021,6 +3966,7 @@ class MarkdownJsonReporter:
           render();
         });
       });
+      attachNewsDragHandlers(host);
     }
 
     function renderEvents() {
@@ -3036,8 +3982,9 @@ class MarkdownJsonReporter:
       host.innerHTML = events.map(function (event) {
         const active = event.cluster_id === state.selectedClusterId ? " active" : "";
         const topSymbols = (event.top_instruments || []).map(function (item) { return item.symbol; }).slice(0, 4).join(", ") || "n/a";
+        const dragId = registerNewsDragPayload("event", event.cluster_id, formatDraggedEvent(event, "事件卡片"));
         return '<div class="event-card' + active + '">'
-          + '<button class="card-button" type="button" data-cluster="' + escapeHtml(event.cluster_id) + '">'
+          + '<button class="card-button drag-news-card" type="button" draggable="true" data-drag-news-id="' + escapeHtml(dragId) + '" data-cluster="' + escapeHtml(event.cluster_id) + '">'
           + '<div class="card-topline">'
           + '<span class="badge dir-' + escapeHtml(event.direction) + '">' + escapeHtml(event.direction) + '</span>'
           + '<span class="badge type-' + escapeHtml(event.event_type) + '">' + escapeHtml(event.event_type) + '</span>'
@@ -3061,6 +4008,47 @@ class MarkdownJsonReporter:
           render();
         });
       });
+      attachNewsDragHandlers(host);
+    }
+
+    function renderAiInsightDetail(event) {
+      const judgement = event.model_judgement || {};
+      const selection = event.ai_selection || {};
+      const hasJudgement = Object.keys(judgement).length > 0 || Object.keys(selection).length > 0;
+      if (!hasJudgement) {
+        return "";
+      }
+      const gate = judgement.attention_gate || {};
+      const screening = judgement.screening || {};
+      const status = judgement.screening_status || selection.status || "n/a";
+      const selectedBy = selection.selected_by === "gpt" || status === "used" ? "AI判断" : "注意力门槛";
+      const tier = gate.tier || selection.tier || "n/a";
+      const gateScore = gate.score !== undefined ? gate.score : selection.score;
+      const reasons = Array.isArray(gate.reasons)
+        ? gate.reasons
+        : (Array.isArray(selection.reasons) ? selection.reasons : []);
+      const modelReason = screening.reason
+        || screening.reject_reason
+        || selection.model_reason
+        || judgement.screening_reason
+        || "";
+      const reasonList = []
+        .concat(modelReason ? ["模型判断：" + modelReason] : [])
+        .concat(reasons.length ? ["门槛理由：" + reasons.slice(0, 5).join("；")] : []);
+      const renderedReasons = reasonList.map(function (item) {
+        return "<li>" + escapeHtml(item) + "</li>";
+      }).join("") || "<li>暂无AI判断细节。</li>";
+
+      return '<div class="detail-block">'
+        + '<div class="detail-section-title"><strong>AI判断</strong><span>是否值得调用模型/继续看</span></div>'
+        + '<div class="chip-row">'
+        + '<span class="mini-tag">来源：' + escapeHtml(selectedBy) + "</span>"
+        + '<span class="mini-tag">状态：' + escapeHtml(status) + "</span>"
+        + '<span class="mini-tag">层级：' + escapeHtml(tier) + "</span>"
+        + '<span class="mini-tag">门槛分：' + escapeHtml(score(gateScore)) + "</span>"
+        + "</div>"
+        + '<ul class="rationale-list" style="margin-top:12px;">' + renderedReasons + "</ul>"
+        + "</div>";
     }
 
     function renderDetail() {
@@ -3134,6 +4122,7 @@ class MarkdownJsonReporter:
         + '<span>最近更新: ' + escapeHtml(event.last_seen_at || "n/a") + "</span>"
         + "</div>"
         + "</div>"
+        + renderAiInsightDetail(event)
         + '<div class="detail-block">'
         + '<div class="detail-section-title"><strong>评分拆解</strong><span>为什么它排在这里</span></div>'
         + '<div class="score-strip">'
@@ -3164,8 +4153,9 @@ class MarkdownJsonReporter:
 
       host.innerHTML = instruments.map(function (item) {
         const active = item.cluster_id === state.selectedClusterId ? " active" : "";
+        const dragId = registerNewsDragPayload("instrument", item.symbol || item.cluster_id, formatDraggedInstrument(item, "候选标的卡片"));
         return '<div class="instrument-card' + active + '">'
-          + '<button class="card-button" type="button" data-cluster="' + escapeHtml(item.cluster_id) + '">'
+          + '<button class="card-button drag-news-card" type="button" draggable="true" data-drag-news-id="' + escapeHtml(dragId) + '" data-cluster="' + escapeHtml(item.cluster_id) + '">'
           + '<div class="card-topline">'
           + '<span class="badge dir-' + escapeHtml(item.direction) + '">' + escapeHtml(item.direction) + '</span>'
           + '<span>' + escapeHtml(item.market) + "</span>"
@@ -3182,6 +4172,7 @@ class MarkdownJsonReporter:
           render();
         });
       });
+      attachNewsDragHandlers(host);
     }
 
     function renderFeed() {
@@ -3197,7 +4188,8 @@ class MarkdownJsonReporter:
         const link = item.url
           ? '<a href="' + escapeHtml(item.url) + '" target="_blank" rel="noreferrer">打开原文</a>'
           : '<span class="tiny">暂无原文链接</span>';
-        return '<div class="feed-card">'
+        const dragId = registerNewsDragPayload("feed", item.url || item.title, formatDraggedFeed(item));
+        return '<div class="feed-card drag-news-card" draggable="true" data-drag-news-id="' + escapeHtml(dragId) + '">'
           + '<div class="card-meta">' + escapeHtml(item.published_at) + " · " + escapeHtml(item.source_id) + "</div>"
           + '<div class="headline">' + escapeHtml(item.title) + "</div>"
           + '<p>' + escapeHtml(item.summary || "无摘要") + "</p>"
@@ -3210,6 +4202,7 @@ class MarkdownJsonReporter:
             }).join("")
           + '</div><div class="tag-row">' + link + "</div></div>";
       }).join("");
+      attachNewsDragHandlers(host);
     }
 
     function renderPanelError(hostId, title, detail) {
@@ -3235,7 +4228,7 @@ class MarkdownJsonReporter:
 
     function render() {
       safeRender("视图切换", ["viewSwitch"], renderViewSwitch);
-      safeRender("工作区", ["coreWorkspace", "techWorkspace", "frontierWorkspace"], renderWorkspaces);
+      safeRender("工作区", ["coreWorkspace", "aiWorkspace", "techWorkspace", "frontierWorkspace"], renderWorkspaces);
       safeRender("头部摘要", ["heroMeta", "metricGrid"], renderHero);
       safeRender("运行状态", ["runtimeStatusGrid"], renderRuntimeStatus);
       safeRender("筛选器", ["filterChips"], renderFilters);
@@ -3246,6 +4239,12 @@ class MarkdownJsonReporter:
           ["techSignalList", "techThemeList", "techFrontierList", "techAssetList", "lexiconDiscoveryList", "lexiconReviewNote", "techDetailView"],
           renderTechBlock
         );
+        schedulePersistState();
+        return;
+      }
+
+      if (state.view === "ai") {
+        safeRender("AI判断", ["aiJudgementList"], renderAiJudgement);
         schedulePersistState();
         return;
       }
@@ -3279,6 +4278,10 @@ class MarkdownJsonReporter:
     const searchInput = document.getElementById("searchInput");
     const lexiconCatalogInput = document.getElementById("lexiconCatalogQuery");
     const resetButton = document.getElementById("resetButton");
+    const lexiconAiReviewButton = document.getElementById("lexiconAiReviewButton");
+    const aiAskButton = document.getElementById("aiAskButton");
+    const aiDropZone = document.getElementById("aiDropZone");
+    const aiAskInput = document.getElementById("aiAskInput");
 
     restoreDashboardState();
     if (searchInput) {
@@ -3316,6 +4319,56 @@ class MarkdownJsonReporter:
           searchInput.value = "";
         }
         render();
+      });
+    }
+
+    if (lexiconAiReviewButton) {
+      lexiconAiReviewButton.addEventListener("click", function () {
+        requestLexiconAiReview(lexiconAiReviewButton);
+      });
+    }
+
+    if (aiAskButton) {
+      aiAskButton.addEventListener("click", submitManualNewsAnalysis);
+    }
+
+    if (aiDropZone && aiAskInput) {
+      ["dragenter", "dragover"].forEach(function (eventName) {
+        aiDropZone.addEventListener(eventName, function (event) {
+          event.preventDefault();
+          markInteraction();
+          if (event.dataTransfer) {
+            event.dataTransfer.dropEffect = "copy";
+          }
+          aiDropZone.classList.add("dragover");
+        });
+      });
+      ["dragleave", "drop"].forEach(function (eventName) {
+        aiDropZone.addEventListener(eventName, function (event) {
+          event.preventDefault();
+          aiDropZone.classList.remove("dragover");
+        });
+      });
+      aiDropZone.addEventListener("drop", function (event) {
+        markInteraction();
+        const transfer = event.dataTransfer;
+        if (!transfer) {
+          return;
+        }
+        const droppedText = transfer.getData("text/plain");
+        if (droppedText) {
+          loadAskDraftFromText(droppedText, transfer.getData("application/x-market-news-card") ? "已接收看板新闻卡片" : "已接收拖入文本");
+          return;
+        }
+        const file = transfer.files && transfer.files[0];
+        if (!file) {
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = function () {
+          loadAskDraftFromText(String(reader.result || "").slice(0, 20000), "已读取文件内容");
+        };
+        reader.readAsText(file);
       });
     }
 

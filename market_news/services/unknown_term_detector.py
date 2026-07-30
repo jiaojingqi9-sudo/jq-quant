@@ -115,6 +115,7 @@ TECH_DISCOVERY_SOURCE_HINTS = (
     "cls",
     "gelonghui",
     "eastmoney",
+    "eastmoney-topic",
 )
 
 BOILERPLATE_NOISE_PHRASES = (
@@ -302,13 +303,22 @@ class UnknownTermDetector:
         rows.sort(key=lambda row: float(row.get("discovery_score", 0.0) or 0.0), reverse=True)
         return rows[:limit]
 
-    def set_status(self, path: Path, text: str, status: str) -> bool:
+    def set_status(
+        self,
+        path: Path,
+        text: str,
+        status: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
         rows = self.load(path)
         updated = False
         for row in rows:
             if str(row.get("text", "")).lower() != text.lower():
                 continue
             row["status"] = status
+            if metadata:
+                row.update(metadata)
             updated = True
         if updated:
             self._rewrite(path, rows)

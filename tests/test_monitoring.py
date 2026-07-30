@@ -51,6 +51,15 @@ class MonitorStateWriterTest(unittest.TestCase):
                 ],
             )
             snapshot = pipeline.run()
+            snapshot.artifacts.update(
+                {
+                    "news_learning_status": "ok",
+                    "news_learning_review_packet_md": str(temp_path / "news_learning" / "packet.md"),
+                    "news_learning_review_packet_json": str(temp_path / "news_learning" / "packet.json"),
+                    "news_learning_codex_handoff": str(temp_path / "news_learning" / "handoff.md"),
+                    "news_learning_candidate_count": 4,
+                }
+            )
             writer = MonitorStateWriter(
                 status_path=temp_path / "reports" / "monitor_status.json",
                 history_path=temp_path / "reports" / "monitor_history.jsonl",
@@ -80,6 +89,9 @@ class MonitorStateWriterTest(unittest.TestCase):
             self.assertEqual(saved_status["notification"]["status"], "sent")
             self.assertEqual(saved_status["modules"][0]["name"], "core_market")
             self.assertEqual(saved_status["modules"][1]["name"], "tech_block")
+            self.assertIn("news_learning", {item["name"] for item in saved_status["modules"]})
+            self.assertEqual(saved_status["artifacts"]["news_learning_review_packet_md"], str(temp_path / "news_learning" / "packet.md"))
+            self.assertEqual(saved_status["artifacts"]["news_learning_codex_handoff"], str(temp_path / "news_learning" / "handoff.md"))
 
             failure_payload = writer.write_failure(
                 error_message="gateway unavailable",
@@ -137,6 +149,39 @@ class MonitorStateWriterTest(unittest.TestCase):
             self.assertEqual(failure_payload["overall_status"], "error")
             saved_failure = json.loads(writer.status_path.read_text(encoding="utf-8"))
             self.assertEqual(saved_failure["errors"], ["gateway unavailable"])
+
+    def test_delivery_writer_treats_preview_fallback_as_healthy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            preview_path = temp_path / "reports" / "latest_phone_alert.txt"
+            preview_path.parent.mkdir(parents=True, exist_ok=True)
+            preview_path.write_text("preview", encoding="utf-8")
+            report_path = temp_path / "reports" / "latest_report.json"
+            report_path.write_text("{}", encoding="utf-8")
+            writer = DeliveryStateWriter(
+                status_path=temp_path / "reports" / "delivery_status.json",
+                history_path=temp_path / "reports" / "delivery_history.jsonl",
+            )
+
+            cycle_payload = writer.write_cycle(
+                report_path=report_path,
+                preview_path=preview_path,
+                notification_result=NotificationResult(
+                    status="preview",
+                    channel="whatsapp",
+                    target="+10000000000",
+                    alert_count=2,
+                    preview_path=preview_path,
+                    cluster_ids=["c1", "c2"],
+                    detail="Phone delivery is temporarily unavailable; the alert preview was kept locally.",
+                    modules=[
+                        {"name": "core_alerts", "status": "active", "count": 2, "detail": "high/critical alert stream"},
+                        {"name": "tech_block", "status": "active", "count": 1, "detail": "A/H tech catalyst stream"},
+                    ],
+                ),
+            )
+
+            self.assertEqual(cycle_payload["overall_status"], "ok")
 
 
 if __name__ == "__main__":

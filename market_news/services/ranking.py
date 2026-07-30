@@ -11,6 +11,12 @@ from market_news.domain.models import (
     RankedEvent,
     RankedInstrument,
 )
+from market_news.services.fundamental_focus import (
+    evaluate_notification_gate,
+    is_fundamental_impact,
+    is_low_predictability_risk,
+    is_policy_demand_impact,
+)
 
 
 class WeightedEventRanker:
@@ -54,7 +60,7 @@ class WeightedEventRanker:
         )
         if impact.event_type.value == "unknown" and impact.direction == Direction.NEUTRAL:
             final_score *= 0.82
-        return RankedEvent(
+        event = RankedEvent(
             cluster_id=cluster.cluster_id,
             headline=cluster.headline,
             impact=impact,
@@ -63,6 +69,28 @@ class WeightedEventRanker:
             confidence_score=round(confidence_score, 2),
             market_relevance_score=round(market_relevance_score, 2),
             final_score=round(final_score, 2),
+        )
+        adjusted_score = event.final_score
+        gate = evaluate_notification_gate(event, is_new=True)
+        if gate.tier == "notify":
+            adjusted_score *= 1.18
+        elif gate.tier == "model":
+            adjusted_score *= 1.08
+        if is_fundamental_impact(impact):
+            adjusted_score *= 1.16
+        elif is_policy_demand_impact(impact):
+            adjusted_score *= 1.08
+        if is_low_predictability_risk(event):
+            adjusted_score *= 0.74
+        return RankedEvent(
+            cluster_id=event.cluster_id,
+            headline=event.headline,
+            impact=event.impact,
+            heat_score=event.heat_score,
+            importance_score=event.importance_score,
+            confidence_score=event.confidence_score,
+            market_relevance_score=event.market_relevance_score,
+            final_score=round(adjusted_score, 2),
         )
 
 

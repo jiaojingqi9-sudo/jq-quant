@@ -168,6 +168,55 @@
     "themes": ["growth", "ai"],
     "aliases": ["nasdaq 100 etf", "513100.sh"],
     "liquidity_score": 0.77
+  },
+  {
+    "symbol": "600118.SH",
+    "market": "CN-A",
+    "asset_type": "stock",
+    "name": "China Spacesat",
+    "sectors": ["aerospace-defense", "satellite-internet"],
+    "themes": ["commercial-space", "satellite-internet", "space-infrastructure"],
+    "aliases": ["中国卫星", "600118.sh", "china spacesat", "卫星制造", "卫星应用"],
+    "liquidity_score": 0.76
+  },
+  {
+    "symbol": "601698.SH",
+    "market": "CN-A",
+    "asset_type": "stock",
+    "name": "China Satcom",
+    "sectors": ["aerospace-defense", "satellite-internet", "communications"],
+    "themes": ["commercial-space", "satellite-internet", "satellite-operations"],
+    "aliases": ["中国卫通", "601698.sh", "china satcom", "卫星通信", "卫星运营"],
+    "liquidity_score": 0.72
+  },
+  {
+    "symbol": "600879.SH",
+    "market": "CN-A",
+    "asset_type": "stock",
+    "name": "Aerospace Electronics",
+    "sectors": ["aerospace-defense", "electronics"],
+    "themes": ["commercial-space", "satellite-internet", "space-electronics"],
+    "aliases": ["航天电子", "600879.sh", "aerospace electronics", "航天电子设备"],
+    "liquidity_score": 0.72
+  },
+  {
+    "symbol": "002025.SZ",
+    "market": "CN-A",
+    "asset_type": "stock",
+    "name": "Aerospace Electric",
+    "sectors": ["aerospace-defense", "components"],
+    "themes": ["commercial-space", "satellite-internet", "space-components"],
+    "aliases": ["航天电器", "002025.sz", "aerospace electric", "航天连接器"],
+    "liquidity_score": 0.7
+  },
+  {
+    "symbol": "512660.SH",
+    "market": "CN-A",
+    "asset_type": "etf",
+    "name": "Defense ETF",
+    "sectors": ["aerospace-defense"],
+    "themes": ["commercial-space", "satellite-internet", "defense"],
+    "aliases": ["国防ETF", "512660.sh", "军工ETF", "航天军工"],
+    "liquidity_score": 0.74
   }
 ]
-

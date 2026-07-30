@@ -8,10 +8,18 @@ import unittest
 
 from market_news.infrastructure.collectors.cls import ClsTelegraphCollector
 from market_news.infrastructure.collectors.eastmoney import EastmoneyCollector
+from market_news.infrastructure.collectors.eastmoney_topic import (
+    EastmoneyTopicCollector,
+    EastmoneyTopicSpec,
+)
 from market_news.infrastructure.collectors.gelonghui import GelonghuiLiveCollector
 from market_news.infrastructure.collectors.html_source import HtmlListDetailCollector, HtmlSourceSpec
 from market_news.infrastructure.collectors.factory import build_live_collector
 from market_news.infrastructure.collectors.rss import FeedSpec, RSSCollector
+from market_news.infrastructure.collectors.sfc_offer_periods import (
+    SFCOfferPeriodsCollector,
+    SFCOfferPeriodsSpec,
+)
 
 
 @dataclass
@@ -25,6 +33,11 @@ class _FakeHttpClient:
         self.pages = pages
 
     def get_text(self, url: str, **_: object) -> _FakeResponse:
+        if url not in self.pages:
+            raise FileNotFoundError(url)
+        return _FakeResponse(url=url, text=self.pages[url])
+
+    def post_text(self, url: str, **_: object) -> _FakeResponse:
         if url not in self.pages:
             raise FileNotFoundError(url)
         return _FakeResponse(url=url, text=self.pages[url])
@@ -70,6 +83,43 @@ class HtmlCollectorTest(unittest.TestCase):
         self.assertIn("AI芯片量产进入新阶段", records[0].summary)
         self.assertEqual(records[0].published_at.isoformat(), "2026-03-15T10:30:00+00:00")
 
+    def test_list_detail_collector_prefers_anchor_title_attribute(self) -> None:
+        pages = {
+            "https://example.com/list": """
+                <html><body>
+                  <a href="/news/space.html" title="国家航天局召开商业航天高质量发展企业圆桌会议">
+                    <div>国家航天局召开商业航天高质量发展企业圆桌会议</div>
+                    <div>这是一段很长很长的摘要，用来模拟政府网站把摘要也包进链接里的结构。
+                    系统应该优先使用 title 属性，否则内部文本可能超过标题长度限制而被过滤。</div>
+                  </a>
+                </body></html>
+            """,
+            "https://example.com/news/space.html": """
+                <html><body>
+                  <div class="article">
+                    <p>商业航天许可准入、发射申请和频率协调进入一站式审批。</p>
+                  </div>
+                </body></html>
+            """,
+        }
+        collector = HtmlListDetailCollector(
+            _FakeHttpClient(pages),
+            HtmlSourceSpec(
+                source_id="demo_html",
+                name="demo-html",
+                url="https://example.com/list",
+                source_trust=0.9,
+                include_link_patterns=["/news/"],
+                include_title_patterns=["商业航天"],
+                body_container_patterns=["<div[^>]+class=\\\"article\\\"[^>]*>.*?</div>"],
+            ),
+        )
+
+        records = collector.collect()
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].title, "国家航天局召开商业航天高质量发展企业圆桌会议")
+
     def test_factory_skips_disabled_sources(self) -> None:
         root = Path(__file__).resolve().parent.parent
         config_path = root / "config" / "live_sources.json"
@@ -82,12 +132,92 @@ class HtmlCollectorTest(unittest.TestCase):
         self.assertIn("cls", names)
         self.assertIn("csrc-home-updates", names)
         self.assertIn("eastmoney", names)
+        self.assertIn("eastmoney-topic", names)
         self.assertIn("cninfo-latest-announcements", names)
         self.assertIn("xinhua-tech-home", names)
+        self.assertIn("sfc-offer-periods", names)
+        self.assertIn("cnsa-news", names)
+        self.assertIn("spacechina-news", names)
+        self.assertIn("spacechina-innovation", names)
+        self.assertIn("pbc-news", names)
+        self.assertIn("nfra-news", names)
+        self.assertIn("nhsa-news", names)
+        self.assertIn("mofcom-news", names)
+        self.assertIn("mot-news", names)
+        self.assertIn("nda-news", names)
+        # gacc-news / mohurd-news / sasac-news are intentionally left out: those
+        # sites are unreachable from outside mainland China (verified 2026-07-30
+        # from two independent networks) and are disabled in live_sources.json.
+        # Asserting on a specific source's enabled state makes this test fail
+        # every time a source is toggled, so only the mechanism is asserted below.
+        self.assertIn("sse-announcements", names)
+        self.assertIn("szse-announcements", names)
         self.assertNotIn("tmtpost", names)
         self.assertNotIn("gelonghui-hk", names)
         self.assertNotIn("huxiu-tech-channel", names)
         self.assertNotIn("ifeng-tech-home", names)
+
+    def test_eastmoney_topic_collector_extracts_homepage_and_history_topics(self) -> None:
+        pages = {
+            "https://gubatopic.eastmoney.com/interface/GetData.aspx?path=newtopic/api/Topic/HomePageListRead": json.dumps(
+                {
+                    "rc": 1,
+                    "count": 2,
+                    "re": [
+                        {
+                            "htid": 11554,
+                            "nickname": "阿里云上调AI算力价格，需求持续旺盛",
+                            "introduction": "算力租赁概念股午后持续拉升",
+                            "desc": "阿里云官网发布AI算力、存储等产品调价公告。",
+                            "clickNumber": 302977,
+                            "collectNumber": 0,
+                            "postNumber": 418,
+                            "isRecommend": False,
+                            "stock_list": [
+                                {"code": "bk1134", "name": "算力概念", "market": "-1", "qmarket": 90, "qcode": "BK1134"},
+                                {"code": "603300", "name": "海南华铁", "market": "100", "qmarket": 1, "qcode": "603300"},
+                            ],
+                        }
+                    ],
+                }
+            ),
+            "https://gubatopic.eastmoney.com/interface/GetData.aspx?path=newtopic/api/Topic/HistoryTopicRead": json.dumps(
+                {
+                    "rc": 1,
+                    "count": 1,
+                    "re": [
+                        {
+                            "htime": "2026-03-17T00:00:00",
+                            "historyTopic": [
+                                {
+                                    "htid": 11638,
+                                    "name": "蚂蚁集团要约收购耀才证券已获批准",
+                                    "stock_list": [
+                                        {"code": "hk01428", "name": "耀才证券金融", "market": "106", "qmarket": 116, "qcode": "01428"},
+                                        {"code": "hk06099", "name": "招商证券", "market": "106", "qmarket": 116, "qcode": "06099"},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+        }
+        collector = EastmoneyTopicCollector(
+            _FakeHttpClient(pages),
+            EastmoneyTopicSpec(homepage_limit=5, history_limit=5),
+        )
+
+        records = collector.collect()
+
+        self.assertEqual(len(records), 2)
+        self.assertTrue(all(record.source_id == "eastmoney-topic" for record in records))
+        self.assertEqual(records[0].external_id, "11554")
+        self.assertIn("AI算力价格", records[0].title)
+        self.assertIn("海南华铁", records[0].entities)
+        self.assertEqual(records[1].external_id, "11638")
+        self.assertIn("耀才证券金融", records[1].entities)
+        self.assertIn("HK", records[1].regions)
 
     def test_cls_collector_falls_back_to_html_page(self) -> None:
         pages = {
@@ -196,6 +326,52 @@ class HtmlCollectorTest(unittest.TestCase):
         self.assertEqual(focus_record.external_id, "F1")
         self.assertEqual(focus_record.metadata["endpoint"], "focus")
         self.assertAlmostEqual(focus_record.source_trust, 0.88, places=2)
+
+    def test_sfc_offer_periods_collector_extracts_current_offer_rows(self) -> None:
+        pages = {
+            "https://www.sfc.hk/en/Regulatory-functions/Corporates/Takeovers-and-mergers/offer-periods": """
+                <html><body>
+                  <div class="table-container main-style offer-periods-table" data-target="0">
+                    <table>
+                      <tbody>
+                        <tr>
+                          <th>Offeree Company</th>
+                          <th>Stock Code</th>
+                          <th>Offeror</th>
+                          <th>Relevant securities</th>
+                          <th>Date of commencement of offer period</th>
+                          <th>Date of publication of announcement</th>
+                        </tr>
+                      </tbody>
+                      <tbody class="append-here">
+                        <tr>
+                          <td>Bright Smart Securities &amp; Commodities Group Limited</td>
+                          <td>01428</td>
+                          <td>Wealthiness and Prosperity Holding Limited</td>
+                          <td>Bright Smart Securities &amp; Commodities Group Limited</td>
+                          <td data-date="25 Apr 2025">25 Apr 2025</td>
+                          <td data-date="25 Apr 2025">25 Apr 2025</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </body></html>
+            """,
+        }
+
+        collector = SFCOfferPeriodsCollector(
+            _FakeHttpClient(pages),
+            SFCOfferPeriodsSpec(item_limit=3),
+        )
+
+        records = collector.collect()
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].source_id, "sfc-offer-periods")
+        self.assertIn("Bright Smart Securities", records[0].title)
+        self.assertIn("Wealthiness and Prosperity", records[0].body)
+        self.assertEqual(records[0].metadata["stock_code"], "01428")
+        self.assertEqual(records[0].metadata["instrument_market"], "HK")
 
     def test_rss_collector_strips_html_from_summary(self) -> None:
         pages = {

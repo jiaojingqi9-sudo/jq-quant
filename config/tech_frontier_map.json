@@ -252,10 +252,11 @@
     "us_keywords": ["starlink", "spacex starlink", "kuiper", "oneweb", "leo constellation"],
     "cn_breakthrough_keywords": [
       "千帆星座", "国网星座", "G60星链", "卫星互联网", "低轨卫星组网",
-      "银河航天", "中国星网", "一箭多星", "卫星批量生产"
+      "银河航天", "中国星网", "一箭多星", "卫星批量生产", "商业航天",
+      "许可准入", "发射申请", "频率协调", "箭星场频网", "太空算力", "太空制造"
     ],
-    "impact_themes": ["aerospace-defense", "domestic-substitution", "chip-design", "order-momentum"],
-    "related_symbols": ["600118.SH", "600879.SH"],
+    "impact_themes": ["aerospace-defense", "commercial-space", "satellite-internet", "domestic-substitution", "order-momentum"],
+    "related_symbols": ["600118.SH", "601698.SH", "600879.SH", "002025.SZ"],
     "breakthrough_bonus": 0.22,
     "note": "中国千帆星座计划14000颗卫星，对标 Starlink"
   },
@@ -342,7 +343,7 @@
     "gap_level": "parallel",
     "us_keywords": ["quantum supremacy", "logical qubit", "error correction", "ibm quantum", "google willow"],
     "cn_breakthrough_keywords": [
-      "量子比特数突破", "九章", "祖冲之号", "量子纠错突破",
+      "量子比特数突破", "祖冲之号", "量子纠错突破",
       "国盾量子", "本源量子", "量子计算云平台", "量子优越性"
     ],
     "impact_themes": ["quantum-computing", "chip-design", "domestic-substitution"],

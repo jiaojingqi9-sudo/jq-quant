@@ -31,19 +31,23 @@ class WeiboCollector:
         cookie_path: Path,
         http_client: UrllibHttpClient,
         max_results_per_query: int = 20,
+        max_queries_per_cycle: int | None = None,
         sleep_range: tuple[float, float] = (0.4, 1.0),
         browser_executable_path: str | None = None,
         browser_timeout_ms: int = 15_000,
         browser_warmup_ms: int = 1_200,
+        browser_fallback_enabled: bool = False,
     ) -> None:
         self.queries = list(queries)
         self.cookie_path = Path(cookie_path).expanduser()
         self.http_client = http_client
         self.max_results_per_query = max_results_per_query
+        self.max_queries_per_cycle = max_queries_per_cycle
         self.sleep_range = sleep_range
         self.browser_executable_path = browser_executable_path
         self.browser_timeout_ms = browser_timeout_ms
         self.browser_warmup_ms = browser_warmup_ms
+        self.browser_fallback_enabled = browser_fallback_enabled
 
     def collect(self) -> list[RawNewsRecord]:
         try:
@@ -56,7 +60,7 @@ class WeiboCollector:
             return []
 
         records: list[RawNewsRecord] = []
-        for index, query in enumerate(self.queries):
+        for index, query in enumerate(self._cycle_queries()):
             if index > 0:
                 time.sleep(random.uniform(*self.sleep_range))
             try:
@@ -68,6 +72,19 @@ class WeiboCollector:
             except Exception as exc:
                 logger.warning("weibo query failed: %s (%s)", query, exc)
         return records
+
+    def _cycle_queries(self) -> list[str]:
+        if not self.queries:
+            return []
+        if self.max_queries_per_cycle is None or self.max_queries_per_cycle <= 0:
+            return list(self.queries)
+        if self.max_queries_per_cycle >= len(self.queries):
+            return list(self.queries)
+        # Rotate the query window by time so each cycle samples a different slice.
+        bucket = int(utcnow().timestamp() // 300)
+        start = bucket % len(self.queries)
+        ordered = self.queries[start:] + self.queries[:start]
+        return ordered[: self.max_queries_per_cycle]
 
     def check_session(self) -> tuple[bool, str]:
         # HTTP-only: don't spin up a browser just for a health check
@@ -98,6 +115,13 @@ class WeiboCollector:
                     wait = 1.5 + random.uniform(0, 1.0)
                     logger.debug("weibo HTTP attempt 1 failed (%s), retrying in %.1fs", exc, wait)
                     time.sleep(wait)
+
+        if not self.browser_fallback_enabled:
+            logger.debug(
+                "weibo HTTP path failed twice (%s), browser fallback disabled",
+                last_http_exc,
+            )
+            return []
 
         logger.debug("weibo HTTP path failed twice (%s), falling back to browser", last_http_exc)
         payload = self._fetch_payload_browser(query, cookies)

@@ -26,6 +26,47 @@ class MonitorStateWriter:
     status_path: Path
     history_path: Path
 
+    def write_running(
+        self,
+        *,
+        report_path: Path | None = None,
+        preview_path: Path | None = None,
+    ) -> dict[str, object]:
+        payload = {
+            "timestamp": utcnow().isoformat(),
+            "overall_status": "running",
+            "run_id": None,
+            "source": None,
+            "counts": {
+                "raw_records": 0,
+                "documents": 0,
+                "clusters": 0,
+                "ranked_events": 0,
+                "ranked_instruments": 0,
+                "alerts": 0,
+            },
+            "alert_counts": {
+                "critical": 0,
+                "high": 0,
+                "medium": 0,
+                "new": 0,
+            },
+            "artifacts": {
+                "json_report": str(report_path) if report_path else "",
+                "markdown_report": "",
+                "phone_preview": str(preview_path) if preview_path else "",
+            },
+            "modules": [
+                {"name": "core_market", "status": "running", "detail": "collection cycle is running"},
+                {"name": "tech_block", "status": "running", "detail": "collection cycle is running"},
+                {"name": "lexicon_discovery", "status": "running", "detail": "collection cycle is running"},
+            ],
+            "notification": None,
+            "errors": [],
+        }
+        self._write(payload)
+        return payload
+
     def write_cycle(
         self,
         *,
@@ -33,10 +74,11 @@ class MonitorStateWriter:
         report_path: Path,
         preview_path: Path,
         notification_result: NotificationResult | None,
+        overall_status_override: str | None = None,
     ) -> dict[str, object]:
         payload = {
             "timestamp": utcnow().isoformat(),
-            "overall_status": self._resolve_overall_status(notification_result),
+            "overall_status": overall_status_override or self._resolve_overall_status(notification_result),
             "run_id": snapshot.run_id,
             "source": snapshot.source_name,
             "counts": {
@@ -57,6 +99,9 @@ class MonitorStateWriter:
                 "json_report": str(report_path),
                 "markdown_report": snapshot.artifacts.get("markdown_report", ""),
                 "phone_preview": str(preview_path),
+                "news_learning_review_packet_md": snapshot.artifacts.get("news_learning_review_packet_md", ""),
+                "news_learning_review_packet_json": snapshot.artifacts.get("news_learning_review_packet_json", ""),
+                "news_learning_codex_handoff": snapshot.artifacts.get("news_learning_codex_handoff", ""),
             },
             "modules": self._snapshot_modules(snapshot),
             "notification": self._notification_payload(notification_result),
@@ -176,6 +221,19 @@ class MonitorStateWriter:
                     "detail": "unknown-term discovery queue is tracking new tech vocabulary",
                     "pending_count": pending_count,
                     "saved_count": saved_count,
+                }
+            )
+        learning_status = str(snapshot.artifacts.get("news_learning_status", "") or "")
+        if learning_status:
+            modules.append(
+                {
+                    "name": "news_learning",
+                    "status": "ok" if learning_status == "ok" else "degraded",
+                    "detail": "news Evidence-to-Review packet generated"
+                    if learning_status == "ok"
+                    else str(snapshot.artifacts.get("news_learning_error", "news learning artifacts unavailable")),
+                    "candidate_count": int(snapshot.artifacts.get("news_learning_candidate_count", 0) or 0),
+                    "review_packet": snapshot.artifacts.get("news_learning_review_packet_md", ""),
                 }
             )
         return modules

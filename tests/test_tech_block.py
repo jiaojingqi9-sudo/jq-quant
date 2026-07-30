@@ -351,6 +351,186 @@ class TechBlockTest(unittest.TestCase):
         self.assertGreaterEqual(signal["spec_score"], 55)
         self.assertIn("semicap-equipment", {item["theme"] for item in signal["activated_themes"]})
 
+    def test_frontier_quantum_does_not_fire_on_generic_company_action_text(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        block = AHShareTechFeatureBlock.from_files(
+            universe_path=root / "config" / "tech_universe_cn_hk.json",
+            lexicon_path=root / "config" / "tech_lexicon.json",
+            lexicon_release_path=root / "config" / "tech_lexicon_release.json",
+            graph_path=root / "config" / "tech_impact_graph.json",
+            frontier_map_path=root / "config" / "tech_frontier_map.json",
+        )
+        timestamp = datetime(2026, 3, 19, 10, 0, tzinfo=UTC)
+        document = NewsDocument(
+            doc_id=stable_id("doc", "generic-corp-action"),
+            source_id="cninfo_latest",
+            title="上海晶丰明源半导体股份有限公司关于发行股份及支付现金购买资产并募集配套资金的发行结果暨股本变动公告",
+            summary="证券代码：688368 证券简称：晶丰明源 公告编号：2026-019",
+            body="本公告为公司发行股份及支付现金购买资产事项的结果说明，正文不涉及量子计算、量子比特或量子纠错。",
+            url="https://example.com/corp-action",
+            published_at=timestamp,
+            fetched_at=timestamp,
+            language="zh",
+            source_trust=0.99,
+            canonical_key="generic-corp-action",
+        )
+        cluster = EventCluster(
+            cluster_id="cluster-generic-corp-action",
+            story_key="generic-corp-action",
+            headline=document.title,
+            summary=document.summary,
+            documents=[document],
+            entities=["晶丰明源", "688368"],
+            themes=["takeover", "m&a", "corporate-action"],
+            sectors=[],
+            regions=["CN"],
+            source_ids=["cninfo_latest"],
+            first_seen_at=timestamp,
+            last_seen_at=timestamp,
+        )
+        impact = ImpactAssessment(
+            event_type=EventType.COMPANY,
+            direction=Direction.POSITIVE,
+            affected_markets=[],
+            affected_sectors=[],
+            affected_themes=["takeover", "m&a", "corporate-action"],
+            severity=0.7,
+            confidence=0.9,
+            matched_rules=["Takeover and Offer Period"],
+            rationale=["official corporate action"],
+        )
+        event = RankedEvent(
+            cluster_id=cluster.cluster_id,
+            headline=cluster.headline,
+            impact=impact,
+            heat_score=66.0,
+            importance_score=70.0,
+            confidence_score=88.0,
+            market_relevance_score=62.0,
+            final_score=72.0,
+        )
+        snapshot = PipelineSnapshot(
+            run_id="run-corp-action-no-quantum",
+            created_at=timestamp,
+            source_name="test",
+            raw_records=[],
+            documents=[document],
+            clusters=[cluster],
+            ranked_events=[event],
+            ranked_instruments=[],
+            alerts=[],
+        )
+
+        evaluated = block.evaluate(snapshot)
+        signals = evaluated["signals"]
+        if not signals:
+            self.assertEqual(signals, [])
+            return
+
+        signal = signals[0]
+        frontier_ids = {hit["frontier_id"] for hit in signal["frontier_hits"]}
+        self.assertNotIn("quantum-computing", frontier_ids)
+        self.assertFalse(
+            signal["frontier_hits"]
+            and any(hit["frontier_id"] == "quantum-computing" for hit in signal["frontier_hits"])
+        )
+
+    def test_misaligned_official_docs_do_not_pollute_frontier_matching(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        block = AHShareTechFeatureBlock.from_files(
+            universe_path=root / "config" / "tech_universe_cn_hk.json",
+            lexicon_path=root / "config" / "tech_lexicon.json",
+            lexicon_release_path=root / "config" / "tech_lexicon_release.json",
+            graph_path=root / "config" / "tech_impact_graph.json",
+            frontier_map_path=root / "config" / "tech_frontier_map.json",
+            config_path=root / "config" / "tech_block.json",
+        )
+        timestamp = datetime(2026, 3, 20, 12, 0, tzinfo=UTC)
+        medical_doc = NewsDocument(
+            doc_id=stable_id("doc", "medical-policy"),
+            source_id="gov-nhsa",
+            title="“冠心病PCI术后”门诊慢特病待遇认定“零跑腿”——湖南医保便民有了新进展",
+            summary="湖南医保便民服务再升级。",
+            body="本文只讨论医保认定、门诊慢特病与便民流程，不涉及卫星互联网或低轨卫星。",
+            url="https://example.com/nhsa-medical",
+            published_at=timestamp,
+            fetched_at=timestamp,
+            language="zh",
+            source_trust=0.95,
+            canonical_key="nhsa-medical",
+            themes=["policy", "healthcare"],
+        )
+        polluted_doc = NewsDocument(
+            doc_id=stable_id("doc", "satellite-policy"),
+            source_id="xinhua-tech",
+            title="我国成功发射卫星互联网低轨20组卫星",
+            summary="卫星互联网建设提速。",
+            body="卫星互联网、低轨卫星组网与商业航天持续推进。",
+            url="https://example.com/satellite",
+            published_at=timestamp,
+            fetched_at=timestamp,
+            language="zh",
+            source_trust=0.9,
+            canonical_key="satellite-policy",
+            themes=["technology", "policy"],
+        )
+        cluster = EventCluster(
+            cluster_id="cluster-medical-policy",
+            story_key="medical-policy",
+            headline=medical_doc.title,
+            summary=medical_doc.summary,
+            documents=[medical_doc, polluted_doc],
+            entities=[],
+            themes=["policy", "healthcare", "technology"],
+            sectors=[],
+            regions=["CN"],
+            source_ids=["gov-nhsa", "xinhua-tech"],
+            first_seen_at=timestamp,
+            last_seen_at=timestamp,
+        )
+        impact = ImpactAssessment(
+            event_type=EventType.POLICY,
+            direction=Direction.POSITIVE,
+            affected_markets=[],
+            affected_sectors=["healthcare"],
+            affected_themes=["healthcare"],
+            severity=0.68,
+            confidence=0.86,
+            matched_rules=["policy"],
+            rationale=["official medical policy"],
+        )
+        event = RankedEvent(
+            cluster_id=cluster.cluster_id,
+            headline=cluster.headline,
+            impact=impact,
+            heat_score=70.0,
+            importance_score=74.0,
+            confidence_score=86.0,
+            market_relevance_score=68.0,
+            final_score=73.0,
+        )
+        snapshot = PipelineSnapshot(
+            run_id="run-coherent-frontier",
+            created_at=timestamp,
+            source_name="test",
+            raw_records=[],
+            documents=[medical_doc, polluted_doc],
+            clusters=[cluster],
+            ranked_events=[event],
+            ranked_instruments=[],
+            alerts=[],
+        )
+
+        signals = block.evaluate(snapshot)["signals"]
+        if not signals:
+            self.assertEqual(signals, [])
+            return
+
+        signal = signals[0]
+        frontier_ids = {hit["frontier_id"] for hit in signal["frontier_hits"]}
+        self.assertNotIn("satellite-internet", frontier_ids)
+        self.assertEqual(signal["evidence_source_ids"], ["gov-nhsa"])
+
 
 if __name__ == "__main__":
     unittest.main()

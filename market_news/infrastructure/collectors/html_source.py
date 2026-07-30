@@ -100,14 +100,20 @@ class HtmlListDetailCollector:
         raise last_error
 
     def _extract_candidates(self, html: str, base_url: str) -> list[_AnchorCandidate]:
-        anchors = re.findall(r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", html, flags=re.IGNORECASE | re.DOTALL)
+        anchors = re.findall(r"<a\b([^>]*)>(.*?)</a>", html, flags=re.IGNORECASE | re.DOTALL)
         candidates: list[_AnchorCandidate] = []
         seen_urls: set[str] = set()
-        for href, inner_html in anchors:
+        for attributes, inner_html in anchors:
+            href_match = re.search(r"href=[\"']([^\"']+)[\"']", attributes, flags=re.IGNORECASE)
+            if not href_match:
+                continue
+            href = href_match.group(1)
             absolute_url = urljoin(base_url, unescape(href.strip()))
             if absolute_url in seen_urls or not self._allowed_url(absolute_url):
                 continue
-            title = self._normalize_text(inner_html)
+            title_match = re.search(r"title=[\"']([^\"']+)[\"']", attributes, flags=re.IGNORECASE | re.DOTALL)
+            title_source = title_match.group(1) if title_match else inner_html
+            title = self._normalize_text(title_source)
             if not title:
                 continue
             if not self._allowed_title(title):

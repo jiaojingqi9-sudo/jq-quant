@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import re
 
 from market_news.domain.models import (
     AlertItem,
@@ -10,16 +11,43 @@ from market_news.domain.models import (
     RankedEvent,
     RankedInstrument,
 )
+from market_news.services.fundamental_focus import (
+    evaluate_notification_gate,
+    is_fundamental_impact,
+    is_low_predictability_risk,
+    is_policy_access_opening_impact,
+    is_policy_demand_impact,
+)
+
+
+# Bulk regulatory filings carry no event and no readable headline: a US XBRL
+# financial-statement submission arrives as "COMPANY NAME (0001234567) (Filer)".
+# These feeds are already excluded from model judgement in
+# config/model_judgement.json, and the alert engine has to honour the same call —
+# otherwise a single working XBRL feed floods the phone with filer names.
+#
+# RankedEvent does not carry its source documents, so the filter keys off the
+# filing headline shape, which is unmistakable and stable.
+BULK_FILING_HEADLINE_RE = re.compile(
+    r"\(\s*\d{7,10}\s*\)\s*\((?:Filer|Subject|Reporting)\)\s*$",
+    re.IGNORECASE,
+)
 
 
 class RuleBasedAlertEngine:
-    def __init__(self, max_alerts: int = 12) -> None:
+    def __init__(self, max_alerts: int = 12, drop_bulk_filings: bool = True) -> None:
         self.max_alerts = max_alerts
+        self.drop_bulk_filings = drop_bulk_filings
         self.level_priority = {
             AlertLevel.CRITICAL: 3,
             AlertLevel.HIGH: 2,
             AlertLevel.MEDIUM: 1,
         }
+
+    def _is_bulk_filing(self, event: RankedEvent) -> bool:
+        if not self.drop_bulk_filings:
+            return False
+        return bool(BULK_FILING_HEADLINE_RE.search(str(event.headline or "").strip()))
 
     def generate(
         self,
@@ -35,6 +63,8 @@ class RuleBasedAlertEngine:
 
         alerts: list[AlertItem] = []
         for event in ranked_events:
+            if self._is_bulk_filing(event):
+                continue
             is_new = event.cluster_id not in seen_cluster_ids
             level = self._resolve_level(event, is_new)
             if level is None:
@@ -71,14 +101,29 @@ class RuleBasedAlertEngine:
         direction = event.impact.direction
         event_type = event.impact.event_type
         score = event.final_score
-        if is_new and direction == Direction.NEGATIVE and score >= 66:
+        gate = evaluate_notification_gate(event, is_new=is_new)
+        if is_low_predictability_risk(event):
+            if is_new and score >= 72:
+                return AlertLevel.MEDIUM
+            return None
+        if is_new and gate.should_notify and is_fundamental_impact(event.impact):
             return AlertLevel.CRITICAL
-        if is_new and event_type != EventType.UNKNOWN and score >= 68:
-            return AlertLevel.CRITICAL
-        if is_new and event_type != EventType.UNKNOWN and score >= 58:
+        if is_new and gate.should_notify and is_policy_demand_impact(event.impact):
             return AlertLevel.HIGH
+        if (
+            is_new
+            and is_policy_access_opening_impact(event.impact)
+            and event.impact.direction != Direction.NEUTRAL
+            and score >= 82
+            and event.impact.confidence >= 0.70
+        ):
+            return AlertLevel.HIGH
+        if is_new and gate.tier == "model" and is_fundamental_impact(event.impact) and score >= 68:
+            return AlertLevel.HIGH
+        if is_new and event_type != EventType.UNKNOWN and gate.score >= 50 and score >= 68:
+            return AlertLevel.MEDIUM
         if direction == Direction.NEGATIVE and score >= 62:
-            return AlertLevel.HIGH
+            return AlertLevel.MEDIUM
         if is_new and score >= 50:
             return AlertLevel.MEDIUM
         return None
@@ -93,5 +138,8 @@ class RuleBasedAlertEngine:
             parts.append("positive catalyst")
         if event.impact.event_type != EventType.UNKNOWN:
             parts.append(event.impact.event_type.value)
+        gate = evaluate_notification_gate(event, is_new=is_new)
+        if gate.reasons:
+            parts.append("gate=" + "/".join(gate.reasons[:3]))
         parts.append(f"score={event.final_score}")
         return ", ".join(parts)
