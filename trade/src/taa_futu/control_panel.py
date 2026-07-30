@@ -1,0 +1,2289 @@
+from __future__ import annotations
+
+from datetime import datetime
+import json
+from pathlib import Path
+import os
+import hashlib
+import queue
+import socket
+import subprocess
+import sys
+import threading
+import time
+import tkinter as tk
+from tkinter import messagebox, ttk
+import webbrowser
+import signal
+from zoneinfo import ZoneInfo
+from tkinter import simpledialog
+
+from . import describe_build
+from .cascade_sleeve import cascade_summary_line
+from .config import load_settings
+from .strategy_stack import active_stack_strategy, baseline_sleeve_enabled, stack_allocations, stack_label
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SRC_ROOT = REPO_ROOT / "src"
+VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
+DASHBOARD_APP = SRC_ROOT / "taa_futu" / "dashboard_app.py"
+FUTU_OPEND_APP = Path("/Applications/FutuOpenD.app")
+ENV_FILE = REPO_ROOT / ".env"
+ENV_EXAMPLE_FILE = REPO_ROOT / ".env.example"
+RUNTIME_DIR = REPO_ROOT / "runtime"
+AUTO_TRADER_STATUS_FILE = RUNTIME_DIR / "auto_trader_status.json"
+AUTO_TRADER_PID_FILE = RUNTIME_DIR / "auto_trader.pid"
+AUTO_TRADER_LOG_FILE = RUNTIME_DIR / "auto_trader.log"
+WATCHDOG_STATUS_FILE = RUNTIME_DIR / "watchdog_status.json"
+WATCHDOG_PID_FILE = RUNTIME_DIR / "watchdog.pid"
+WATCHDOG_LOG_FILE = RUNTIME_DIR / "watchdog.log"
+WATCHDOG_LAUNCH_AGENT_PLIST = Path.home() / "Library" / "LaunchAgents" / "com.jiao.taa_futu_watchdog.plist"
+LEGACY_AUTO_TRADER_LAUNCH_AGENT_PLIST = Path.home() / "Library" / "LaunchAgents" / "com.jiao.taa_futu_auto_trader.plist"
+CAFFEINATE_BIN = Path("/usr/bin/caffeinate")
+
+# ── Claude-Trade engine (separate repo / separate venv) ───────────────────────
+CT_REPO_ROOT    = REPO_ROOT.parent / "claude-trade"
+CT_VENV_PYTHON  = CT_REPO_ROOT / ".venv" / "bin" / "python"
+CT_PID_FILE     = CT_REPO_ROOT / "runtime" / "engine.pid"
+CT_STATUS_FILE  = CT_REPO_ROOT / "runtime" / "status.json"
+CT_LOG_FILE     = CT_REPO_ROOT / "runtime" / "engine.log"
+CT_RUNTIME_DIR  = CT_REPO_ROOT / "runtime"
+CT_SRC_ROOT     = CT_REPO_ROOT / "src"
+CT_DASHBOARD_PORT = 8051
+
+# ── Market data permissions (OpenAPI) ────────────────────────────────────────
+NASDAQ_BASIC_URL = "https://qtcardfthk.futufin.com/intro/nasdaq-basic?clientlang=0&is_support_buy=1&type=12"
+NASDAQ_TOTALVIEW_URL = "https://qtcardfthk.futufin.com/intro/nasdaq-basic?clientlang=0&is_support_buy=1&type=18"
+OPRA_URL = "https://qtcardfthk.futufin.com/intro/api-usoption-realtime?clientlang=0&is_support_buy=1&type=16"
+
+
+def detect_tcl_tk_paths() -> tuple[Path | None, Path | None]:
+    """Resolve bundled Tcl/Tk data dirs for the current Python runtime."""
+    candidates: list[Path] = []
+    try:
+        candidates.append(Path(tk.__file__).resolve().parents[2])
+    except Exception:
+        pass
+    try:
+        candidates.append(Path(sys.executable).resolve().parents[1] / "lib")
+    except Exception:
+        pass
+
+    seen: set[Path] = set()
+    ordered_candidates: list[Path] = []
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        ordered_candidates.append(path)
+
+    for lib_root in ordered_candidates:
+        if not lib_root.exists():
+            continue
+        tcl_dir = next((p for p in sorted(lib_root.glob("tcl8.*")) if (p / "init.tcl").exists()), None)
+        tk_dir = next((p for p in sorted(lib_root.glob("tk8.*")) if p.is_dir()), None)
+        if tcl_dir and tk_dir:
+            return tcl_dir, tk_dir
+    return None, None
+
+
+def ensure_tcl_tk_env() -> tuple[Path | None, Path | None]:
+    tcl_dir, tk_dir = detect_tcl_tk_paths()
+    if tcl_dir is not None:
+        current_tcl = os.environ.get("TCL_LIBRARY", "").strip()
+        if not current_tcl or not Path(current_tcl).exists():
+            os.environ["TCL_LIBRARY"] = str(tcl_dir)
+    if tk_dir is not None:
+        current_tk = os.environ.get("TK_LIBRARY", "").strip()
+        if not current_tk or not Path(current_tk).exists():
+            os.environ["TK_LIBRARY"] = str(tk_dir)
+    return tcl_dir, tk_dir
+
+
+def is_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def build_env() -> dict[str, str]:
+    env = os.environ.copy()
+    pythonpath_parts = [str(SRC_ROOT)]
+    if env.get("PYTHONPATH"):
+        pythonpath_parts.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    env.setdefault("STREAMLIT_BROWSER_GATHER_USAGE_STATS", "false")
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
+def is_pid_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _format_status_timestamp(raw: str) -> str:
+    if not raw:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return raw
+    return parsed.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _is_transient_status_message(message: object) -> bool:
+    text = str(message or "").strip().lower()
+    if not text:
+        return False
+    markers = (
+        "packeterr.timeout",
+        "timeout",
+        "connection closed",
+        "查询未完成订单请求超时",
+        "请求超时",
+        "此数据暂时还未准备好",
+        "网络中断",
+        "连接中断",
+        "接口超时",
+        "transient_error",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _friendly_runtime_status(action: str, detail: object) -> tuple[str, str, str]:
+    raw_detail = str(detail or "").strip()
+    if action == "transient_error" or _is_transient_status_message(raw_detail):
+        return (
+            "接口波动 / transient",
+            "富途接口瞬时超时 / api timeout",
+            f"不是你电脑断网。是 OpenD/富途接口短暂断开，系统会自动重试。原始信息: {raw_detail or 'N/A'}",
+        )
+    if action == "error":
+        return ("异常 / error", "异常 / error", raw_detail)
+    return ("正常 / healthy", action, raw_detail)
+
+
+def _parse_status_timestamp(raw: str) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=ZoneInfo("UTC"))
+    return parsed
+
+
+def _watchdog_program_arguments() -> list[str]:
+    base = [str(VENV_PYTHON), "-m", "taa_futu.watchdog"]
+    if CAFFEINATE_BIN.exists():
+        return [str(CAFFEINATE_BIN), "-i", "-m", "-s", *base]
+    return base
+
+
+def _study_mode_label(mode: str) -> str:
+    mapping = {
+        "baseline": "基线月频回测",
+        "fusion": "Fusion 日内回放",
+        "ofim": "OFIM 订单流回放",
+        "cascade": "Claude/Cascade 回放",
+        "stack": "组合整体回测",
+        "account": "账户真实复盘",
+        "exact": "精确执行复盘",
+    }
+    return mapping.get(mode, mode)
+
+
+def _manual_strategy_label(mode: str) -> str:
+    mapping = {
+        "baseline": "Baseline 月频手动下单",
+        "fusion": "Fusion 日内手动下单",
+        "ofim": "OFIM 订单流手动下单",
+        "cascade": "Claude/Cascade 手动下单",
+    }
+    return mapping.get(mode, mode)
+
+
+def _short_symbols(symbols: tuple[str, ...], *, limit: int | None = None) -> str:
+    visible = tuple(code.replace("US.", "") for code in symbols)
+    if limit is not None and len(visible) > limit:
+        head = " / ".join(visible[:limit])
+        return f"{head} / ... 共{len(visible)}只"
+    return " / ".join(visible)
+
+
+def _baseline_summary(settings) -> str:
+    symbols = _short_symbols(settings.symbols)
+    return (
+        "基线策略: 月频 5ETF 趋势。"
+        f"基准 {settings.benchmark.replace('US.', '')}，"
+        f"{settings.lookback_months} 个月均线，"
+        f"标的 {symbols}。"
+    )
+
+
+def _fusion_summary(settings) -> str:
+    universe = _short_symbols(settings.fusion_universe, limit=8)
+    return (
+        "Fusion策略: 美股日内多因子。"
+        f"基准 {settings.fusion_benchmark.replace('US.', '')}，"
+        f"回看 {settings.fusion_lookback_bars} 根 1分钟K，"
+        f"观察池 {universe}。"
+    )
+
+
+def _ofim_summary(settings) -> str:
+    universe = _short_symbols(settings.ofim_universe, limit=8)
+    return (
+        "OFIM策略: 盘口失衡 + 逐笔订单流。"
+        f"基准 {settings.ofim_benchmark.replace('US.', '')}，"
+        f"回看 {settings.ofim_lookback_bars} 根 1分钟K，"
+        f"观察池 {universe}。"
+    )
+
+
+def _cascade_summary(settings) -> str:
+    return cascade_summary_line(settings)
+
+
+def _auto_stack_summary(settings) -> str:
+    active = active_stack_strategy(settings)
+    baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = stack_allocations(settings)
+    sleeves: list[tuple[str, float, str | None]] = []
+
+    if baseline_sleeve_enabled(settings) and baseline_weight > 0:
+        sleeves.append(("基线 Baseline", baseline_weight, None))
+    if fusion_weight > 0:
+        sleeves.append(("Fusion 日内", fusion_weight, None))
+    if ofim_weight > 0:
+        sleeves.append(("OFIM 订单流", ofim_weight, None))
+    if cascade_weight > 0:
+        sleeves.append(("Claude/Cascade", cascade_weight, "只执行 Futu 可交易部分；crypto 预算保留现金。"))
+    if reserve_weight > 0:
+        sleeves.append(("现金预留", reserve_weight, None))
+
+    if not sleeves:
+        return "现在后台自动运行: 没有启用任何模块。"
+
+    mode_label = "自定义组合"
+    if active == "baseline":
+        mode_label = "独占插头 / Plug: Baseline Only"
+    elif active == "fusion":
+        mode_label = "独占插头 / Plug: Fusion Only"
+    elif active == "ofim":
+        mode_label = "独占插头 / Plug: OFIM Only"
+    elif active == "cascade":
+        mode_label = "独占插头 / Plug: Claude/Cascade Only"
+    elif len(sleeves) == 1 and sleeves[0][0] == "Fusion 日内" and abs(fusion_weight - 1.0) <= 1e-9:
+        mode_label = "Fusion Only"
+    elif len(sleeves) == 1 and sleeves[0][0] == "OFIM 订单流" and abs(ofim_weight - 1.0) <= 1e-9:
+        mode_label = "OFIM Only"
+    elif len(sleeves) == 1 and sleeves[0][0] == "基线 Baseline" and abs(baseline_weight - 1.0) <= 1e-9:
+        mode_label = "Baseline Only"
+    elif len(sleeves) == 1 and sleeves[0][0] == "Claude/Cascade" and abs(cascade_weight - 1.0) <= 1e-9:
+        mode_label = "Cascade Only"
+    elif (
+        baseline_sleeve_enabled(settings)
+        and abs(baseline_weight - 0.25) <= 1e-9
+        and abs(fusion_weight) <= 1e-9
+        and abs(ofim_weight - 0.25) <= 1e-9
+        and abs(cascade_weight - 0.50) <= 1e-9
+        and abs(reserve_weight) <= 1e-9
+    ):
+        mode_label = "我的策略组 50% + Claude 50%"
+    elif (
+        baseline_sleeve_enabled(settings)
+        and abs(baseline_weight - 0.25) <= 1e-9
+        and abs(fusion_weight - 0.25) <= 1e-9
+        and abs(ofim_weight - 0.25) <= 1e-9
+        and abs(cascade_weight - 0.25) <= 1e-9
+        and abs(reserve_weight) <= 1e-9
+    ):
+        mode_label = "Full Stack (四策略均衡)"
+
+    if len(sleeves) == 1:
+        headline = f"现在后台自动运行: 只跑 1 个模块，即 {sleeves[0][0]}。"
+    else:
+        headline = f"现在后台自动运行: {len(sleeves)} 个模块一起跑。"
+
+    mode_text = f"当前自动盘模式: {mode_label}"
+    if active is not None:
+        mode_text += "。已开启硬隔离，不会和其他策略混跑。"
+    ratio_text = "占比: " + " + ".join(f"{name} {weight:.0%}" for name, weight, _ in sleeves)
+    detail_lines = [f"{idx}. {name}: {weight:.0%}" for idx, (name, weight, _) in enumerate(sleeves, start=1)]
+    for _, _, note in sleeves:
+        if note:
+            detail_lines.append(note)
+    return "\n".join([mode_text, headline, ratio_text, *detail_lines])
+
+
+def _cost_summary(settings) -> str:
+    if not settings.trade_costs_enabled:
+        return "当前费用模型: 关闭。回测和复盘不会扣估算交易成本。"
+    return (
+        "当前费用模型: 已开启。"
+        f" 费用档案 {settings.trade_cost_profile}，"
+        " 会把佣金 / 平台费 / 结算费 / SEC / TAF 按配置估算进回测和历史复盘。"
+    )
+
+
+def _ct_engine_pid() -> int:
+    if not CT_PID_FILE.exists():
+        return 0
+    try:
+        return int(CT_PID_FILE.read_text().strip())
+    except Exception:
+        return 0
+
+
+def _ct_engine_running() -> bool:
+    pid = _ct_engine_pid()
+    return pid > 0 and is_pid_running(pid)
+
+
+def _ct_status_text() -> str:
+    if CT_STATUS_FILE.exists():
+        try:
+            payload = json.loads(CT_STATUS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        action = str(payload.get("action", ""))
+        detail = str(payload.get("detail", "") or "")[:80]
+        regime = str(payload.get("regime_label", "") or "")
+        updated_at = _format_status_timestamp(str(payload.get("updated_at", "")))
+        if action:
+            regime_part = f" | {regime}" if regime else ""
+            ts_part = f" | {updated_at}" if updated_at else ""
+            return f"Cascade引擎 / CT Engine: 运行中 / running | {action}{regime_part}{ts_part} | {detail}"
+    if _ct_engine_running():
+        return f"Cascade引擎 / CT Engine: 运行中 / running (pid={_ct_engine_pid()})"
+    return "Cascade引擎 / CT Engine: 已停止 / stopped"
+
+
+def _ct_build_env() -> dict[str, str]:
+    env = os.environ.copy()
+    parts = [str(CT_SRC_ROOT)]
+    if env.get("PYTHONPATH"):
+        parts.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(parts)
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
+def _ct_engine_args(*, dry_run: bool) -> list[str]:
+    base = [str(CT_VENV_PYTHON), "-m", "claude_trade.cli", "run"]
+    if dry_run:
+        base.append("--dry-run")
+    if CAFFEINATE_BIN.exists():
+        return [str(CAFFEINATE_BIN), "-i", "-m", "-s", *base]
+    return base
+
+
+class _EmbeddedFrame(ttk.Frame):
+    """ttk.Frame that absorbs the toplevel-only ``tk.Tk`` calls ControlPanel
+    makes against ``self.root``.
+
+    The legacy ControlPanel was written assuming ``self.root = tk.Tk()`` and
+    calls ``self.root.title()`` / ``.geometry()`` / ``.minsize()`` / ``.protocol()``
+    etc. in many places. When ControlPanel is embedded inside another Tk
+    window (e.g. the unified panel), those window-config calls don't make
+    sense — the host owns the window — so we no-op them. Widget methods
+    (``after``, ``bind``, ``winfo_*``, ``columnconfigure``, ``rowconfigure``,
+    ``update_idletasks``) inherit from ttk.Frame and work normally.
+
+    ``destroy`` is intentionally NOT overridden — the default Frame.destroy
+    destroys this frame and its children but leaves the host window alone,
+    which is exactly what we want when a tab is closed.
+    """
+
+    def title(self, *_args, **_kwargs): return None
+    def geometry(self, *_args, **_kwargs): return None
+    def minsize(self, *_args, **_kwargs): return None
+    def maxsize(self, *_args, **_kwargs): return None
+    def resizable(self, *_args, **_kwargs): return None
+    def protocol(self, *_args, **_kwargs): return None
+    def iconbitmap(self, *_args, **_kwargs): return None
+    def iconphoto(self, *_args, **_kwargs): return None
+    def wm_attributes(self, *_args, **_kwargs): return None
+    def deiconify(self): return None
+    def iconify(self): return None
+    def withdraw(self): return None
+    def mainloop(self, *_args, **_kwargs): return None
+    def quit(self): return None
+
+
+class ControlPanel:
+    def __init__(self, master: tk.Misc | None = None) -> None:
+        ensure_tcl_tk_env()
+        version, tag, commit = describe_build()
+        # When ``master`` is provided we are being embedded inside another
+        # window (the unified panel's "完整控制台" tab). In that mode we use
+        # an _EmbeddedFrame so widget-creation code that passes ``self.root``
+        # as the parent still works, but window-config calls become no-ops.
+        self._embedded = master is not None
+        if self._embedded:
+            self.root = _EmbeddedFrame(master)
+        else:
+            self.root = tk.Tk()
+            self.root.title(f"TAA + Futu 控制台 / Control Panel · {tag}")
+            self.root.geometry("1500x960")
+            self.root.minsize(1240, 780)
+
+        self.log_queue: queue.Queue[str] = queue.Queue()
+        self.dashboard_process: subprocess.Popen[str] | None = None
+        self._wrapping_labels: list[ttk.Label] = []
+        self._status_refresh_after_id: str | None = None
+        self.main_pane: tk.PanedWindow | None = None
+        self.content_vertical_pane: tk.PanedWindow | None = None
+        self.top_pane: tk.PanedWindow | None = None
+        self.middle_pane: tk.PanedWindow | None = None
+        self._scroll_canvases: list[tk.Canvas] = []
+        self._pane_constraint_after_id: str | None = None
+        self._enforcing_pane_limits = False
+        self._last_root_size: tuple[int, int] | None = None
+
+        self.opend_host = tk.StringVar(value="127.0.0.1")
+        self.opend_port = tk.StringVar(value="11111")
+        self.dashboard_port = tk.StringVar(value="8501")
+        self.start_date = tk.StringVar(value="2015-01-01")
+        self.end_date = tk.StringVar(value=time.strftime("%Y-%m-%d"))
+        self.backtest_strategy = tk.StringVar(value="baseline")
+        self.manual_strategy = tk.StringVar(value="fusion")
+        initial_settings = load_settings(REPO_ROOT / ".env")
+        self.stack_baseline_enabled = tk.BooleanVar(value=initial_settings.stack_baseline_enabled)
+        self.stack_baseline_weight = tk.StringVar(value=f"{initial_settings.stack_baseline_weight:.2f}")
+        self.stack_fusion_weight = tk.StringVar(value=f"{initial_settings.stack_fusion_weight:.2f}")
+        self.stack_ofim_weight = tk.StringVar(value=f"{initial_settings.stack_ofim_weight:.2f}")
+        self.stack_cascade_weight = tk.StringVar(value=f"{initial_settings.stack_cascade_weight:.2f}")
+        # Futu pre-gate (additive — defaults preserve original behavior).
+        self.pregate_mode = tk.StringVar(value=self._resolve_pregate_mode(initial_settings))
+
+        self.opend_status = tk.StringVar(value="OpenD 状态 / Status: 检查中 / checking...")
+        self.dashboard_status = tk.StringVar(value="监控页 / Dashboard: 已停止 / stopped")
+        self.auto_status = tk.StringVar(value="自动运行 / Auto Run: 已停止 / stopped")
+        self.watchdog_status = tk.StringVar(value="守护监控 / Watchdog: 已停止 / stopped")
+        self.ct_engine_status = tk.StringVar(value="Cascade引擎 / CT Engine: 检查中 / checking...")
+        self.trade_mode_status = tk.StringVar(value="交易模式 / Trade Mode: 检查中 / checking...")
+        self.strategy_status = tk.StringVar(value="当前策略 / Strategy: 检查中 / checking...")
+        self.version_status = tk.StringVar(
+            value=f"版本 / Version: {version} | 标签 / Tag: {tag} | 提交 / Commit: {commit}"
+        )
+
+        self._build_ui()
+        # Window-level wiring only applies when we own the window.
+        if not self._embedded:
+            self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.after(300, self._drain_log_queue)
+        self.root.after(500, self.refresh_status)
+        # Only close the launching Terminal when running standalone — when
+        # embedded we are not the process that opened the terminal.
+        if not self._embedded:
+            self.root.after(800, self._close_launcher_terminal)
+
+    def _close_launcher_terminal(self) -> None:
+        """Close any Terminal window that was used to launch this control panel.
+
+        Must ignore SIGHUP *before* closing the window: when Terminal closes a
+        window it sends SIGHUP to every process in that session.  Without the
+        signal guard Python would exit the moment the window disappears.
+        """
+        # Step 1: ignore SIGHUP so closing the Terminal window doesn't kill us.
+        try:
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        except (OSError, ValueError):
+            pass  # not available on all platforms; safe to skip
+
+        # Step 2: close whichever Terminal window launched this process.
+        # Try by name first, then fall back to closing the front window.
+        script = (
+            'tell application "Terminal"\n'
+            '  try\n'
+            '    close (every window whose name contains "control_panel")\n'
+            '  end try\n'
+            '  try\n'
+            '    close (every window whose name contains "量化交易")\n'
+            '  end try\n'
+            '  try\n'
+            '    if (count of windows) > 0 then close front window\n'
+            '  end try\n'
+            'end tell'
+        )
+        try:
+            subprocess.Popen(
+                ["osascript", "-e", script],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+
+    def _build_ui(self) -> None:
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+
+        self.main_pane = tk.PanedWindow(
+            self.root,
+            orient=tk.VERTICAL,
+            sashwidth=16,
+            sashrelief=tk.RAISED,
+            showhandle=True,
+            handlesize=14,
+            handlepad=4,
+            sashcursor="sb_v_double_arrow",
+            opaqueresize=False,
+            bg="#d8d8d8",
+            bd=0,
+        )
+        self.main_pane.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+
+        content = ttk.Frame(self.main_pane, padding=4)
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(0, weight=1)
+        self.content_vertical_pane = tk.PanedWindow(
+            content,
+            orient=tk.VERTICAL,
+            sashwidth=16,
+            sashrelief=tk.RAISED,
+            showhandle=True,
+            handlesize=14,
+            handlepad=4,
+            sashcursor="sb_v_double_arrow",
+            opaqueresize=False,
+            bg="#d8d8d8",
+            bd=0,
+        )
+        self.content_vertical_pane.grid(row=0, column=0, sticky="nsew")
+        self.root.bind_all("<MouseWheel>", self._on_global_mousewheel, add="+")
+        self.root.bind_all("<Button-4>", self._on_global_mousewheel, add="+")
+        self.root.bind_all("<Button-5>", self._on_global_mousewheel, add="+")
+
+        top_pane = tk.PanedWindow(
+            self.content_vertical_pane,
+            orient=tk.HORIZONTAL,
+            sashwidth=16,
+            sashrelief=tk.RAISED,
+            showhandle=True,
+            handlesize=14,
+            handlepad=4,
+            sashcursor="sb_h_double_arrow",
+            opaqueresize=False,
+            bg="#d8d8d8",
+            bd=0,
+        )
+        self.top_pane = top_pane
+        self.content_vertical_pane.add(top_pane, minsize=260, stretch="always")
+
+        status_frame, status_inner = self._create_scrollable_section(top_pane, "状态 / Status")
+        top_pane.add(status_frame, minsize=360, stretch="always")
+        for idx, text_var in enumerate([self.version_status, self.opend_status, self.dashboard_status, self.ct_engine_status, self.trade_mode_status, self.strategy_status, self.auto_status, self.watchdog_status]):
+            label = ttk.Label(status_inner, textvariable=text_var, justify="left", anchor="w")
+            label.grid(row=idx, column=0, sticky="ew", pady=(0 if idx == 0 else 8, 0))
+            self._wrapping_labels.append(label)
+
+        service_frame, service_inner = self._create_section(top_pane, "一键服务 / One-Click Service")
+        top_pane.add(service_frame, minsize=240, stretch="always")
+        service_buttons = [
+            ("一键启动 / One-Click Start", self.one_click_start),
+            ("一键重启 / Restart All", self.restart_console_and_dashboard),
+            ("启动全局自动运行 / Start Auto Run", self.start_auto_fusion),
+            ("停止全局自动运行 / Stop Auto Run", self.stop_auto_fusion),
+            ("打开监控页 / Open Dashboard", self.start_dashboard),
+            ("停止监控页 / Stop Dashboard", self.stop_dashboard),
+            ("打开 OpenD / Open FutuOpenD", self.open_futu_opend),
+            ("刷新状态 / Refresh Status", self.refresh_status),
+        ]
+        for idx, (text, command) in enumerate(service_buttons):
+            ttk.Button(service_inner, text=text, command=command).grid(row=idx, column=0, sticky="ew", pady=(0 if idx == 0 else 8, 0))
+
+        config_frame, config_inner = self._create_scrollable_section(top_pane, "连接设置 / Connection")
+        config_inner.columnconfigure(1, weight=1)
+        top_pane.add(config_frame, minsize=260, stretch="always")
+        ttk.Label(config_inner, text="OpenD 地址 / Host").grid(row=0, column=0, sticky="w")
+        ttk.Entry(config_inner, textvariable=self.opend_host).grid(row=0, column=1, sticky="ew", padx=(10, 0))
+        ttk.Label(config_inner, text="OpenD 端口 / Port").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.opend_port).grid(row=1, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Label(config_inner, text="监控页端口 / Dashboard Port").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.dashboard_port).grid(row=2, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Label(config_inner, text="独占插头 / Plug Mode").grid(row=3, column=0, sticky="w", pady=(14, 0))
+        ttk.Button(config_inner, text="单跑 Baseline / Baseline Only", command=self.use_baseline_only).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="单跑 Fusion / Fusion Only", command=self.use_fusion_only).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="单跑 OFIM / OFIM Only", command=self.use_ofim_only).grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="单跑 Cascade / Cascade Only", command=self.use_cascade_only).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="解除插头 / Clear Plug (Custom Mix)", command=self.clear_active_plug).grid(row=8, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(config_inner, text="常用组合 / Quick Stack").grid(row=9, column=0, sticky="w", pady=(14, 0))
+        ttk.Button(config_inner, text="我的策略组 50% + Claude 50%", command=self.use_fusion_cascade_split).grid(row=10, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="四策略均衡 25/25/25/25", command=self.use_full_stack).grid(row=11, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(config_inner, text="交易环境 / Trade Mode").grid(row=12, column=0, sticky="w", pady=(14, 0))
+        ttk.Button(config_inner, text="切到模拟盘 / Use SIMULATE", command=self.arm_simulate_mode).grid(row=13, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="⚠️ 重置模拟账户 / Reset Simulate Account", command=self.reset_simulate_account).grid(row=14, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        ttk.Button(config_inner, text="切到实盘手动 / Arm REAL Manual", command=self.arm_real_manual_mode).grid(row=15, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="切到实盘自动 / Arm REAL Auto", command=self.arm_real_auto_mode).grid(row=16, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(config_inner, text="实用工具 / Utilities").grid(row=17, column=0, sticky="w", pady=(14, 0))
+        ttk.Button(config_inner, text="撤销全部挂单 / Cancel All Open Orders", command=self.cancel_all_orders).grid(row=18, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="⚠️ 清空全部持仓 / Flatten All Positions", command=self.flatten_all_positions).grid(row=19, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="实盘就绪检查 / Check REAL Readiness", command=self.check_real_readiness).grid(row=20, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="设置交易密码MD5 / Set Trade Pwd MD5", command=self.set_trade_password_md5).grid(row=21, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="安装开机自启 / Install Login Auto Start", command=self.install_login_auto_start).grid(row=22, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(config_inner, text="关闭开机自启 / Remove Login Auto Start", command=self.uninstall_login_auto_start).grid(row=23, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(config_inner, text="高级组合 / Advanced Stack").grid(row=24, column=0, sticky="w", pady=(14, 0))
+        ttk.Checkbutton(config_inner, text="启用基线 sleeve / Enable Baseline Sleeve", variable=self.stack_baseline_enabled).grid(row=24, column=1, sticky="w", padx=(10, 0), pady=(14, 0))
+        ttk.Label(config_inner, text="基线权重 / Baseline Weight").grid(row=25, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.stack_baseline_weight).grid(row=25, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Label(config_inner, text="Fusion 权重 / Fusion Weight").grid(row=26, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.stack_fusion_weight).grid(row=26, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Label(config_inner, text="OFIM 权重 / OFIM Weight").grid(row=27, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.stack_ofim_weight).grid(row=27, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Label(config_inner, text="Cascade 权重 / Cascade Weight").grid(row=28, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(config_inner, textvariable=self.stack_cascade_weight).grid(row=28, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Button(config_inner, text="应用组合配置 / Apply Stack Config", command=self.apply_stack_config).grid(row=29, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+
+        ttk.Separator(config_inner, orient="horizontal").grid(row=30, column=0, columnspan=2, sticky="ew", pady=(14, 6))
+        ttk.Label(config_inner, text="行情权限 / Market Data").grid(row=31, column=0, columnspan=2, sticky="w")
+        ttk.Button(
+            config_inner,
+            text="开通 Nasdaq Basic / Open Nasdaq Basic",
+            command=lambda: webbrowser.open(NASDAQ_BASIC_URL),
+        ).grid(row=32, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Button(
+            config_inner,
+            text="开通 TotalView / Open TotalView",
+            command=lambda: webbrowser.open(NASDAQ_TOTALVIEW_URL),
+        ).grid(row=33, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Button(
+            config_inner,
+            text="开通 OPRA / Open OPRA",
+            command=lambda: webbrowser.open(OPRA_URL),
+        ).grid(row=34, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+
+        # ── Futu Pre-gate (additive; defaults to OFF) ──────────────────────
+        ttk.Separator(config_inner, orient="horizontal").grid(
+            row=35, column=0, columnspan=2, sticky="ew", pady=(14, 6)
+        )
+        ttk.Label(
+            config_inner,
+            text="富途盘前过滤 / Futu Pre-gate (Fusion only)",
+        ).grid(row=36, column=0, columnspan=2, sticky="w")
+        _pregate_radio_frame = ttk.Frame(config_inner)
+        _pregate_radio_frame.grid(row=37, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Radiobutton(
+            _pregate_radio_frame,
+            text="关闭 / Off",
+            variable=self.pregate_mode,
+            value="off",
+            command=self.apply_pregate_mode,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Radiobutton(
+            _pregate_radio_frame,
+            text="只记录 / Log only",
+            variable=self.pregate_mode,
+            value="logonly",
+            command=self.apply_pregate_mode,
+        ).grid(row=0, column=1, sticky="w", padx=(0, 12))
+        ttk.Radiobutton(
+            _pregate_radio_frame,
+            text="生效 / Active",
+            variable=self.pregate_mode,
+            value="active",
+            command=self.apply_pregate_mode,
+        ).grid(row=0, column=2, sticky="w")
+        ttk.Label(
+            config_inner,
+            text="只删不加；不会修改订单或权重，Baseline 不受影响。",
+            foreground="#666666",
+            wraplength=380,
+            justify="left",
+        ).grid(row=38, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        middle_pane = tk.PanedWindow(
+            self.content_vertical_pane,
+            orient=tk.HORIZONTAL,
+            sashwidth=16,
+            sashrelief=tk.RAISED,
+            showhandle=True,
+            handlesize=14,
+            handlepad=4,
+            sashcursor="sb_h_double_arrow",
+            opaqueresize=False,
+            bg="#d8d8d8",
+            bd=0,
+        )
+        self.middle_pane = middle_pane
+        self.content_vertical_pane.add(middle_pane, minsize=220, stretch="always")
+
+        research_frame, research_inner = self._create_section(middle_pane, "历史模拟 / Historical Simulation")
+        research_inner.columnconfigure(1, weight=1)
+        middle_pane.add(research_frame, minsize=320, stretch="always")
+        ttk.Label(research_inner, text="开始日期 / Start Date").grid(row=0, column=0, sticky="w")
+        ttk.Entry(research_inner, textvariable=self.start_date).grid(row=0, column=1, sticky="ew", padx=(10, 0))
+        ttk.Label(research_inner, text="结束日期 / End Date").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(research_inner, textvariable=self.end_date).grid(row=1, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Label(research_inner, text="回测方法 / Study Mode").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        strategy_combo = ttk.Combobox(
+            research_inner,
+            textvariable=self.backtest_strategy,
+            state="readonly",
+            values=[
+                "baseline",
+                "fusion",
+                "ofim",
+                "cascade",
+                "stack",
+                "account",
+                "exact",
+            ],
+        )
+        strategy_combo.grid(row=2, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        ttk.Button(research_inner, text="运行回测 / Run Backtest", command=self.run_backtest).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+        ttk.Button(research_inner, text="查看月度信号 / Show Monthly Signal", command=self.run_signals).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        baseline_frame, baseline_inner = self._create_section(middle_pane, "基线策略 / Baseline Strategy")
+        middle_pane.add(baseline_frame, minsize=260, stretch="always")
+        ttk.Button(baseline_inner, text="预演订单 / Plan Orders", command=self.run_paper_trade).grid(row=0, column=0, sticky="ew")
+        ttk.Button(baseline_inner, text="提交订单 / Submit Orders", command=self.submit_paper_trade).grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        baseline_note = ttk.Label(
+            baseline_inner,
+            text="用于月频 ETF 策略。先预演，再提交。适合看中长期调仓，不适合日内盯盘。",
+            justify="left",
+            anchor="w",
+            wraplength=320,
+        )
+        baseline_note.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+
+        fusion_frame, fusion_inner = self._create_section(middle_pane, "Fusion 策略 / Fusion Intraday")
+        middle_pane.add(fusion_frame, minsize=300, stretch="always")
+        ttk.Button(fusion_inner, text="试运行 / Run Dry-Run", command=self.run_fusion).grid(row=0, column=0, sticky="ew")
+        ttk.Button(fusion_inner, text="提交订单 / Submit Orders", command=self.submit_fusion).grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        fusion_note = ttk.Label(
+            fusion_inner,
+            text="这里负责 Fusion 的手动试运行和提交；全局自动运行开关已经挪到上面的“一键服务”。",
+            justify="left",
+            anchor="w",
+            wraplength=340,
+        )
+        fusion_note.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+
+        ofim_frame, ofim_inner = self._create_section(middle_pane, "OFIM 策略 / OFIM Order Flow")
+        middle_pane.add(ofim_frame, minsize=300, stretch="always")
+        ttk.Button(ofim_inner, text="试运行 / Run Dry-Run", command=self.run_ofim_only).grid(row=0, column=0, sticky="ew")
+        ttk.Button(ofim_inner, text="提交订单 / Submit Orders", command=self.submit_ofim_only).grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        ofim_note = ttk.Label(
+            ofim_inner,
+            text="这里负责 OFIM 订单流策略的手动试运行和提交；它现在和 Fusion 已经完全分开。",
+            justify="left",
+            anchor="w",
+            wraplength=340,
+        )
+        ofim_note.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+
+        cascade_frame, cascade_inner = self._create_section(middle_pane, "Claude 策略 / Claude-Cascade")
+        middle_pane.add(cascade_frame, minsize=300, stretch="always")
+        ttk.Button(cascade_inner, text="试运行 / Run Dry-Run", command=self.run_cascade).grid(row=0, column=0, sticky="ew")
+        ttk.Button(cascade_inner, text="提交订单 / Submit Orders", command=self.submit_cascade).grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        ttk.Separator(cascade_inner, orient="horizontal").grid(row=2, column=0, sticky="ew", pady=(12, 4))
+        ttk.Label(cascade_inner, text="Cascade 独立引擎 / Standalone Engine", anchor="w").grid(row=3, column=0, sticky="ew")
+        ttk.Button(cascade_inner, text="▶ 启动引擎 (试运行) / Start Engine Dry-Run", command=self.ct_start_engine_dryrun).grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(cascade_inner, text="▶ 启动引擎 (实盘) / Start Engine Live", command=self.ct_start_engine_live).grid(row=5, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(cascade_inner, text="■ 停止引擎 / Stop Engine", command=self.ct_stop_engine).grid(row=6, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(cascade_inner, text="🌐 打开 Cascade 监控页 / Open CT Dashboard", command=self.ct_open_dashboard).grid(row=7, column=0, sticky="ew", pady=(6, 0))
+        cascade_note = ttk.Label(
+            cascade_inner,
+            text="上方两个按钮操作 taa_futu 里的 Cascade 路径（无独立引擎）。下方四个按钮控制 claude-trade 独立引擎及其专属监控页（端口 8051）。",
+            justify="left",
+            anchor="w",
+            wraplength=340,
+        )
+        cascade_note.grid(row=8, column=0, sticky="ew", pady=(10, 0))
+
+        log_frame = ttk.LabelFrame(self.main_pane, text="输出日志 / Output", padding=12)
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(1, weight=1)
+        self.main_pane.add(content, minsize=420, stretch="always")
+        self.main_pane.add(log_frame, minsize=180, stretch="always")
+
+        log_toolbar = ttk.Frame(log_frame)
+        log_toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        log_toolbar.columnconfigure(0, weight=1)
+        ttk.Button(log_toolbar, text="放大日志 / Log +", command=self.expand_log_panel).grid(row=0, column=1, padx=(0, 6))
+        ttk.Button(log_toolbar, text="缩小日志 / Log -", command=self.shrink_log_panel).grid(row=0, column=2, padx=(0, 6))
+        ttk.Button(log_toolbar, text="清空日志 / Clear", command=self.clear_log).grid(row=0, column=3)
+
+        self.log_text = tk.Text(log_frame, wrap="word", height=22, font=("Menlo", 12))
+        self.log_text.grid(row=1, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
+        scrollbar.grid(row=1, column=1, sticky="ns")
+        self.log_text.configure(yscrollcommand=scrollbar.set)
+        self.log_text.insert("end", "已就绪 / Ready.\n请先点“一键启动 / One-Click Start”。\n")
+        self.log_text.configure(state="disabled")
+
+        status_inner.bind("<Configure>", self._update_wraplengths)
+        self.root.bind("<Configure>", self._schedule_root_constraints, add="+")
+        for pane in [self.main_pane, self.content_vertical_pane, self.top_pane, self.middle_pane]:
+            if pane is not None:
+                pane.bind("<ButtonRelease-1>", self._schedule_pane_constraints, add="+")
+        self.root.after(120, self._enforce_pane_limits)
+
+    def _create_section(self, parent: tk.Misc, title: str) -> tuple[ttk.LabelFrame, ttk.Frame]:
+        frame = ttk.LabelFrame(parent, text=title, padding=12)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+        inner = ttk.Frame(frame)
+        inner.grid(row=0, column=0, sticky="nsew")
+        inner.columnconfigure(0, weight=1)
+        return frame, inner
+
+    def _create_scrollable_section(self, parent: tk.Misc, title: str) -> tuple[ttk.LabelFrame, ttk.Frame]:
+        frame = ttk.LabelFrame(parent, text=title, padding=12)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+        canvas = tk.Canvas(frame, highlightthickness=0, bd=0)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        scrollbar.grid_remove()
+
+        def _sync_scrollbar(first: str, last: str) -> None:
+            scrollbar.set(first, last)
+            try:
+                first_value = float(first)
+                last_value = float(last)
+            except ValueError:
+                scrollbar.grid(row=0, column=1, sticky="ns")
+                return
+            if first_value <= 0.0 and last_value >= 1.0:
+                scrollbar.grid_remove()
+            else:
+                scrollbar.grid(row=0, column=1, sticky="ns")
+
+        canvas.configure(yscrollcommand=_sync_scrollbar)
+
+        inner = ttk.Frame(canvas)
+        inner.columnconfigure(0, weight=1)
+        window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _sync_scrollregion(_event=None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.yview_moveto(min(canvas.yview()[0], 1.0))
+
+        def _sync_width(event) -> None:
+            canvas.itemconfigure(window_id, width=event.width)
+
+        inner.bind("<Configure>", _sync_scrollregion)
+        canvas.bind("<Configure>", _sync_width)
+        self._scroll_canvases.append(canvas)
+        return frame, inner
+
+    @staticmethod
+    def _widget_is_descendant(widget: tk.Misc | None, ancestor: tk.Misc | None) -> bool:
+        current = widget
+        while current is not None:
+            if current == ancestor:
+                return True
+            parent_name = current.winfo_parent()
+            if not parent_name:
+                return False
+            try:
+                current = current.nametowidget(parent_name)
+            except KeyError:
+                return False
+        return False
+
+    def _on_global_mousewheel(self, event) -> str | None:
+        target = self.root.winfo_containing(event.x_root, event.y_root)
+        canvas = next((item for item in self._scroll_canvases if self._widget_is_descendant(target, item)), None)
+        if canvas is None:
+            return None
+        if getattr(event, "num", None) == 4:
+            delta = -1
+        elif getattr(event, "num", None) == 5:
+            delta = 1
+        else:
+            delta_value = getattr(event, "delta", 0)
+            if delta_value == 0:
+                return None
+            delta = -1 if delta_value > 0 else 1
+        canvas.yview_scroll(delta, "units")
+        return "break"
+
+    def _update_wraplengths(self, _event=None) -> None:
+        for label in self._wrapping_labels:
+            parent = label.nametowidget(label.winfo_parent())
+            wraplength = max(parent.winfo_width() - 28, 240)
+            label.configure(wraplength=wraplength)
+
+    def _schedule_pane_constraints(self, _event=None) -> None:
+        if self._enforcing_pane_limits:
+            return
+        if self._pane_constraint_after_id is not None:
+            try:
+                self.root.after_cancel(self._pane_constraint_after_id)
+            except ValueError:
+                pass
+        self._pane_constraint_after_id = self.root.after(12, self._enforce_pane_limits)
+
+    def _schedule_root_constraints(self, _event=None) -> None:
+        if self._enforcing_pane_limits:
+            return
+        if _event is not None and getattr(_event, "widget", None) is not self.root:
+            return
+        current_size = (self.root.winfo_width(), self.root.winfo_height())
+        if current_size == self._last_root_size:
+            return
+        self._last_root_size = current_size
+        if self._pane_constraint_after_id is not None:
+            try:
+                self.root.after_cancel(self._pane_constraint_after_id)
+            except ValueError:
+                pass
+        self._pane_constraint_after_id = self.root.after(80, self._enforce_pane_limits)
+
+    def _pane_min_sizes(self, pane: tk.PanedWindow | None, fallback: list[int]) -> list[int]:
+        if pane is None:
+            return fallback
+        panes = pane.panes()
+        min_sizes: list[int] = []
+        for index, child in enumerate(panes):
+            fallback_size = fallback[index] if index < len(fallback) else fallback[-1]
+            try:
+                minsize = int(pane.panecget(child, "minsize"))
+            except (tk.TclError, ValueError):
+                minsize = fallback_size
+            min_sizes.append(max(minsize, fallback_size))
+        return min_sizes or fallback
+
+    def _effective_min_sizes(self, total: int, sash_width: int, min_sizes: list[int]) -> list[int]:
+        available = max(total - sash_width * max(len(min_sizes) - 1, 0), 1)
+        required = sum(min_sizes)
+        if required <= available:
+            return min_sizes
+        scale = available / required
+        scaled = [max(60, int(size * scale)) for size in min_sizes]
+        diff = available - sum(scaled)
+        if diff != 0 and scaled:
+            scaled[-1] = max(60, scaled[-1] + diff)
+        return scaled
+
+    def _clamp_horizontal_pane(self, pane: tk.PanedWindow | None, fallback_min_sizes: list[int]) -> None:
+        if pane is None:
+            return
+        pane.update_idletasks()
+        total = pane.winfo_width()
+        min_sizes = self._pane_min_sizes(pane, fallback_min_sizes)
+        if total <= 0 or len(min_sizes) <= 1:
+            return
+        sash_width = int(str(pane.cget("sashwidth")) or "10")
+        mins = self._effective_min_sizes(total, sash_width, min_sizes)
+        sash_count = len(mins) - 1
+        previous_edge = 0
+        for index in range(sash_count):
+            try:
+                current = pane.sash_coord(index)[0]
+            except tk.TclError:
+                return
+            lower = previous_edge + mins[index]
+            remaining_min = sum(mins[index + 1 :])
+            remaining_sashes = sash_width * (sash_count - index)
+            upper = total - remaining_min - remaining_sashes
+            clamped = max(lower, min(current, upper))
+            if abs(clamped - current) >= 2:
+                pane.sash_place(index, clamped, 1)
+            previous_edge = clamped + sash_width
+
+    def _clamp_vertical_pane(self, pane: tk.PanedWindow | None, fallback_min_sizes: list[int]) -> None:
+        if pane is None:
+            return
+        pane.update_idletasks()
+        total = pane.winfo_height()
+        min_sizes = self._pane_min_sizes(pane, fallback_min_sizes)
+        if total <= 0 or len(min_sizes) <= 1:
+            return
+        sash_width = int(str(pane.cget("sashwidth")) or "10")
+        mins = self._effective_min_sizes(total, sash_width, min_sizes)
+        sash_count = len(mins) - 1
+        previous_edge = 0
+        for index in range(sash_count):
+            try:
+                current = pane.sash_coord(index)[1]
+            except tk.TclError:
+                return
+            lower = previous_edge + mins[index]
+            remaining_min = sum(mins[index + 1 :])
+            remaining_sashes = sash_width * (sash_count - index)
+            upper = total - remaining_min - remaining_sashes
+            clamped = max(lower, min(current, upper))
+            if abs(clamped - current) >= 2:
+                pane.sash_place(index, 1, clamped)
+            previous_edge = clamped + sash_width
+
+    def _enforce_pane_limits(self) -> None:
+        self._pane_constraint_after_id = None
+        if self._enforcing_pane_limits:
+            return
+        self._enforcing_pane_limits = True
+        try:
+            self._clamp_vertical_pane(self.main_pane, [420, 180])
+            self._clamp_vertical_pane(self.content_vertical_pane, [260, 220])
+            self._clamp_horizontal_pane(self.top_pane, [360, 240, 260])
+            self._clamp_horizontal_pane(self.middle_pane, [320, 260, 300, 300])
+            self._last_root_size = (self.root.winfo_width(), self.root.winfo_height())
+        finally:
+            self._enforcing_pane_limits = False
+
+    def expand_log_panel(self) -> None:
+        if self.main_pane is None:
+            return
+        self.root.update_idletasks()
+        current = self.main_pane.sash_coord(0)[1]
+        self.main_pane.sash_place(0, 1, max(280, current - 120))
+        self._schedule_pane_constraints()
+
+    def shrink_log_panel(self) -> None:
+        if self.main_pane is None:
+            return
+        self.root.update_idletasks()
+        current = self.main_pane.sash_coord(0)[1]
+        total = max(self.main_pane.winfo_height(), 600)
+        self.main_pane.sash_place(0, 1, min(total - 160, current + 120))
+        self._schedule_pane_constraints()
+
+    def clear_log(self) -> None:
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.insert("end", "日志已清空 / Log cleared.\n")
+        self.log_text.configure(state="disabled")
+
+    def log(self, message: str) -> None:
+        self.log_queue.put(message.rstrip() + "\n")
+
+    def _drain_log_queue(self) -> None:
+        while True:
+            try:
+                message = self.log_queue.get_nowait()
+            except queue.Empty:
+                break
+            self.log_text.configure(state="normal")
+            self.log_text.insert("end", message)
+            self.log_text.see("end")
+            self.log_text.configure(state="disabled")
+        self.root.after(300, self._drain_log_queue)
+
+    def refresh_status(self) -> None:
+        # Snapshot UI-only values on the main thread before handing off to the worker
+        host = self.opend_host.get().strip() or "127.0.0.1"
+        port = int(self.opend_port.get().strip() or "11111")
+        dashboard_port = int(self.dashboard_port.get().strip() or "8501")
+        dash_proc_alive = self.dashboard_process is not None and self.dashboard_process.poll() is None
+
+        def _background_work() -> None:
+            # ── all blocking I/O happens here (off the main thread) ──────────
+            opend_connected = is_port_open(host, port)
+            dash_port_open = is_port_open("127.0.0.1", dashboard_port)
+            try:
+                settings = load_settings(REPO_ROOT / ".env")
+            except Exception:
+                settings = None
+
+            if settings is not None:
+                unlock_ready = "已配置 / set" if settings.futu_unlock_trade_password_md5 else "未配置 / missing"
+                auto_real = "打开 / on" if settings.futu_allow_auto_real else "关闭 / off"
+                try:
+                    baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = stack_allocations(settings)
+                    stack_text = stack_label(settings)
+                except ValueError as exc:
+                    baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = 0.0, 0.0, 0.0, 0.0, 0.0
+                    stack_text = f"配置错误 / invalid ({exc})"
+                trade_mode_text = (
+                    f"交易模式 / Trade Mode: {settings.futu_trd_env} | 实盘下单 / REAL Submit: "
+                    f"{'打开 / on' if settings.futu_enable_real_trading else '关闭 / off'} | "
+                    f"实盘自动 / REAL Auto: {auto_real} | 交易密码MD5: {unlock_ready}\n"
+                    f"组合 / Stack: {stack_text} | 基线开关 / Baseline: "
+                    f"{'开 / on' if baseline_sleeve_enabled(settings) else '关 / off'} "
+                    f"({baseline_weight:.0%}) | Fusion ({fusion_weight:.0%}) | OFIM ({ofim_weight:.0%}) | "
+                    f"Cascade ({cascade_weight:.0%}) | 预留 / Reserve ({reserve_weight:.0%})"
+                )
+                strategy_text = self._strategy_status_text(settings)
+            else:
+                trade_mode_text = "交易模式 / Trade Mode: 配置读取失败 / config error"
+                strategy_text = "当前策略 / Strategy: 配置读取失败 / config error"
+
+            auto_text = self._auto_status_text()
+            watchdog_text = self._watchdog_status_text()
+            ct_text = _ct_status_text()
+
+            # ── schedule UI updates back on the main thread ───────────────────
+            def _apply_ui() -> None:
+                if opend_connected:
+                    self.opend_status.set(f"OpenD 状态 / Status: 已连接 / connected ({host}:{port})")
+                else:
+                    self.opend_status.set(f"OpenD 状态 / Status: 未连接 / offline ({host}:{port})")
+
+                if dash_proc_alive or dash_port_open:
+                    self.dashboard_status.set(f"监控页 / Dashboard: 运行中 / running (http://localhost:{dashboard_port})")
+                else:
+                    self.dashboard_status.set("监控页 / Dashboard: 已停止 / stopped")
+
+                self.trade_mode_status.set(trade_mode_text)
+                self.strategy_status.set(strategy_text)
+                self.auto_status.set(auto_text)
+                self.watchdog_status.set(watchdog_text)
+                self.ct_engine_status.set(ct_text)
+                self._schedule_status_refresh()
+
+            try:
+                self.root.after(0, _apply_ui)
+            except RuntimeError:
+                pass  # window was destroyed
+
+        threading.Thread(target=_background_work, daemon=True).start()
+
+    def _strategy_status_text(self, settings) -> str:
+        study_mode = self.backtest_strategy.get().strip() or "baseline"
+        current_backtest = f"现在点“运行回测”会测: {_study_mode_label(study_mode)}。"
+        current_manual = "现在点各个策略框里的“预演 / 提交订单”，会分别只操作对应那一套策略。"
+        return (
+            f"{current_backtest}\n"
+            f"{current_manual}\n"
+            f"{_auto_stack_summary(settings)}\n"
+            f"{_baseline_summary(settings)}\n"
+            f"{_fusion_summary(settings)}\n"
+            f"{_ofim_summary(settings)}\n"
+            f"{_cascade_summary(settings)}\n"
+            f"{_cost_summary(settings)}"
+        )
+
+    def _schedule_status_refresh(self, delay_ms: int = 8_000) -> None:
+        if self._status_refresh_after_id is not None:
+            try:
+                self.root.after_cancel(self._status_refresh_after_id)
+            except ValueError:
+                pass
+        self._status_refresh_after_id = self.root.after(delay_ms, self.refresh_status)
+
+    def _auto_status_text(self) -> str:
+        if AUTO_TRADER_STATUS_FILE.exists():
+            try:
+                payload = json.loads(AUTO_TRADER_STATUS_FILE.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                payload = {}
+            detail = payload.get("detail", "")
+            action = payload.get("action", "unknown")
+            running = bool(payload.get("running"))
+            updated_at = _format_status_timestamp(str(payload.get("updated_at", "")))
+            updated_dt = _parse_status_timestamp(str(payload.get("updated_at", "")))
+            poll_seconds = int(payload.get("poll_seconds", 60) or 60)
+            stale_after = max(180, poll_seconds * 3)
+            if updated_dt is not None:
+                age_seconds = (datetime.now(updated_dt.tzinfo) - updated_dt).total_seconds()
+                if age_seconds > stale_after:
+                    return (
+                        "自动运行 / Auto Run: 状态陈旧 / stale "
+                        f"| 超过 {int(age_seconds)}s 未更新 / no heartbeat | {action} | {detail}"
+                    )
+            if running:
+                health, action_label, detail_label = _friendly_runtime_status(action, detail)
+                updated_text = f" | 更新时间 / Updated {updated_at}" if updated_at else ""
+                return f"自动运行 / Auto Run: 运行中 / running | {health} | {action_label} | {detail_label}{updated_text}"
+        if AUTO_TRADER_PID_FILE.exists():
+            try:
+                pid = int(AUTO_TRADER_PID_FILE.read_text(encoding="utf-8").strip())
+            except ValueError:
+                pid = 0
+            if pid and is_pid_running(pid):
+                return f"自动运行 / Auto Run: 运行中 / running (pid={pid})"
+        return "自动运行 / Auto Run: 已停止 / stopped"
+
+    def _watchdog_status_text(self) -> str:
+        if WATCHDOG_STATUS_FILE.exists():
+            try:
+                payload = json.loads(WATCHDOG_STATUS_FILE.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                payload = {}
+            detail = payload.get("detail", "")
+            action = payload.get("action", "unknown")
+            running = bool(payload.get("running"))
+            updated_at = _format_status_timestamp(str(payload.get("updated_at", "")))
+            updated_dt = _parse_status_timestamp(str(payload.get("updated_at", "")))
+            next_check = payload.get("next_check_seconds")
+            stale_after = max(600, int(next_check) * 2 if isinstance(next_check, (int, float)) else 600)
+            if updated_dt is not None:
+                age_seconds = (datetime.now(updated_dt.tzinfo) - updated_dt).total_seconds()
+                if age_seconds > stale_after:
+                    return (
+                        "守护监控 / Watchdog: 状态陈旧 / stale "
+                        f"| 超过 {int(age_seconds)}s 未更新 / no heartbeat | {action} | {detail}"
+                    )
+            if running:
+                health, action_label, detail_label = _friendly_runtime_status(action, detail)
+                updated_text = f" | 更新时间 / Updated {updated_at}" if updated_at else ""
+                next_text = f" | 下次检查 / Next ~{next_check}s" if isinstance(next_check, (int, float)) else ""
+                return f"守护监控 / Watchdog: 运行中 / running | {health} | {action_label} | {detail_label}{next_text}{updated_text}"
+        if WATCHDOG_PID_FILE.exists():
+            try:
+                pid = int(WATCHDOG_PID_FILE.read_text(encoding="utf-8").strip())
+            except ValueError:
+                pid = 0
+            if pid and is_pid_running(pid):
+                return f"守护监控 / Watchdog: 运行中 / running (pid={pid})"
+        return "守护监控 / Watchdog: 已停止 / stopped"
+
+    def _run_command_async(self, title: str, command: list[str], env: dict[str, str] | None = None) -> None:
+        def worker() -> None:
+            self.log(f"$ {' '.join(command)}")
+            process = subprocess.Popen(
+                command,
+                cwd=REPO_ROOT,
+                env=env or build_env(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            assert process.stdout is not None
+            for line in process.stdout:
+                self.log(line.rstrip())
+            return_code = process.wait()
+            if return_code == 0:
+                self.log(f"[{title}] 已完成 / finished successfully.")
+            else:
+                self.log(f"[{title}] 退出，状态码 / exited with code {return_code}.")
+            self.root.after(0, self.refresh_status)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _python_cli(self, *args: str) -> list[str]:
+        return [str(VENV_PYTHON), "-m", "taa_futu.cli", *args]
+
+    def open_futu_opend(self) -> None:
+        if not FUTU_OPEND_APP.exists():
+            messagebox.showerror("FutuOpenD", f"缺少应用 / Missing app: {FUTU_OPEND_APP}")
+            return
+        subprocess.Popen(["open", "-a", str(FUTU_OPEND_APP)])
+        self.log("已打开 FutuOpenD / Opened FutuOpenD.")
+        self.root.after(1200, self.refresh_status)
+
+    def open_dashboard_browser(self) -> None:
+        dashboard_port = int(self.dashboard_port.get().strip() or "8501")
+        webbrowser.open(f"http://localhost:{dashboard_port}")
+        self.log(f"已打开浏览器 / Opened browser at http://localhost:{dashboard_port}")
+
+    def open_auto_log(self) -> None:
+        if not AUTO_TRADER_LOG_FILE.exists():
+            self.log("自动日志不存在 / Auto log does not exist yet.")
+            return
+        subprocess.Popen(["open", str(AUTO_TRADER_LOG_FILE)])
+        self.log(f"已打开自动日志 / Opened auto log: {AUTO_TRADER_LOG_FILE}")
+
+    def open_watchdog_log(self) -> None:
+        if not WATCHDOG_LOG_FILE.exists():
+            self.log("守护日志不存在 / Watchdog log does not exist yet.")
+            return
+        subprocess.Popen(["open", str(WATCHDOG_LOG_FILE)])
+        self.log(f"已打开守护日志 / Opened watchdog log: {WATCHDOG_LOG_FILE}")
+
+    def _ensure_env_file(self) -> None:
+        if ENV_FILE.exists():
+            return
+        if ENV_EXAMPLE_FILE.exists():
+            ENV_FILE.write_text(ENV_EXAMPLE_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+            return
+        ENV_FILE.write_text("", encoding="utf-8")
+
+    def _update_env_values(self, updates: dict[str, str]) -> None:
+        self._ensure_env_file()
+        lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
+        remaining = dict(updates)
+        new_lines: list[str] = []
+        for line in lines:
+            if "=" not in line or line.lstrip().startswith("#"):
+                new_lines.append(line)
+                continue
+            key, _value = line.split("=", 1)
+            if key in remaining:
+                new_lines.append(f"{key}={remaining.pop(key)}")
+            else:
+                new_lines.append(line)
+        for key, value in remaining.items():
+            new_lines.append(f"{key}={value}")
+        ENV_FILE.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
+        for key, value in updates.items():
+            os.environ[key] = value
+
+    def _runtime_processes_running(self) -> bool:
+        pid_files = [WATCHDOG_PID_FILE, AUTO_TRADER_PID_FILE]
+        for pid_file in pid_files:
+            if not pid_file.exists():
+                continue
+            try:
+                pid = int(pid_file.read_text(encoding="utf-8").strip())
+            except ValueError:
+                pid = 0
+            if pid and is_pid_running(pid):
+                return True
+        return False
+
+    def _stop_auto_runtime_processes(self, *, log_when_idle: bool = True) -> bool:
+        subprocess.run(["launchctl", "unload", str(WATCHDOG_LAUNCH_AGENT_PLIST)], check=False)
+
+        stop_messages: list[str] = []
+
+        if WATCHDOG_PID_FILE.exists():
+            try:
+                pid = int(WATCHDOG_PID_FILE.read_text(encoding="utf-8").strip())
+            except ValueError:
+                pid = 0
+            if pid and is_pid_running(pid):
+                os.kill(pid, signal.SIGTERM)
+                stop_messages.append(f"watchdog pid {pid}")
+
+        if AUTO_TRADER_PID_FILE.exists():
+            try:
+                pid = int(AUTO_TRADER_PID_FILE.read_text(encoding="utf-8").strip())
+            except ValueError:
+                pid = 0
+            if pid and is_pid_running(pid):
+                os.kill(pid, signal.SIGTERM)
+                stop_messages.append(f"auto trader pid {pid}")
+
+        if stop_messages:
+            self.log(f"已发送停止信号 / Sent stop signal to {' and '.join(stop_messages)}.")
+            return True
+
+        if log_when_idle:
+            self.log("自动运行和守护监控都未运行 / Auto run and watchdog are both stopped.")
+        return False
+
+    def _start_auto_runtime_no_prompt(self) -> None:
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        if WATCHDOG_LAUNCH_AGENT_PLIST.exists():
+            subprocess.run(["launchctl", "load", str(WATCHDOG_LAUNCH_AGENT_PLIST)], check=False)
+            self.log("已按新配置重新加载守护监控 / Reloaded watchdog with the new configuration.")
+        else:
+            with WATCHDOG_LOG_FILE.open("a", encoding="utf-8") as log_file:
+                process = subprocess.Popen(
+                    _watchdog_program_arguments(),
+                    cwd=REPO_ROOT,
+                    env=build_env(),
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    text=True,
+                )
+            self.log(f"已按新配置重启自动运行守护 / Restarted auto-run watchdog with pid {process.pid}.")
+        self.refresh_status()
+
+    def _restart_auto_runtime_if_running(self, reason: str) -> None:
+        if not self._runtime_processes_running():
+            return
+        self.log(
+            f"检测到自动运行仍在使用旧配置，因“{reason}”自动重启后台以应用新配置 / "
+            f"Auto runtime is restarting to apply the new config: {reason}."
+        )
+        self._stop_auto_runtime_processes(log_when_idle=False)
+        self.root.after(1800, self._start_auto_runtime_no_prompt)
+
+    def _apply_stack_env(
+        self,
+        *,
+        baseline_enabled: bool,
+        baseline_weight: float,
+        fusion_weight: float,
+        ofim_weight: float,
+        cascade_weight: float,
+        active_strategy: str | None = None,
+    ) -> None:
+        if active_strategy is not None:
+            normalized = active_strategy.strip().lower()
+            if normalized not in {"baseline", "fusion", "ofim", "cascade"}:
+                raise ValueError(f"未知插头模式 / Unknown plug mode: {active_strategy}")
+            baseline_enabled = normalized == "baseline"
+            baseline_weight = 1.0 if normalized == "baseline" else 0.0
+            fusion_weight = 1.0 if normalized == "fusion" else 0.0
+            ofim_weight = 1.0 if normalized == "ofim" else 0.0
+            cascade_weight = 1.0 if normalized == "cascade" else 0.0
+        effective_baseline = baseline_weight if baseline_enabled else 0.0
+        total = effective_baseline + fusion_weight + ofim_weight + cascade_weight
+        if total > 1.0 + 1e-9:
+            raise ValueError(
+                f"四策略权重之和 {total:.4f} 不能超过 1.00。"
+                " 请减少 Baseline / Fusion / OFIM / Cascade 的权重。"
+            )
+        if ofim_weight < 0:
+            raise ValueError("OFIM 权重不能为负数 / OFIM weight must be ≥ 0.")
+        updates = {
+            "STACK_BASELINE_ENABLED": str(baseline_enabled).lower(),
+            "STACK_BASELINE_WEIGHT": f"{baseline_weight:.4f}",
+            "STACK_FUSION_WEIGHT": f"{fusion_weight:.4f}",
+            "STACK_OFIM_WEIGHT": f"{ofim_weight:.4f}",
+            "STACK_CASCADE_WEIGHT": f"{cascade_weight:.4f}",
+            "STACK_ACTIVE_STRATEGY": (active_strategy or ""),
+            "STACK_ISOLATE_BASELINE_SYMBOLS": "true",
+        }
+        self._update_env_values(updates)
+        self.stack_baseline_enabled.set(baseline_enabled)
+        self.stack_baseline_weight.set(f"{baseline_weight:.2f}")
+        self.stack_fusion_weight.set(f"{fusion_weight:.2f}")
+        self.stack_ofim_weight.set(f"{ofim_weight:.2f}")
+        self.stack_cascade_weight.set(f"{cascade_weight:.2f}")
+
+    def apply_stack_config(self) -> None:
+        try:
+            baseline_weight = float(self.stack_baseline_weight.get().strip() or "0")
+            fusion_weight = float(self.stack_fusion_weight.get().strip() or "0")
+            ofim_weight = float(self.stack_ofim_weight.get().strip() or "0")
+            cascade_weight = float(self.stack_cascade_weight.get().strip() or "0")
+            self._apply_stack_env(
+                baseline_enabled=bool(self.stack_baseline_enabled.get()),
+                baseline_weight=baseline_weight,
+                fusion_weight=fusion_weight,
+                ofim_weight=ofim_weight,
+                cascade_weight=cascade_weight,
+                active_strategy=None,
+            )
+        except ValueError as exc:
+            messagebox.showerror("组合配置错误 / Stack Config Error", str(exc))
+            return
+        self.log("已应用自定义组合配置 / Applied custom stack configuration.")
+        self._restart_auto_runtime_if_running("组合权重已修改")
+        self.refresh_status()
+
+    def use_baseline_only(self) -> None:
+        self._apply_stack_env(
+            baseline_enabled=True,
+            baseline_weight=1.0,
+            fusion_weight=0.0,
+            ofim_weight=0.0,
+            cascade_weight=0.0,
+            active_strategy="baseline",
+        )
+        self.log("已开启独占插头：只跑 Baseline / Plug mode enabled: Baseline only.")
+        self._restart_auto_runtime_if_running("已切到 Baseline Plug")
+        self.refresh_status()
+
+    def use_fusion_only(self) -> None:
+        self._apply_stack_env(
+            baseline_enabled=False,
+            baseline_weight=0.0,
+            fusion_weight=1.0,
+            ofim_weight=0.0,
+            cascade_weight=0.0,
+            active_strategy="fusion",
+        )
+        self.log("已开启独占插头：只跑 Fusion / Plug mode enabled: Fusion only.")
+        self._restart_auto_runtime_if_running("已切到 Fusion Plug")
+        self.refresh_status()
+
+    def use_ofim_only(self) -> None:
+        self._apply_stack_env(
+            baseline_enabled=False,
+            baseline_weight=0.0,
+            fusion_weight=0.0,
+            ofim_weight=1.0,
+            cascade_weight=0.0,
+            active_strategy="ofim",
+        )
+        self.log("已开启独占插头：只跑 OFIM / Plug mode enabled: OFIM only.")
+        self._restart_auto_runtime_if_running("已切到 OFIM Plug")
+        self.refresh_status()
+
+    def use_cascade_only(self) -> None:
+        self._apply_stack_env(
+            baseline_enabled=False,
+            baseline_weight=0.0,
+            fusion_weight=0.0,
+            ofim_weight=0.0,
+            cascade_weight=1.0,
+            active_strategy="cascade",
+        )
+        self.log("已开启独占插头：只跑 Cascade / Plug mode enabled: Claude-Cascade only.")
+        self._restart_auto_runtime_if_running("已切到 Cascade Plug")
+        self.refresh_status()
+
+    def clear_active_plug(self) -> None:
+        try:
+            self._apply_stack_env(
+                baseline_enabled=bool(self.stack_baseline_enabled.get()),
+                baseline_weight=float(self.stack_baseline_weight.get().strip() or "0"),
+                fusion_weight=float(self.stack_fusion_weight.get().strip() or "0"),
+                ofim_weight=float(self.stack_ofim_weight.get().strip() or "0"),
+                cascade_weight=float(self.stack_cascade_weight.get().strip() or "0"),
+                active_strategy=None,
+            )
+        except ValueError as exc:
+            messagebox.showerror("组合配置错误 / Stack Config Error", str(exc))
+            return
+        self.log("已解除独占插头，恢复自定义混合模式 / Cleared plug mode, back to custom mix.")
+        self._restart_auto_runtime_if_running("已解除独占插头")
+        self.refresh_status()
+
+    def use_fusion_cascade_split(self) -> None:
+        self._apply_stack_env(
+            baseline_enabled=True,
+            baseline_weight=0.25,
+            fusion_weight=0.25,
+            ofim_weight=0.0,
+            cascade_weight=0.5,
+            active_strategy=None,
+        )
+        self.log("已切到我的策略组 50% + Claude 50% (Baseline 25% + Fusion 25% + Cascade 50%).")
+        self._restart_auto_runtime_if_running("已切到我的策略组 50% + Claude 50%")
+        self.refresh_status()
+
+    def use_full_stack(self) -> None:
+        # 四策略均衡: Baseline 25% + Fusion 25% + OFIM 25% + Cascade 25%
+        self._apply_stack_env(
+            baseline_enabled=True,
+            baseline_weight=0.25,
+            fusion_weight=0.25,
+            ofim_weight=0.25,
+            cascade_weight=0.25,
+            active_strategy=None,
+        )
+        self.log("已切到四策略均衡 25/25/25/25 / Switched to full four-strategy stack.")
+        self._restart_auto_runtime_if_running("已切到四策略均衡")
+        self.refresh_status()
+
+    def arm_simulate_mode(self) -> None:
+        self._update_env_values(
+            {
+                "FUTU_TRD_ENV": "SIMULATE",
+                "FUTU_ENABLE_REAL_TRADING": "false",
+                "FUTU_ALLOW_AUTO_REAL": "false",
+            }
+        )
+        self.log("已切到模拟盘模式 / Switched to SIMULATE mode.")
+        self._restart_auto_runtime_if_running("交易环境已切到 SIMULATE")
+        self.refresh_status()
+
+    def reset_simulate_account(self) -> None:
+        # Futu OpenAPI v10 Python SDK does not expose a programmatic reset endpoint.
+        # Guide the user to do it manually in the Futu/Moomoo app, then offer to
+        # stop + restart the auto-trader so it picks up the clean account state.
+        messagebox.showinfo(
+            "重置模拟账户 / Reset Simulate Account",
+            "富途 OpenAPI 不支持通过 API 重置模拟账户，请在客户端手动操作：\n\n"
+            "  1. 打开富途牛牛 / Moomoo App\n"
+            "  2. 进入「交易」→「模拟交易」\n"
+            "  3. 右上角「设置」→「重置账户」\n"
+            "  4. 确认重置（持仓清零，恢复初始资金）\n\n"
+            "完成后点「确定」，程序会自动重启自动交易引擎。\n\n"
+            "── English ──\n"
+            "The Futu OpenAPI does not support programmatic account reset.\n"
+            "In the Moomoo app: Trade → Simulate Trading → ⚙️ → Reset Account.\n"
+            "Click OK after resetting — the auto-trader will restart automatically.",
+        )
+        # User clicked OK — restart the auto-trader to load the fresh account state
+        if self._runtime_processes_running():
+            self.log("重启自动交易引擎以加载重置后的账户 / Restarting auto-trader to load reset account...")
+            self._stop_auto_runtime_processes(log_when_idle=False)
+            self.root.after(2000, self._start_auto_runtime_no_prompt)
+        else:
+            self.log("模拟账户重置指引已显示。自动交易未在运行，无需重启。")
+
+    # ── Futu Pre-gate controls ──────────────────────────────────────────────
+    @staticmethod
+    def _resolve_pregate_mode(settings) -> str:
+        """Translate the two pre-gate env flags into a single tri-state."""
+        enabled = bool(getattr(settings, "fusion_futu_pregate_enabled", False))
+        log_only = bool(getattr(settings, "fusion_futu_pregate_log_only", True))
+        if not enabled:
+            return "off"
+        return "logonly" if log_only else "active"
+
+    def apply_pregate_mode(self) -> None:
+        """Persist the radio-selected mode to .env without restarting auto-run.
+
+        Skip-only filter: when 'active' the gate drops weak Fusion candidates;
+        when 'logonly' it writes decisions to runtime/stock_events.jsonl
+        but lets Fusion trade unchanged; when 'off' the gate is a no-op.
+        """
+
+        mode = self.pregate_mode.get().strip().lower()
+        if mode == "off":
+            updates = {
+                "FUSION_FUTU_PREGATE_ENABLED": "false",
+                "FUSION_FUTU_PREGATE_LOG_ONLY": "true",
+            }
+            note = "Pre-gate 已关闭 / Pre-gate OFF"
+        elif mode == "logonly":
+            updates = {
+                "FUSION_FUTU_PREGATE_ENABLED": "true",
+                "FUSION_FUTU_PREGATE_LOG_ONLY": "true",
+            }
+            note = ("Pre-gate 只记录不执行 / Log-only mode. "
+                    "Check runtime/stock_events.jsonl for fusion_pregate_decision events.")
+        elif mode == "active":
+            if not messagebox.askyesno(
+                "确认激活 / Confirm Active",
+                "Pre-gate 将真正过滤 Fusion 候选。\n"
+                "Pre-gate will actually filter Fusion candidates.\n\n"
+                "建议先在 Log-only 模式跑一天确认阈值。继续？",
+            ):
+                # Revert the radio button to whatever .env currently says.
+                current = load_settings(REPO_ROOT / ".env")
+                self.pregate_mode.set(self._resolve_pregate_mode(current))
+                return
+            updates = {
+                "FUSION_FUTU_PREGATE_ENABLED": "true",
+                "FUSION_FUTU_PREGATE_LOG_ONLY": "false",
+            }
+            note = "Pre-gate 已激活 / Pre-gate ACTIVE (filtering Fusion candidates)"
+        else:
+            self.log(f"未知 pre-gate 模式 / unknown pre-gate mode: {mode!r}")
+            return
+        self._update_env_values(updates)
+        self.log(note + " — 下个 cycle 自动生效 / takes effect on next cycle.")
+
+    def cancel_all_orders(self) -> None:
+        """Cancel all open orders in the current trading account via API."""
+        confirmed = messagebox.askyesno(
+            "撤销全部挂单 / Cancel All Open Orders",
+            "这会通过 API 撤销当前账户所有未成交挂单。\n"
+            "This will cancel ALL open/pending orders in the current account via API.\n\n"
+            "确认撤销？/ Confirm cancel all orders?",
+        )
+        if not confirmed:
+            return
+        self.log("撤销全部挂单中... / Cancelling all open orders...")
+        self._run_command_async(
+            "cancel-orders",
+            self._python_cli("cancel-orders"),
+        )
+
+    def flatten_all_positions(self) -> None:
+        settings = load_settings()
+        env_label = settings.futu_trd_env
+        confirmed = messagebox.askyesno(
+            "清空全部持仓 / Flatten All Positions",
+            f"这会对当前 {env_label} 账户所有持仓各提交一笔市价卖单，全部平仓至现金。\n"
+            "自动交易程序会先停止，平仓后重启（从空仓开始按当前策略建仓）。\n\n"
+            f"This will sell ALL open positions in the {env_label} account to cash.\n"
+            "The auto-trader will stop, flatten, then restart from a clean slate.\n\n"
+            "确认清仓？ / Confirm flatten all?",
+        )
+        if not confirmed:
+            return
+        was_running = self._runtime_processes_running()
+        if was_running:
+            self.log("停止自动交易程序... / Stopping auto-trader before flatten...")
+            self._stop_auto_runtime_processes(log_when_idle=False)
+        self.log("提交清仓订单... / Submitting flatten orders (--submit)...")
+        self._run_command_async("flatten-all", self._python_cli("flatten-all", "--submit"))
+        if was_running:
+            self.root.after(5000, self._start_auto_runtime_no_prompt)
+
+    def arm_real_manual_mode(self) -> None:
+        if not messagebox.askyesno(
+            "切到实盘手动 / Arm REAL Manual",
+            "这会把环境切到 REAL，并允许手动真实下单，但不会放开真实自动交易。\n继续吗？\n\nThis switches the environment to REAL and allows manual live orders, but keeps live auto trading locked.\nContinue?",
+        ):
+            return
+        self._update_env_values(
+            {
+                "FUTU_TRD_ENV": "REAL",
+                "FUTU_ENABLE_REAL_TRADING": "true",
+                "FUTU_ALLOW_AUTO_REAL": "false",
+            }
+        )
+        self.log("已切到实盘手动模式 / Armed REAL manual mode.")
+        self._restart_auto_runtime_if_running("交易环境已切到 REAL 手动")
+        self.refresh_status()
+
+    def arm_real_auto_mode(self) -> None:
+        if not messagebox.askyesno(
+            "切到实盘自动 / Arm REAL Auto",
+            "这会把环境切到 REAL，并允许真实自动交易。\n这一步风险最高。\n继续吗？\n\nThis switches the environment to REAL and enables live auto trading.\nThis is the highest-risk mode.\nContinue?",
+        ):
+            return
+        typed = simpledialog.askstring(
+            "最终确认 / Final Confirmation",
+            "请输入 AUTO REAL 作为最终确认。\n\nType AUTO REAL to arm live auto trading.",
+            parent=self.root,
+        )
+        if typed != "AUTO REAL":
+            self.log("已取消切换到真实自动模式 / Cancelled REAL auto mode.")
+            return
+        self._update_env_values(
+            {
+                "FUTU_TRD_ENV": "REAL",
+                "FUTU_ENABLE_REAL_TRADING": "true",
+                "FUTU_ALLOW_AUTO_REAL": "true",
+            }
+        )
+        self.log("已切到实盘自动模式 / Armed REAL auto mode.")
+        self._restart_auto_runtime_if_running("交易环境已切到 REAL 自动")
+        self.refresh_status()
+
+    def set_trade_password_md5(self) -> None:
+        raw_password = simpledialog.askstring(
+            "设置交易密码MD5 / Set Trade Password MD5",
+            "请输入富途交易密码。程序只会把 MD5 写入 .env，不保存明文。\n\nEnter your Futu trade password. The app stores only the MD5 in .env, not the plain password.",
+            parent=self.root,
+            show="*",
+        )
+        if not raw_password:
+            self.log("未更新交易密码MD5 / Trade password MD5 not changed.")
+            return
+        password_md5 = hashlib.md5(raw_password.encode('utf-8')).hexdigest()
+        self._update_env_values({"FUTU_UNLOCK_TRADE_PASSWORD_MD5": password_md5})
+        self.log("已更新交易密码MD5 / Updated trade password MD5 in .env.")
+        self.refresh_status()
+
+    def install_login_auto_start(self) -> None:
+        plist_dir = WATCHDOG_LAUNCH_AGENT_PLIST.parent
+        plist_dir.mkdir(parents=True, exist_ok=True)
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        program_arguments = "".join(f"    <string>{arg}</string>\n" for arg in _watchdog_program_arguments())
+        plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jiao.taa_futu_watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+{program_arguments.rstrip()}
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>{SRC_ROOT}</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>{REPO_ROOT}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{WATCHDOG_LOG_FILE}</string>
+  <key>StandardErrorPath</key>
+  <string>{WATCHDOG_LOG_FILE}</string>
+</dict>
+</plist>
+"""
+        if LEGACY_AUTO_TRADER_LAUNCH_AGENT_PLIST.exists():
+            subprocess.run(["launchctl", "unload", str(LEGACY_AUTO_TRADER_LAUNCH_AGENT_PLIST)], check=False)
+            LEGACY_AUTO_TRADER_LAUNCH_AGENT_PLIST.unlink()
+        WATCHDOG_LAUNCH_AGENT_PLIST.write_text(plist_content, encoding="utf-8")
+        subprocess.run(["launchctl", "unload", str(WATCHDOG_LAUNCH_AGENT_PLIST)], check=False)
+        subprocess.run(["launchctl", "load", str(WATCHDOG_LAUNCH_AGENT_PLIST)], check=True)
+        self.log("已安装开机自启，现由守护监控负责稳定性 / Installed login auto start with watchdog protection.")
+        self.root.after(1000, self.refresh_status)
+
+    def uninstall_login_auto_start(self) -> None:
+        subprocess.run(["launchctl", "unload", str(WATCHDOG_LAUNCH_AGENT_PLIST)], check=False)
+        if WATCHDOG_LAUNCH_AGENT_PLIST.exists():
+            WATCHDOG_LAUNCH_AGENT_PLIST.unlink()
+        if LEGACY_AUTO_TRADER_LAUNCH_AGENT_PLIST.exists():
+            subprocess.run(["launchctl", "unload", str(LEGACY_AUTO_TRADER_LAUNCH_AGENT_PLIST)], check=False)
+            LEGACY_AUTO_TRADER_LAUNCH_AGENT_PLIST.unlink()
+        self.log("已移除开机自启 / Removed login auto start.")
+        self.root.after(1000, self.refresh_status)
+
+    def start_dashboard(self) -> None:
+        dashboard_port = int(self.dashboard_port.get().strip() or "8501")
+        if self.dashboard_process is not None and self.dashboard_process.poll() is None:
+            self.open_dashboard_browser()
+            self.refresh_status()
+            return
+
+        command = [
+            str(VENV_PYTHON),
+            "-m",
+            "streamlit",
+            "run",
+            str(DASHBOARD_APP),
+            "--server.port",
+            str(dashboard_port),
+            "--server.headless=true",        # prevent streamlit from opening its own browser tab
+            "--browser.gatherUsageStats=false",
+        ]
+        proc = subprocess.Popen(
+            command,
+            cwd=REPO_ROOT,
+            env=build_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        self.dashboard_process = proc
+        self.log(f"正在启动监控页 / Starting dashboard on port {dashboard_port}...")
+
+        def reader(p: subprocess.Popen) -> None:
+            # Capture the process object in the closure so that a later restart
+            # overwriting self.dashboard_process never affects this thread.
+            assert p.stdout is not None
+            for line in p.stdout:
+                self.log(f"[dashboard] {line.rstrip()}")
+            return_code = p.wait()
+            self.log(f"[dashboard] 已停止 / stopped with code {return_code}.")
+            self.root.after(0, self.refresh_status)
+
+        threading.Thread(target=reader, args=(proc,), daemon=True).start()
+        self.root.after(1800, self.open_dashboard_browser)
+        self.root.after(600, self.refresh_status)
+
+    def stop_dashboard(self) -> None:
+        if self.dashboard_process is None or self.dashboard_process.poll() is not None:
+            self.log("监控页未运行 / Dashboard is not running.")
+            self.refresh_status()
+            return
+
+        self.dashboard_process.terminate()
+        self.log("正在停止监控页 / Stopping dashboard...")
+        self.root.after(1200, self.refresh_status)
+
+    def start_auto_fusion(self) -> None:
+        if WATCHDOG_PID_FILE.exists():
+            try:
+                pid = int(WATCHDOG_PID_FILE.read_text(encoding="utf-8").strip())
+            except ValueError:
+                pid = 0
+            if pid and is_pid_running(pid):
+                self.log(f"守护监控已在运行 / Watchdog already running with pid {pid}.")
+                self.refresh_status()
+                return
+
+        block = self._real_auto_run_block_reason()
+        if block:
+            messagebox.showwarning("自动运行已锁定 / Auto Run Locked", block)
+            self.log(block)
+            self.refresh_status()
+            return
+
+        destination = self._trade_destination_label()
+        if not messagebox.askyesno(
+            "启动自动运行 / Start Auto Run",
+            "这会启动守护监控，它会在主要交易时段按不固定间隔检查程序健康状态，异常时自动重启交易引擎，并自动向 "
+            f"{destination} 提交订单。\n确定启动吗？\n\nThis starts the watchdog. It checks health at irregular intervals during core market hours, repairs failures, and auto-submits orders to {destination}.\nStart now?",
+        ):
+            return
+
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        if WATCHDOG_LAUNCH_AGENT_PLIST.exists():
+            subprocess.run(["launchctl", "load", str(WATCHDOG_LAUNCH_AGENT_PLIST)], check=False)
+            self.log("已通过开机守护服务启动自动运行 / Started auto run through the login watchdog service.")
+        else:
+            with WATCHDOG_LOG_FILE.open("a", encoding="utf-8") as log_file:
+                process = subprocess.Popen(
+                    _watchdog_program_arguments(),
+                    cwd=REPO_ROOT,
+                    env=build_env(),
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    text=True,
+                )
+            self.log(f"已启动自动运行守护 / Started auto-run watchdog with pid {process.pid}.")
+        self.root.after(1000, self.refresh_status)
+
+    def stop_auto_fusion(self) -> None:
+        subprocess.run(["launchctl", "unload", str(WATCHDOG_LAUNCH_AGENT_PLIST)], check=False)
+
+        stop_messages: list[str] = []
+
+        if WATCHDOG_PID_FILE.exists():
+            try:
+                pid = int(WATCHDOG_PID_FILE.read_text(encoding="utf-8").strip())
+            except ValueError:
+                pid = 0
+            if pid and is_pid_running(pid):
+                os.kill(pid, signal.SIGTERM)
+                stop_messages.append(f"watchdog pid {pid}")
+
+        if AUTO_TRADER_PID_FILE.exists():
+            try:
+                pid = int(AUTO_TRADER_PID_FILE.read_text(encoding="utf-8").strip())
+            except ValueError:
+                pid = 0
+            if pid and is_pid_running(pid):
+                os.kill(pid, signal.SIGTERM)
+                stop_messages.append(f"auto trader pid {pid}")
+
+        if stop_messages:
+            self.log(f"已发送停止信号 / Sent stop signal to {' and '.join(stop_messages)}.")
+        else:
+            self.log("自动运行和守护监控都未运行 / Auto run and watchdog are both stopped.")
+
+        # Hard-kill any lingering auto-trader or watchdog processes that escaped
+        # PID-file tracking (e.g. started via a stale watchdog with old config).
+        for pattern in ("taa_futu.auto_trader", "taa_futu.watchdog"):
+            try:
+                result = subprocess.run(
+                    ["pkill", "-f", pattern],
+                    check=False,
+                    capture_output=True,
+                )
+                if result.returncode == 0:
+                    self.log(f"强制清理残留进程 / Force-killed stray processes matching: {pattern}")
+            except Exception:
+                pass
+
+        self.root.after(1500, self.refresh_status)
+
+    def one_click_start(self) -> None:
+        self.open_futu_opend()
+        self.start_dashboard()
+        self.log("已触发一键启动 / One-click start triggered.")
+        self.log('提示: 如需同时启动 Cascade 独立引擎，点 Claude 策略面板里的"启动引擎"按钮。')
+
+    def restart_console_and_dashboard(self) -> None:
+        """Restart the dashboard in-place (stop → wait → start).
+
+        The old approach spawned a new control-panel process and destroyed the
+        current one, but the new process failed to open a Tkinter window when
+        launched as an orphan on macOS.  Restarting the dashboard inside the
+        running control-panel avoids this entirely — the control panel stays
+        alive; only the dashboard subprocess is recycled.
+        """
+        dashboard_port = int(self.dashboard_port.get().strip() or "8501")
+
+        # ── Stop the running dashboard ────────────────────────────────────────
+        stopped_something = False
+        if self.dashboard_process is not None and self.dashboard_process.poll() is None:
+            try:
+                self.dashboard_process.kill()   # SIGKILL — instant, no wait needed
+                stopped_something = True
+            except OSError:
+                pass
+        self.dashboard_process = None
+
+        # Also force-kill any streamlit on the port from a previous session.
+        try:
+            result = subprocess.run(
+                ["pkill", "-9", "-f", f"streamlit.*{dashboard_port}"],
+                check=False, capture_output=True,
+            )
+            if result.returncode == 0:
+                stopped_something = True
+        except Exception:
+            pass
+
+        if stopped_something:
+            self.log("正在停止监控页，稍后自动重启 / Stopping dashboard, will restart shortly…")
+        else:
+            self.log("监控页未运行，正在启动 / Dashboard was not running — starting now…")
+
+        # Wait 3 s so the OS fully releases the port before binding again.
+        self.root.after(3000, self.start_dashboard)
+
+    def _current_settings(self):
+        return load_settings(REPO_ROOT / ".env")
+
+    def _trade_destination_label(self) -> str:
+        return "富途真实盘 / Futu REAL" if self._current_settings().futu_trd_env == "REAL" else "富途模拟盘 / Futu SIMULATE"
+
+    def _real_submit_block_reason(self) -> str | None:
+        settings = self._current_settings()
+        if settings.futu_trd_env != "REAL":
+            return None
+        if not settings.futu_enable_real_trading:
+            return "当前环境已切到 REAL，但 FUTU_ENABLE_REAL_TRADING=false，真实下单仍被锁定。"
+        if not settings.futu_unlock_trade_password_md5:
+            return "当前环境已切到 REAL，但缺少 FUTU_UNLOCK_TRADE_PASSWORD_MD5，无法完成交易解锁。"
+        return None
+
+    def _real_auto_run_block_reason(self) -> str | None:
+        block = self._real_submit_block_reason()
+        if block:
+            return block
+        settings = self._current_settings()
+        if settings.futu_trd_env == "REAL" and not settings.futu_allow_auto_real:
+            return "当前环境已切到 REAL，但 FUTU_ALLOW_AUTO_REAL=false，真实自动交易仍被锁定。"
+        return None
+
+    def _confirm_submit(self, strategy_name: str) -> bool:
+        block = self._real_submit_block_reason()
+        if block:
+            messagebox.showwarning("真实交易已锁定 / REAL Trading Locked", block)
+            self.log(block)
+            return False
+        settings = self._current_settings()
+        destination = self._trade_destination_label()
+        if settings.futu_trd_env == "REAL":
+            if not messagebox.askyesno(
+                "第一次确认 / First Confirmation",
+                f"{strategy_name} 将向 {destination} 下真实订单。\n这不是模拟交易。\n继续吗？\n\n{strategy_name} will submit LIVE orders to {destination}.\nThis is not paper trading.\nContinue?",
+            ):
+                return False
+            if not messagebox.askyesno(
+                "第二次确认 / Second Confirmation",
+                "请再次确认：你已经核对过账户、标的、数量和时间窗口。\n继续提交真实订单吗？\n\nPlease confirm again that account, symbol, size, and timing were checked.\nSubmit LIVE orders?",
+            ):
+                return False
+            typed = simpledialog.askstring(
+                "最终确认 / Final Confirmation",
+                "请输入 REAL 作为最终确认。\n\nType REAL to confirm LIVE order submission.",
+                parent=self.root,
+            )
+            if typed != "REAL":
+                self.log("已取消真实订单提交 / LIVE order submission cancelled.")
+                return False
+        return messagebox.askyesno(
+            "确认提交 / Confirm Submit",
+            f"{strategy_name} 将向 {destination} 发送订单。\n确定继续吗？\n\n{strategy_name} will send orders to {destination}.\nContinue?",
+        )
+
+    def _confirm_standalone_override(self, strategy_name: str) -> bool:
+        settings = self._current_settings()
+        try:
+            baseline_weight, fusion_weight, ofim_weight, cascade_weight, reserve_weight = stack_allocations(settings)
+        except ValueError:
+            return True
+        stack_active = (
+            baseline_sleeve_enabled(settings)
+            or reserve_weight > 0
+            or fusion_weight > 0.001
+            or ofim_weight > 0.001
+            or cascade_weight > 0.001
+            or baseline_weight > 0.001
+        )
+        if not stack_active:
+            return True
+        return messagebox.askyesno(
+            "独立策略会覆盖组合 / Standalone Override Warning",
+            f"当前自动盘按组合运行：{stack_label(settings)}。\n"
+            f"如果你现在单独提交 {strategy_name}，会绕过组合分仓器，直接改整个账户。\n继续吗？\n\n"
+            f"Current auto stack is {stack_label(settings)}.\n"
+            f"Submitting standalone {strategy_name} bypasses the sleeve allocator and can overwrite whole-account targets.\nContinue?",
+        )
+
+    def check_real_readiness(self) -> None:
+        self._run_command_async("real-check", self._python_cli("real-check"))
+
+    def run_backtest(self) -> None:
+        strategy = self.backtest_strategy.get().strip() or "baseline"
+        try:
+            start_date = datetime.fromisoformat(self.start_date.get().strip()).date()
+            end_date = datetime.fromisoformat(self.end_date.get().strip()).date()
+        except ValueError:
+            start_date = None
+            end_date = None
+        if strategy == "fusion" and start_date and end_date:
+            span_days = (end_date - start_date).days + 1
+            self.log(
+                f"Fusion 回测会优先使用本地 40 档 LOB / 逐笔 / 1分钟K 线；没有本地数据时才回退到分钟K线近似版。当前区间 {span_days} 天。"
+            )
+        if strategy == "ofim" and start_date and end_date:
+            span_days = (end_date - start_date).days + 1
+            self.log(
+                f"OFIM 回测会优先使用本地 40 档 LOB / 逐笔 / 1分钟K 线；没有本地数据时才回退到分钟K线近似版。当前区间 {span_days} 天。"
+            )
+        if strategy == "cascade" and start_date and end_date:
+            span_days = (end_date - start_date).days + 1
+            self.log(
+                f"Claude/Cascade 回放会抓日线数据。当前区间 {span_days} 天，日志会按标的显示进度。"
+            )
+        if strategy == "stack" and start_date and end_date:
+            span_days = (end_date - start_date).days + 1
+            self.log(
+                f"组合回测会同时抓 Baseline 日线、Fusion 分钟线、OFIM 分钟线和 Claude/Cascade 日线。当前区间 {span_days} 天，日志会按组件显示进度。"
+            )
+        self._run_command_async(
+            "backtest",
+            self._python_cli(
+                "backtest",
+                "--strategy",
+                strategy,
+                "--start",
+                self.start_date.get().strip(),
+                "--end",
+                self.end_date.get().strip(),
+            ),
+        )
+
+    def run_signals(self) -> None:
+        self._run_command_async(
+            "signals",
+            self._python_cli("signals", "--start", self.start_date.get().strip(), "--end", self.end_date.get().strip()),
+        )
+
+    def run_manual_strategy(self) -> None:
+        strategy = self.manual_strategy.get().strip() or "fusion"
+        if strategy == "baseline":
+            self.run_paper_trade()
+            return
+        if strategy == "ofim":
+            self.run_ofim_only()
+            return
+        if strategy == "cascade":
+            self.run_cascade()
+            return
+        self.run_fusion()
+
+    def submit_manual_strategy(self) -> None:
+        strategy = self.manual_strategy.get().strip() or "fusion"
+        if strategy == "baseline":
+            self.submit_paper_trade()
+            return
+        if strategy == "ofim":
+            self.submit_ofim_only()
+            return
+        if strategy == "cascade":
+            self.submit_cascade()
+            return
+        self.submit_fusion()
+
+    def run_paper_trade(self) -> None:
+        self._run_command_async("paper-trade", self._python_cli("paper-trade"))
+
+    def submit_paper_trade(self) -> None:
+        if not self._confirm_standalone_override("Baseline Strategy"):
+            return
+        if not self._confirm_submit("Baseline Strategy"):
+            return
+        self._run_command_async("paper-trade-submit", self._python_cli("paper-trade", "--submit"))
+
+    def run_fusion(self) -> None:
+        self._run_command_async("fusion-intraday", self._python_cli("fusion-intraday"))
+
+    def run_ofim_only(self) -> None:
+        self._run_command_async("ofim-intraday", self._python_cli("ofim-intraday"))
+
+    def submit_fusion(self) -> None:
+        if not self._confirm_standalone_override("Fusion"):
+            return
+        if not self._confirm_submit("Fusion"):
+            return
+        self._run_command_async("fusion-intraday-submit", self._python_cli("fusion-intraday", "--submit"))
+
+    def submit_ofim_only(self) -> None:
+        if not self._confirm_standalone_override("OFIM"):
+            return
+        if not self._confirm_submit("OFIM"):
+            return
+        self._run_command_async("ofim-intraday-submit", self._python_cli("ofim-intraday", "--submit"))
+
+    def run_cascade(self) -> None:
+        self._run_command_async("cascade-strategy", self._python_cli("cascade-strategy"))
+
+    def submit_cascade(self) -> None:
+        if not self._confirm_standalone_override("Claude/Cascade"):
+            return
+        if not self._confirm_submit("Claude/Cascade"):
+            return
+        self._run_command_async("cascade-strategy-submit", self._python_cli("cascade-strategy", "--submit"))
+
+    # ── Claude-Trade standalone engine ────────────────────────────────────────
+
+    def ct_start_engine_dryrun(self) -> None:
+        if _ct_engine_running():
+            self.log(f"Cascade 引擎已在运行 / Engine already running (pid={_ct_engine_pid()}).")
+            self.refresh_status()
+            return
+        if not CT_VENV_PYTHON.exists():
+            messagebox.showerror("Cascade 引擎", f"找不到 claude-trade 的 Python 环境:\n{CT_VENV_PYTHON}\n请先在 claude-trade 目录安装依赖。")
+            return
+        CT_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        with CT_LOG_FILE.open("a", encoding="utf-8") as lf:
+            proc = subprocess.Popen(
+                _ct_engine_args(dry_run=True),
+                cwd=CT_REPO_ROOT,
+                env=_ct_build_env(),
+                stdout=lf,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                text=True,
+            )
+        self.log(f"已启动 Cascade 引擎 (试运行/dry-run) pid={proc.pid}. 日志: {CT_LOG_FILE}")
+        self.root.after(1200, self.refresh_status)
+
+    def ct_start_engine_live(self) -> None:
+        if _ct_engine_running():
+            self.log(f"Cascade 引擎已在运行 / Engine already running (pid={_ct_engine_pid()}).")
+            self.refresh_status()
+            return
+        if not CT_VENV_PYTHON.exists():
+            messagebox.showerror("Cascade 引擎", f"找不到 claude-trade 的 Python 环境:\n{CT_VENV_PYTHON}")
+            return
+        if not messagebox.askyesno(
+            "启动 Cascade 引擎 (实盘) / Start Engine Live",
+            "这将启动 claude-trade 独立引擎，连接真实或模拟富途账户。\n确定启动吗？\n\nThis starts the claude-trade engine against your Futu account.\nStart now?",
+        ):
+            return
+        CT_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        with CT_LOG_FILE.open("a", encoding="utf-8") as lf:
+            proc = subprocess.Popen(
+                _ct_engine_args(dry_run=False),
+                cwd=CT_REPO_ROOT,
+                env=_ct_build_env(),
+                stdout=lf,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                text=True,
+            )
+        self.log(f"已启动 Cascade 引擎 (实盘/live) pid={proc.pid}. 日志: {CT_LOG_FILE}")
+        self.root.after(1200, self.refresh_status)
+
+    def ct_stop_engine(self) -> None:
+        pid = _ct_engine_pid()
+        if pid and is_pid_running(pid):
+            os.kill(pid, signal.SIGTERM)
+            self.log(f"已向 Cascade 引擎 pid={pid} 发送停止信号 / Sent SIGTERM to CT engine.")
+        else:
+            self.log("Cascade 引擎未运行 / CT engine is not running.")
+        self.root.after(1200, self.refresh_status)
+
+    def ct_open_dashboard(self) -> None:
+        if not CT_VENV_PYTHON.exists():
+            messagebox.showerror("Cascade 监控页", f"找不到 claude-trade 的 Python 环境:\n{CT_VENV_PYTHON}")
+            return
+        if is_port_open("127.0.0.1", CT_DASHBOARD_PORT):
+            webbrowser.open(f"http://localhost:{CT_DASHBOARD_PORT}")
+            self.log(f"已打开 Cascade 监控页 / Opened CT dashboard at http://localhost:{CT_DASHBOARD_PORT}")
+            return
+        cmd = [str(CT_VENV_PYTHON), "-m", "claude_trade.cli", "dashboard", "--port", str(CT_DASHBOARD_PORT)]
+        subprocess.Popen(
+            cmd,
+            cwd=CT_REPO_ROOT,
+            env=_ct_build_env(),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        self.log(f"正在启动 Cascade 监控页 / Starting CT dashboard on port {CT_DASHBOARD_PORT}…")
+        self.root.after(2500, lambda: webbrowser.open(f"http://localhost:{CT_DASHBOARD_PORT}"))
+
+    def on_close(self) -> None:
+        if self._status_refresh_after_id is not None:
+            try:
+                self.root.after_cancel(self._status_refresh_after_id)
+            except ValueError:
+                pass
+            self._status_refresh_after_id = None
+        if self.dashboard_process is not None and self.dashboard_process.poll() is None:
+            if messagebox.askyesno("退出 / Exit", "监控页仍在运行，是否先停止再退出？\nDashboard is still running. Stop it and exit?"):
+                self.stop_dashboard()
+                self.root.after(300, self.root.destroy)
+                return
+            return
+        self.root.destroy()
+
+    def run(self) -> None:
+        self.root.mainloop()
+
+
+def main() -> None:
+    if not VENV_PYTHON.exists():
+        raise SystemExit(f"缺少 Python 环境 / Missing Python environment: {VENV_PYTHON}")
+    ensure_tcl_tk_env()
+    ControlPanel().run()
+
+
+if __name__ == "__main__":
+    # Detach from the controlling terminal so Terminal.app doesn't track this
+    # process as a child — prevents the "terminate running processes?" dialog
+    # when the launcher window closes.
+    try:
+        import os as _os
+        _os.setsid()
+    except Exception:
+        pass
+    main()

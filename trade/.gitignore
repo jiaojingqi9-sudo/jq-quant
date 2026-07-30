@@ -1,0 +1,34 @@
+# ---- 密钥与本地配置（绝对不能上传）----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.json
+
+# ---- Python ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 运行时产物（本机数据，不进仓库）----
+runtime/
+outputs/
+*.log
+*.pid
+*.db
+*.sqlite3
+*.bak
+*.bak_*
+
+# ---- 第三方 / 系统 ----
+Futu_OpenD_*/
+*.app/
+.DS_Store
+.idea/
+.vscode/
