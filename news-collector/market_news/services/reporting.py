@@ -1093,27 +1093,38 @@ class MarkdownJsonReporter:
   <meta http-equiv="Expires" content="0">
   <title>Market News Board</title>
   <style>
+    /* ── JQ Quant 统一设计令牌 ──────────────────────────────────────────
+       本看板嵌在交易终端里显示。原先它是暖米色 + 衬线标题 + 低饱和大地色，
+       而终端是冷蓝灰 + 无衬线 + 高饱和涨跌色——两套语言在同一个窗口里对撞，
+       接缝非常明显。现统一到终端那套（冷色技术风），并保留高饱和涨跌色，
+       因为看盘时红绿必须一眼可辨。
+
+       变量名一个没改，只换值：改配色只动这一处，不必翻遍样式表。 */
     :root {
-      --bg: #f4efe6;
-      --bg-soft: #fbf8f2;
-      --ink: #11202d;
-      --muted: #5f6d77;
-      --line: rgba(17, 32, 45, 0.12);
-      --card: rgba(255, 252, 247, 0.92);
-      --accent: #0d6f6f;
-      --accent-soft: rgba(13, 111, 111, 0.12);
-      --danger: #b5483d;
-      --danger-soft: rgba(181, 72, 61, 0.12);
-      --success: #1e7c57;
-      --success-soft: rgba(30, 124, 87, 0.12);
-      --warning: #be7b1d;
-      --warning-soft: rgba(190, 123, 29, 0.14);
-      --shadow: 0 18px 40px rgba(17, 32, 45, 0.08);
-      --radius-lg: 26px;
-      --radius-md: 18px;
-      --radius-sm: 12px;
-      --headline: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
-      --ui: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+      --bg: #eef3f8;
+      --bg-soft: #f7fafd;
+      --ink: #182534;
+      --muted: #6b7d90;
+      --line: rgba(24, 37, 52, 0.12);
+      --card: rgba(255, 255, 255, 0.96);
+      --accent: #185fa5;
+      --accent-soft: rgba(55, 138, 221, 0.14);
+      /* 涨跌用高饱和：低饱和的砖红/深绿在数据密集处不够醒目 */
+      --danger: #c02a44;
+      --danger-soft: rgba(255, 77, 103, 0.16);
+      --success: #0f7a5c;
+      --success-soft: rgba(32, 201, 151, 0.16);
+      --warning: #a36a0d;
+      --warning-soft: rgba(190, 123, 29, 0.16);
+      /* 阴影收敛：原来 40px 的大扩散在终端的浅底上显得脏 */
+      --shadow: 0 10px 24px rgba(24, 37, 52, 0.07);
+      /* 圆角收敛：26px 太圆，与终端的方正卡片不搭 */
+      --radius-lg: 16px;
+      --radius-md: 12px;
+      --radius-sm: 8px;
+      /* 标题不再用衬线，与终端一致 */
+      --headline: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Segoe UI", sans-serif;
+      --ui: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Segoe UI", sans-serif;
     }
 
     * {
@@ -1127,7 +1138,7 @@ class MarkdownJsonReporter:
       background:
         radial-gradient(circle at top left, rgba(13, 111, 111, 0.12), transparent 28%),
         radial-gradient(circle at top right, rgba(190, 123, 29, 0.16), transparent 22%),
-        linear-gradient(180deg, #f7f3ea 0%, #eee4d3 100%);
+        linear-gradient(180deg, #f5f9fc 0%, #e7eef6 100%);
       min-height: 100vh;
       overflow-x: hidden;
       overflow-y: auto;
@@ -1209,9 +1220,9 @@ class MarkdownJsonReporter:
       gap: 10px;
       padding: 10px 14px;
       border-radius: 999px;
-      background: #fff8ee;
+      background: var(--warning-soft);
       border: 1px solid rgba(190, 123, 29, 0.18);
-      color: #6f551f;
+      color: var(--warning);
       font-size: 13px;
       margin-top: 18px;
     }
