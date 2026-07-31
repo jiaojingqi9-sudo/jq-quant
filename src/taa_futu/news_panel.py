@@ -177,9 +177,10 @@ def render_news_home_block() -> None:
                 line += f"　`{' · '.join(syms)}`"
             st.markdown(line)
 
-    from taa_futu.dashboard_extras import VIEW_NEWS
+    # 用功能 id 而不是从导航模块 import 常量：本模块是插件，不该反过来依赖外壳，
+    # 否则就成了循环依赖（外壳发现插件、插件又要 import 外壳）。
     if st.button("打开新闻工作台 →", key="home_open_news", use_container_width=True):
-        st.session_state["view"] = VIEW_NEWS
+        st.session_state["view"] = "news"
         st.rerun()
 
 
