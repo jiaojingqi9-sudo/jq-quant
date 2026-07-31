@@ -140,6 +140,7 @@ SKILL_REG = {
     "newstests":       (WATCHER_DIR / "newstests.py",     False, []),
     "weibo_off":       (WATCHER_DIR / "weibo_off_verify.py", False, []),
     "doctor_test":     (WATCHER_DIR / "doctor_test.py",   False, []),
+    "shoot_real_news": (WATCHER_DIR / "shoot_real_news.py", False, []),
     "backfill_plan":   (WATCHER_DIR / "backfill_fills.py", False, []),
     "backfill_apply":  (WATCHER_DIR / "backfill_fills.py", False, ["--apply"]),
     "fix_epoch_plan":  (WATCHER_DIR / "fix_epoch.py", False, []),
