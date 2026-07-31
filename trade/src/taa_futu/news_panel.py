@@ -262,8 +262,9 @@ def render_news(settings=None) -> None:
     if REVIEW_API_BASE not in html:
         st.caption("提示：看板里没有找到 review API 地址，问 AI 功能可能不可用。")
 
-    html = _blend_into_app(html)
-    components.html(html, height=2400 if tall else DEFAULT_BOARD_HEIGHT, scrolling=True)
+    board_height = 2400 if tall else DEFAULT_BOARD_HEIGHT
+    html = _blend_into_app(html, board_height)
+    components.html(html, height=board_height, scrolling=True)
 
 
 # 嵌入时注入的样式。只在 app 里生效，独立打开看板时不受影响——
@@ -302,13 +303,38 @@ _EMBED_CSS = """
   /* 第一块内容不要再顶一段外边距，否则和上面的工具栏之间空一大截 */
   section.toolbar { margin-top: 0 !important; padding-top: 0 !important; }
 
-  /* iframe 自己会滚，内部再套一层滚动条就会出现双滚动条 */
-  .column-scroll { overflow: visible !important; max-height: none !important; }
+  /* 三栏各自滚动是看板的布局模型，不要动。
+     这里一度加过 `.column-scroll { overflow: visible }` 想消掉「双滚动条」，
+     结果卡片被拦腰切断：.column-scroll 上有明确的
+     height: clamp(760px, calc(100vh - 220px), 1200px)，只把 overflow 改成
+     visible 而高度限制还在，超出的内容就溢出并被祖先裁掉，既不滚动也看不全。
+     实际上并不存在双滚动条问题——列在内部滚，iframe 自己不需要再滚。 */
 </style>
 """
 
 
-def _blend_into_app(html: str) -> str:
+# 看板顶部（工具栏 + 卡片间距）大约占这么高，剩下的才是三栏能用的高度。
+# 数字来自看板 CSS 里 `calc(100vh - 220px)` 的那个 220。
+_BOARD_CHROME_PX = 220
+
+
+def _column_height_css(board_height: int) -> str:
+    """让三栏的高度跟着 iframe 走。
+
+    看板原本写死 `height: clamp(760px, calc(100vh - 220px), 1200px)`。嵌进
+    iframe 之后 100vh 就是 iframe 的高度，但上限 1200px 会把它卡死——于是
+    「加高」开关把 iframe 撑到 2400px，列还是 1200px，多出来的一千多像素
+    全是空白。开关名义上说「2400px，适合大屏」，实际什么也没变。
+
+    这里按 iframe 高度重算，去掉那个上限。下限保留 760px：再矮就一栏只剩
+    两三张卡片，翻起来比滚动还累。
+    """
+    usable = max(760, board_height - _BOARD_CHROME_PX)
+    return (f"  .column-scroll {{ height: {usable}px !important; "
+            f"max-height: {usable}px !important; }}\n")
+
+
+def _blend_into_app(html: str, board_height: int) -> str:
     """把嵌入用样式塞进看板 HTML 的 head。
 
     改这里而不是改生成器：生成器产出的那张页面还要独立打开、还要给推送用，
@@ -316,6 +342,8 @@ def _blend_into_app(html: str) -> str:
     """
     if 'data-jq-embed="1"' in html:
         return html
+    css = _EMBED_CSS.replace(
+        "</style>", _column_height_css(board_height) + "</style>")
     if "</head>" in html:
-        return html.replace("</head>", _EMBED_CSS + "</head>", 1)
-    return _EMBED_CSS + html
+        return html.replace("</head>", css + "</head>", 1)
+    return css + html
