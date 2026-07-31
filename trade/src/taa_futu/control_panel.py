@@ -203,16 +203,6 @@ def _study_mode_label(mode: str) -> str:
     return mapping.get(mode, mode)
 
 
-def _manual_strategy_label(mode: str) -> str:
-    mapping = {
-        "baseline": "Baseline 月频手动下单",
-        "fusion": "Fusion 日内手动下单",
-        "ofim": "OFIM 订单流手动下单",
-        "cascade": "Claude/Cascade 手动下单",
-    }
-    return mapping.get(mode, mode)
-
-
 def _short_symbols(symbols: tuple[str, ...], *, limit: int | None = None) -> str:
     visible = tuple(code.replace("US.", "") for code in symbols)
     if limit is not None and len(visible) > limit:

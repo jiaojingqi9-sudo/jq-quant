@@ -28,6 +28,19 @@ from typing import Any, Callable, Iterable
 _log = logging.getLogger(__name__)
 
 
+def _render_identity(fn: Any) -> tuple:
+    """认出「同一个渲染函数」，用来判断重复登记是否值得警告。
+
+    不能用 ``is`` 比较：dashboard_app 把 stock 与 stock_history 的 render 写成
+    main() 内部的闭包，而 dashboard_app.py 是 Streamlit 直接执行的脚本，每次
+    交互都重跑一遍 main()，每次都是新的函数对象。按身份比对会次次判定"实现
+    不同"，日志每次交互刷两行，真正的重名冲突反倒被淹没。
+
+    按「定义在哪个模块的哪个函数」比对，重跑同一份代码就认得出是同一个。
+    """
+    return (getattr(fn, "__module__", None), getattr(fn, "__qualname__", None))
+
+
 @dataclass(frozen=True)
 class Availability:
     """功能当前是否可用，以及为什么不可用。"""
@@ -103,8 +116,16 @@ class FeatureRegistry:
 
     # ── 登记 ──────────────────────────────────────────────────────────────
     def register(self, feature: Feature) -> Feature:
-        if feature.id in self._features:
-            _log.warning("功能 %s 重复登记，后者覆盖前者", feature.id)
+        """登记一个功能。同一个 id 重复登记时后者覆盖前者。
+
+        只有「同 id 但换了实现」才值得警告。宿主每次脚本重跑都会重新登记
+        stock 与 stock_history（dashboard_app 是 Streamlit 直接执行的脚本，
+        main() 每次 rerun 都跑一遍），那是正常行为——之前不加区分地警告，
+        导致每一次页面交互都往日志里刷两行，真正的重名冲突反而被淹没。
+        """
+        existing = self._features.get(feature.id)
+        if existing is not None and _render_identity(existing.render) != _render_identity(feature.render):
+            _log.warning("功能 %s 重复登记且实现不同，后者覆盖前者", feature.id)
         self._features[feature.id] = feature
         return feature
 
@@ -199,8 +220,3 @@ def feature(**kwargs: Any) -> Callable[[Callable[[Any], None]], Callable[[Any], 
         return fn
 
     return wrap
-
-
-def register_all(features: Iterable[Feature]) -> None:
-    for f in features:
-        registry.register(f)

@@ -1,252 +1,388 @@
-# TAA + Futu 交易控制台
+# JQ Quant
 
-这个项目不是去 GitHub 抄一个“收益截图最好看”的仓库，而是从一篇可验证、可复现、可执行的策略白皮书出发，自己实现一套：
+一个自建的量化交易工作台：策略回测、实时监控、模拟盘自动下单、新闻事件驱动，
+装在一个桌面 app 里。
 
-- 历史回测
-- 本地监控面板
-- 最新月度信号生成
-- 仓位目标计算
-- 富途 OpenAPI 下单
+**不用装富途、不用有账号，也能把整个界面点一遍**——见[演示模式](#演示模式)。
 
-项目里现在有两套策略：
+![首页](docs/screenshots/01-首页.png)
 
-- `TAA baseline`：复现 Meb Faber 的 **A Quantitative Approach to Tactical Asset Allocation**
-- `Fusion Intraday`：为富途环境新设计的专属事件驱动日内策略
-- `Strategy Stack`：把 `Baseline + Fusion + Daily Round-Trip fallback` 组合成可分仓运行的统一账户层
+---
 
-## TAA baseline
+## 目录
 
-核心规则很简单：
+- [这是什么](#这是什么)
+- [演示模式](#演示模式)
+- [六个页面](#六个页面)
+- [真实运行](#真实运行)
+- [策略构成](#策略构成)
+- [常用命令](#常用命令)
+- [代码结构](#代码结构)
+- [插件架构：加一个功能](#插件架构加一个功能)
+- [安全边界](#安全边界)
+- [测试](#测试)
+- [常见问题](#常见问题)
 
-- 月末收盘价高于 10 个月均线：持有
-- 月末收盘价低于或等于 10 个月均线：空仓/现金
-- 对所有满足条件的资产等权分配
+---
 
-为了能在富途上实际执行，默认使用一组流动性高、富途美股模拟盘容易交易的 ETF 代理：
+## 这是什么
 
-- `US.SPY` 美股
-- `US.EFA` 海外发达市场股票
-- `US.IEF` 美债
-- `US.VNQ` REITs
-- `US.DBC` 商品
+三件事合在一起：
 
-## 研究结论
+**策略**——四条独立的股票策略并行跑在同一个账户上，各占一部分资金，互不干扰。
+一条复现 Meb Faber 的战术资产配置论文（月线择时），三条是日内的事件驱动。
+加密那边另有一套完全独立的 Binance 现货与永续策略。
 
-没有客观意义上的“市面最强策略文章”。如果目标是：
+**执行**——信号算出来之后过风控与下单前置闸门，再走富途 OpenAPI 提交到模拟盘。
+每一笔记进复式账本，可与券商回报对账。
 
-- 有公开原始文章
-- 规则明确
-- 可以稳定复现
-- 可以在富途模拟盘执行
+**新闻**——独立的采集器抓公开信源，聚类成事件，打分排序，够格的推到手机。
+看板嵌进 app 的「市场新闻」页。
 
-那么这篇多资产趋势跟踪白皮书比很多需要做空、上杠杆、交易期货、依赖分钟级 alpha 的论文更适合落地。
+界面是 Streamlit 写的网页，用 Chrome 的应用窗口模式打开——没有地址栏和标签栏，
+Dock 里是独立图标。
 
-更详细的选型说明见 [stock/docs/strategy-selection.md](stock/docs/strategy-selection.md)。
+---
 
-## Fusion Intraday
+## 演示模式
 
-这套是专门为“保留富途，但想更高频、更强一些”设计出来的组合策略。它不是直接抄某一篇论文，而是把几篇文章里真正能落到富途的部分拼成一套可执行结构：
-
-- 大盘 regime 过滤
-- Stocks in Play / 开盘区间突破
-- 5 分钟动量
-- VWAP 偏离
-- 盘口失衡
-- 逐笔方向失衡
-- 点差和仓位约束
-
-说明文档见 [stock/docs/fusion-intraday-strategy.md](stock/docs/fusion-intraday-strategy.md)。
-
-## 环境准备
-
-1. 安装 Python 3.11。
-2. 创建虚拟环境并安装依赖：
+**没有富途账号、没有行情数据，也能完整看一遍界面。**
 
 ```bash
-uv venv --python 3.11 .venv
-uv pip install -p .venv/bin/python -e .[dev]
+git clone https://github.com/jiaojingqi9-sudo/jq-quant.git
+cd jq-quant/trade
+
+python3 -m venv .venv                      # 需要 Python 3.11 或更高
+.venv/bin/pip install -e .
+
+JQ_DEMO=1 JQ_NEWS_ROOT="$PWD/demo_data/news" \
+  .venv/bin/python -m streamlit run src/taa_futu/dashboard_app.py
 ```
 
-3. 准备环境变量：
+浏览器打开 <http://localhost:8501>。
+
+| | 真实模式 | 演示模式 |
+| --- | --- | --- |
+| 富途 OpenD | 必须连接 | 不连接，用合成数据 |
+| 账户与持仓 | 真实模拟盘 | 五只公开 ETF 的示例持仓 |
+| 行情 | 实时推送 | 固定种子生成，每次一样 |
+| 新闻 | 采集器实时产出 | `demo_data/news/` 里的虚构事件 |
+| 下单 | 可提交 | **全部路径被禁用**，调用直接抛异常 |
+
+每一页顶部都有演示模式横幅，防止截图流出去被误认成真实交易记录。
+
+**Python 必须 3.11 以上**：代码用了 `datetime.UTC`，3.10 会在 import 阶段就报
+`cannot import name 'UTC'`。
+
+直接落到某一页，用 `?view=` 参数：
+
+| 页面 | 链接 |
+| --- | --- |
+| 股票交易 | `http://localhost:8501/?view=stock` |
+| 加密交易 | `http://localhost:8501/?view=crypto` |
+| 选股器 | `http://localhost:8501/?view=screener` |
+| 实时建议 | `http://localhost:8501/?view=live_signal` |
+| 市场新闻 | `http://localhost:8501/?view=news` |
+| 历史模拟 | `http://localhost:8501/?view=stock_history` |
+
+也可以只跑单个功能，不带导航：
+
+```bash
+JQ_DEMO=1 JQ_FEATURE=news \
+  .venv/bin/python -m streamlit run src/taa_futu/standalone.py
+```
+
+---
+
+## 六个页面
+
+### 股票交易
+
+![股票交易](docs/screenshots/02-股票交易.png)
+
+四条策略各自的目标仓位、合并后的实际下单计划、实时持仓与委托、当日成交与盈亏、
+复式账本对账结果。可以在这里启停自动运行、切换下单前置闸门的三档模式、调整各条
+策略的资金占比。
+
+### 市场新闻
+
+![市场新闻](docs/screenshots/03-市场新闻.png)
+
+新闻采集器产出的交互看板整个嵌进来。事件按重要性、热度、置信度打分排序，映射到
+A 股 / 港股 / 美股的候选标的。可以拖一段文字直接问 AI，也可以点开原文。
+
+之所以嵌 HTML 而不是用 Streamlit 重画：拖拽选中、卡片联动、点击跳转都依赖浏览器
+DOM，Streamlit 做不了。
+
+### 加密交易
+
+![加密交易](docs/screenshots/04-加密交易.png)
+
+Binance 现货 OFIM 与 USD-M 永续，和股票完全独立的另一条线。连接状态、账本、信号、
+委托，以及试算与模拟下单。
+
+### 选股器
+
+![选股器](docs/screenshots/05-选股器.png)
+
+用四条策略的实时评分对候选池排序，也能跑 AH 连板 / 缩量上涨 / 接近新高扫描。
+
+### 历史模拟
+
+![历史模拟](docs/screenshots/06-历史模拟.png)
+
+八种回放模式：月频基线回测、策略组合回测、日内 LOB 实盘回放、精确执行复盘、真实
+账户复盘等。基线回测走 yfinance，不需要富途。
+
+### 实时建议
+
+只读地查一次四条策略当前给出的建议，不下单。
+
+---
+
+## 真实运行
+
+**1. 富途 OpenD** —— 富途的本地网关，负责行情与交易。
+从[富途开放平台](https://openapi.futunn.com/)下载，启动后开启 OpenAPI，
+默认监听 `127.0.0.1:11111`。
+
+**2. 配置文件**
 
 ```bash
 cp .env.example .env
 ```
 
-4. 如果要接富途账户，需要额外准备：
+`.env` 里是策略参数（标的池、回看周期、各种阈值）与富途连接信息。
+这个文件在 `.gitignore` 里，不会进仓库。
 
-- 本机运行 Futu OpenD
-- OpenD 已登录你的富途账号
-- OpenD 已开启 OpenAPI
-- 目标交易账户可用
+**3. 起 app**
 
-如果要接真实盘，还需要：
+```bash
+.venv/bin/python -m streamlit run src/taa_futu/dashboard_app.py
+```
 
-- `.env` 里把 `FUTU_TRD_ENV=REAL`
-- 显式打开 `FUTU_ENABLE_REAL_TRADING=true`
-- 把 `FUTU_UNLOCK_TRADE_PASSWORD_MD5` 填成你的富途交易密码 MD5，不要明文密码
-- 如果你真的要让自动交易跑真实盘，再额外打开 `FUTU_ALLOW_AUTO_REAL=true`
+macOS 上也可以用桌面上的启动器——它会检查网关、起服务、用 Chrome 应用窗口打开，
+已经在跑就直接复用不重复启动。
 
-默认行为是保守的：
+**4. 后台任务（可选）**
 
-- 真实盘可以查看账户、持仓和订单
-- 真实手动下单默认锁定，除非你显式打开 `FUTU_ENABLE_REAL_TRADING`
-- 真实自动下单默认继续锁定，除非你再额外打开 `FUTU_ALLOW_AUTO_REAL`
-- 富途接口偶发超时会先自动重试，重试参数由 `FUTU_API_RETRY_ATTEMPTS` 和 `FUTU_API_RETRY_BACKOFF_SECONDS` 控制
-- 历史回测、账户复盘和精确执行复盘默认会扣估算交易成本，参数由 `TRADE_COST_*` 控制
+自动运行、看门狗、新闻采集与推送都是 launchd 常驻任务。安装脚本在
+`stock/launchers/` 与 `news collector/scripts/`，各目录的 `README.md` 写了每个
+脚本什么时候用。
+
+---
+
+## 策略构成
+
+### 股票（四条 sleeve，共用一个账户）
+
+| 名称 | 周期 | 依据 |
+| --- | --- | --- |
+| **Baseline** | 月频 | 复现 Meb Faber《A Quantitative Approach to Tactical Asset Allocation》：月末收盘价在 10 个月均线之上则持有，否则空仓，满足条件的资产等权 |
+| **Fusion Intraday** | 日内 | 开盘区间突破 + 相对量能 + 盘口价差过滤，为富途环境新设计 |
+| **OFIM Intraday** | 日内 | 订单流失衡（order flow imbalance），从逐笔与盘口重建买卖压力 |
+| **Cascade** | 日内 | 多级条件触发，信号来自 `claude-trade` 子项目 |
+
+各条占多少资金在 `.env` 里配，剩下的是现金储备。所有目标仓位合并后再过一次风控，
+超出上限的部分会被砍掉。
+
+Baseline 默认用一组流动性好、富途模拟盘容易成交的 ETF 代理：
+`US.SPY`（美股）、`US.EFA`（海外发达市场）、`US.IEF`（美债）、
+`US.VNQ`（REITs）、`US.DBC`（商品）。
+
+### 加密（独立）
+
+Binance 现货 OFIM 与 USD-M 永续多空。有自己的看门狗、行情流与账本，和股票那边不
+共用任何状态。
+
+---
 
 ## 常用命令
 
-回测：
+装完之后 `taa-futu` 就在 `.venv/bin/` 下。
+
+### 回测与信号
 
 ```bash
-.venv/bin/taa-futu backtest
-```
+.venv/bin/taa-futu backtest                    # 月频基线回测
+.venv/bin/taa-futu signals                     # 最新已完成月份的目标仓位
+.venv/bin/taa-futu fusion-intraday             # 跑日内策略，只出计划
+.venv/bin/taa-futu live-signal --json          # 四条策略当前建议（只读）
 
-按实时落盘日志和 `order_id` 做精确执行复盘：
-
-```bash
+# 按实时落盘日志和 order_id 做精确执行复盘
 .venv/bin/taa-futu backtest --strategy exact --start 2026-03-11 --end 2026-03-11
 ```
 
-查看当前最新已完成月份的目标仓位：
+### 下单
 
 ```bash
-.venv/bin/taa-futu signals
+.venv/bin/taa-futu paper-trade                 # 生成调仓计划，不提交
+.venv/bin/taa-futu paper-trade --submit        # 实际提交
+.venv/bin/taa-futu fusion-intraday --submit    # 提交日内策略订单
+.venv/bin/taa-futu cancel-orders               # 撤掉全部挂单
+.venv/bin/taa-futu flatten-all                 # 清空持仓
 ```
 
-生成富途调仓计划，不实际下单：
+### 体检与维护
 
 ```bash
-.venv/bin/taa-futu paper-trade
+.venv/bin/taa-futu stock-system-doctor         # 检查账本起点、分账、自动交易、对账
+.venv/bin/taa-futu stock-system-reset          # 统一设置账本 Epoch 与四策略分账起点
+.venv/bin/taa-futu real-check                  # 与券商回报对账
 ```
 
-实际提交富途订单：
+`stock-system-reset` 要统一用这一个命令：它会同时设置事件审计账本 Epoch 和四策略
+分账起点。分开设会出现两套账本各算各的。
+
+### 学习实验室
 
 ```bash
-.venv/bin/taa-futu paper-trade --submit
+.venv/bin/taa-futu stock-learning-build        # 重建订单结果、盈亏归因、候选改动
+.venv/bin/taa-futu stock-learning-status       # 最新学习状态
+.venv/bin/taa-futu stock-learning-export       # 导出审阅包
 ```
 
-运行专属日内策略并生成调仓计划：
+这个模块**只产出 research 级建议，不会自动改动线上策略或代码**。是否采纳由人决定。
+
+### 加密
 
 ```bash
-.venv/bin/taa-futu fusion-intraday
+.venv/bin/taa-futu crypto-ofim-status          # 现货 OFIM 状态
+.venv/bin/taa-futu crypto-ofim-check           # 连接与配置自检
+.venv/bin/taa-futu crypto-perp-status          # 永续状态
+.venv/bin/taa-futu crypto-ofim-liquidate       # 应急清仓
 ```
 
-实际提交专属日内策略订单：
+---
+
+## 代码结构
+
+```
+trade/
+├─ src/taa_futu/           主引擎
+│  ├─ dashboard_app.py     app 主入口（Streamlit 直接执行的脚本）
+│  ├─ shell.py             外壳：导航、首页、两种运行形态
+│  ├─ plugin.py            功能契约与注册表
+│  ├─ features/            各功能自行登记的地方
+│  ├─ futu_gateway.py      富途接入层（唯一的下单出口）
+│  ├─ demo_gateway.py      演示模式的假网关
+│  ├─ strategy*.py         四条股票策略
+│  ├─ crypto_ofim_*.py     加密策略与看门狗
+│  ├─ stock_ledger.py      复式账本与对账
+│  └─ cli.py               命令行入口
+├─ claude-trade/           Cascade 策略子项目（只贡献信号，下单仍走主引擎）
+├─ demo_data/              演示模式用的合成数据
+├─ docs/screenshots/       本文档里的截图
+├─ stock/launchers/        股票侧运维脚本
+├─ crypto/launchers/       加密侧运维脚本
+└─ tests/                  455 个测试
+```
+
+架构细节见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
+**关于两份富途接入层**：`claude-trade` 子项目里也有一个 `futu_ex.py`。它只用于该
+子项目自己的命令行，主引擎从它那里只取 Cascade 策略的信号，**下单一律走
+`futu_gateway.py`**。两边的价格取整函数目前是各写各的，合并是待办事项。
+
+---
+
+## 插件架构：加一个功能
+
+往 `src/taa_futu/features/` 丢一个文件就行，不用改导航、不用改分发：
+
+```python
+from taa_futu.plugin import Feature, registry
+
+def _render(settings):
+    import streamlit as st
+    st.write("我的新功能")
+
+registry.register(Feature(
+    id="my_feature",
+    label="我的功能 / My Feature",
+    icon="🧩",
+    order=50,
+    summary="首页卡片上显示的一句话说明。",
+    render=_render,
+))
+```
+
+侧边栏、首页卡片、`?view=my_feature` 都会自动出现。
+
+以前这里是一份手工维护的功能清单加一串 `if/elif`，每加一个功能要改三处，漏一处就
+出现「侧边栏有按钮但点了没反应」。
+
+`Feature` 还能声明：
+
+- `check` —— 依赖不满足时自己报告原因，而不是拖垮整个外壳
+- `placement` —— 在首页是大卡片、快捷链接，还是一个内容区块
+- `home_block` —— 首页上直接显示一块内容
+
+某个功能渲染出错会就地显示错误，不会白屏；导入失败会在首页列出来，不会静默消失。
+
+**例外**：股票交易与历史模拟不放在 `features/` 下，由 `dashboard_app.py` 自己登记。
+原因见 `src/taa_futu/features/_host_owned.py` —— 那两个功能的渲染函数要从
+`dashboard_app` 里取东西，而 `dashboard_app.py` 是被 Streamlit 直接执行的脚本，
+从 `features/` 反向 import 会让这个五千行的模块被再完整导入一次。
+
+---
+
+## 安全边界
+
+- **演示模式下所有下单路径直接抛异常**，不是"下单到假账户"，是根本不让调。
+- 下单前置闸门有三档：真拦 / 只记录 / 关闭。可以先用「只记录」观察一段时间。
+- `.env`、`runtime/`、`*.db`、`*.log` 全在 `.gitignore` 里。仓库内没有任何密钥、
+  真实持仓或账户信息。
+- `demo_data/` 里的数据是合成的：五只公开 ETF、虚构的新闻事件、明显是假的账户号。
+  生成脚本会检查并清除本机路径。
+- 应急撤单刻意做成一个独立的双击脚本
+  （`stock/launchers/Cancel_All_Orders.command`），不依赖 app 能不能打开。
+- 学习实验室只产出建议，不自动改线上策略。
+
+---
+
+## 测试
 
 ```bash
-.venv/bin/taa-futu fusion-intraday --submit
+.venv/bin/python -m pytest -q
 ```
 
-启动监控面板：
+455 个测试，约 26 分钟——股票页的端到端测试要真的把整个界面渲染一遍。
+
+只跑快的那部分：
 
 ```bash
-.venv/bin/taa-futu dashboard
+.venv/bin/python -m pytest tests/test_dashboard_extras.py tests/test_unified_panel.py -q
 ```
 
-启动傻瓜式控制台：
+---
 
-```bash
-.venv/bin/taa-futu-panel
-```
+## 常见问题
 
-或者直接在 Finder 里双击：
+**`cannot import name 'UTC' from 'datetime'`**
+Python 版本低于 3.11。
 
-- [Launch_Trading_Control_Panel.command](stock/launchers/Launch_Trading_Control_Panel.command)
-- [Trading Control Panel.applescript source](macos/Trading_Control_Panel.applescript)
+**打开是空白页 / 一直转圈**
+Streamlit 的内容靠 websocket 推送。如果在无头环境或反向代理后面跑，确认 websocket
+没被拦。用无头浏览器截图时也要注意：`--virtual-time-budget` 会跳过 websocket 的
+真实往返，截出来只有灰色骨架。
 
-控制台和监控页现在都已经做成了中英文对照：
+**真实模式下报「Cannot connect to Futu OpenD」**
+OpenD 没启动，或者没开 OpenAPI，或者端口不是 11111。
 
-- `一键启动 / One-Click Start`：同时打开 `FutuOpenD` 和监控页
-- `运行回测 / Run Backtest`：按你输入的历史日期跑回测
-- `查看月度信号 / Show Monthly Signal`：看当前月度目标仓位
-- `预演订单 / Plan Orders`：只生成下单计划，不真正下单
-- `提交订单 / Submit Orders`：真正发到当前交易环境
-- `试运行 / Run Dry-Run`：运行专属日内策略但不提交
-- `启动自动运行 / Start Auto Run`：在美股交易时段持续检查 `Fusion Intraday`，自动向当前交易环境提交订单
-- `组合运行 / Stack Controls`：设置 `Baseline sleeve` 是否启用，以及 `Baseline / Fusion` 各自占用多少账户资金
-- `停止自动运行 / Stop Auto Run`：停止全天自动运行服务
+**历史委托查不到数据**
+富途的 `history_order_list_query` 在约 5000 条记录时会直接断开连接而不报错——查询
+失败但不抛可识别的异常，表现为"页面正常、数据为空"。代码里已按 45 天分段查询再合
+并去重。如果你改大了跨度还是失败，把分段调小。
 
-现在 `启动自动运行` 不是只拉起交易引擎，而是先启动一个本地守护监控。自动盘执行的是当前配置好的 `Strategy Stack`：
+**演示模式下股票页说月线数据不够算均线**
+`demo_data/futu_schema.json` 丢了或损坏。它定义了合成数据的列结构，可以用
+`futu_watcher/capture_schema.py` 重新生成。
 
-- 它会在主要交易时段按随机间隔自检，默认大约每 `4` 到 `9` 分钟检查一次
-- 如果发现 `OpenD` 掉线、自动运行进程退出、状态文件卡死或进入 `error`，会自动尝试恢复
-- 它会把状态写到：
-  - `runtime/watchdog_status.json`
-  - `runtime/watchdog.log`
-- 原交易引擎状态仍然写到：
-  - `runtime/auto_trader_status.json`
-  - `runtime/auto_trader.log`
-- 股票侧现在也有工程化运行流水：
-  - `runtime/stock_events.jsonl`：每轮 cycle、目标、订单、错误和成交同步事件
-  - `runtime/stock_fills.jsonl`：append-only 成交事件账本
-  - `runtime/stock_ledger_epoch.json`：本地账本统计起点
-  - `runtime/stock_journal.jsonl`：由成交事件派生的双分录审计账本，带 hash chain
-  - `runtime/stock_order_memory.jsonl`：每笔计划/提交订单的决策快照，用于学习归因
-  - `runtime/stock_trade_outcomes.jsonl`：由 FIFO 成交配对生成的已实现交易结果标签
-  - `runtime/stock_attribution.json`：按策略、标的、亏盈原因聚合的学习报告
-  - `runtime/strategy_upgrade_candidates.jsonl`：研究级策略改进候选，默认不允许 live 自动晋级
-  - `runtime/strategy_promotion_report.json`：候选策略晋级门禁结果
-  - `runtime/stock_learning_review_packet.md`：可直接发给 Codex 复核的学习审阅包
-  - `runtime/stock_learning_review_packet.json`：同一审阅包的机器可校验版本，包含证据文件 hash
-- 股票自动执行还有一层硬风控护栏：
-  - `AUTO_TRADER_MAX_TARGET_GROSS_EXPOSURE`：账户级目标总敞口上限，默认 `1.0`
-  - `AUTO_TRADER_MAX_TARGET_WEIGHT`：单标的目标权重硬上限，默认 `1.0`
-  - `AUTO_TRADER_MAX_ORDER_VALUE_USD`：单笔订单名义金额上限，`0` 表示关闭
-  - `AUTO_TRADER_MAX_CYCLE_TURNOVER_USD`：单轮非清仓换手上限，`0` 表示关闭
-  - `AUTO_TRADER_MAX_EPOCH_LOSS_USD` / `AUTO_TRADER_MAX_EPOCH_LOSS_PCT`：账本 epoch 以来的最大亏损刹车，触发后只允许降风险订单
-- 股票账本现在按成交增量入账；部分成交订单会按累计成交差分写多条 fill，避免后续成交被同一个 `order_id` 吞掉。
-- 股票系统起点现在用统一命令维护：`.venv/bin/taa-futu stock-system-reset` 会同时设置事件审计账本 Epoch 和四策略分账起点，避免两套账本各算各的。
-- 股票系统 Doctor：`.venv/bin/taa-futu stock-system-doctor` 会检查账本起点、四策略分账、学习包、自动交易、守护监控和对账胶水，并给出修复命令。
-- 股票侧有 `Learning Lab`：`.venv/bin/taa-futu stock-learning-build` 重建订单结果、亏盈归因、候选改动和审阅包；`.venv/bin/taa-futu stock-learning-export` 专门导出给 Codex 复核的审阅包；`.venv/bin/taa-futu stock-learning-status` 查看最新学习状态。该模块只生成 research/paper 级建议，不会直接修改 live 策略或代码。
+---
 
-默认组合建议：
+## 许可
 
-- `Fusion Only`：`Baseline=off, Fusion=100%, Fallback=off`
-- `Fusion + Fallback`：`Baseline=off, Fusion=90%, Reserve=10%`
-- `Full Stack`：`Baseline=55%, Fusion=35%, Reserve/Fallback=10%`
+[MIT](LICENSE)
 
-## 运行逻辑
-
-- 回测和默认信号源使用 `yfinance` 拉取日线。
-- 富途下单阶段会连接 OpenD，用最新快照做价格和股数换算。
-- `Fusion Intraday` 会额外使用富途的 1 分钟线、盘口和逐笔。
-- `Strategy Stack` 会把 `Baseline` 和 `Fusion` 先按 sleeve 权重缩放，再汇总成一个账户级目标仓位；`Fallback` 只使用预留现金。
-- 实盘执行默认只做 long-only。
-- 默认用限价单，买单在卖一基础上上浮，卖单在买一基础上下浮，缓冲由 `FUTU_PRICE_BUFFER_BPS` 控制。
-- 费用模型默认按富途香港美股固定费率估算：
-  - 佣金：`0.0049 USD/股`，最低 `0.99 USD`
-  - 平台费：`0.005 USD/股`，最低 `1.00 USD`
-  - 交收费：`0.003 USD/股`，最低 `0.01 USD`
-  - SEC / TAF：按卖出时的监管费规则估算
-- `baseline / fusion / fallback / stack / account / exact` 现在都会把估算费用记进净结果。
-- 监控面板支持：
-- 查看账户资产、持仓、订单状态
-  - 查看订单历史里的 `dealt_qty / dealt_avg_price`
-  - 自选起止时间跑月频历史模拟，查看收益曲线和调仓日志
-- 控制台支持：
-  - 一键启动 `FutuOpenD + Dashboard`
-  - 一键打开浏览器监控页
-- 按按钮跑回测、信号、订单预演、订单提交
-- 启动/停止全天自动运行的 `Fusion Intraday`
-  - 启动后会自动拉起守护监控 `watchdog`
-  - 所有命令输出集中显示在一个日志窗格里
-
-## 实盘前必须知道
-
-- 默认目标市场是 `US`，因为这篇策略最适合用美股 ETF 代理。
-- `paper-trade` 默认是 dry-run，只有加 `--submit` 才会真的发单。
-- `REAL` 环境下，真实手动下单必须同时满足：
-  - `FUTU_ENABLE_REAL_TRADING=true`
-  - `FUTU_UNLOCK_TRADE_PASSWORD_MD5` 已配置
-- `REAL` 环境下，真实自动下单必须额外满足：
-  - `FUTU_ALLOW_AUTO_REAL=true`
-- 这套实现更适合月频执行，不适合日内反复运行。
-- 富途文档不同页面对模拟账户展示关系的描述并不完全一致；实际执行前请以 `get_acc_list()` 返回的 `trd_env=SIMULATE`、`sim_acc_type` 和 `trdmarket_auth` 为准。
-- 富途模拟交易接口当前不支持 `deal_list` 成交明细查询，所以监控页里的“成交”是订单维度，不是逐笔撮合流水。
-- 富途 `history_order_list_query` 当前不会返回费用字段，所以页面里的“已实现 / 净变化 / 估算费用”在多数情况下是按官方费率估算，不是券商回传原值。
-- 全天自动运行默认只在 `America/New_York 09:45-15:55` 工作，交易引擎轮询间隔默认 `60` 秒；可以在 `.env` 里改 `AUTO_TRADER_*` 配置。
-- `AUTO_TRADER_EXIT_CONFIRM_CYCLES` 可以要求退出信号连续出现 N 轮后才卖出，默认 `1` 保持旧行为。
-- `AUTO_TRADER_MIN_SYMBOL_INTERVAL_SECONDS` 可以给单个标的加下单冷却，默认 `0` 表示关闭。
-- 守护监控默认在主要交易时段每 `240-540` 秒随机检查一次，盘后每 `900-1800` 秒随机检查一次；可以在 `.env` 里改 `WATCHDOG_*` 配置。
+界面与文档以中文为主。英文简介见 [README.en.md](README.en.md)。

@@ -27,6 +27,33 @@ def _ensure_discovered() -> None:
     registry.discover()
 
 
+def _view_from_url() -> str | None:
+    """从地址栏的 ``?view=`` 读页面 id。
+
+    有了它，``http://localhost:8501/?view=news`` 能直接落到新闻页——页面可以
+    收藏、可以发给别人、截图脚本也不必去模拟点击。
+
+    只在本次会话第一次运行时读一次。否则用户点侧边栏切走之后，下一次 rerun
+    又会被 URL 拽回去，表现为「点了没反应」。
+    """
+    try:
+        raw = st.query_params.get("view")
+    except Exception:
+        # AppTest 等环境可能没有 query_params，没有就当没传
+        return None
+    if not raw:
+        return None
+    value = raw[0] if isinstance(raw, (list, tuple)) else str(raw)
+    value = value.strip()
+    if value == HOME:
+        return HOME
+    _ensure_discovered()
+    return value if registry.get(value) is not None else None
+
+
+_URL_APPLIED = "_view_from_url_applied"
+
+
 def current_view() -> str:
     """当前页面。
 
@@ -35,6 +62,12 @@ def current_view() -> str:
     当成键查找并抛 AttributeError——脚本直接中断，测试表现为「运行超时」而不是
     报错，极难定位。``in`` 加下标是两种运行时都支持的写法。
     """
+    if _URL_APPLIED not in st.session_state:
+        st.session_state[_URL_APPLIED] = True
+        from_url = _view_from_url()
+        if from_url is not None:
+            st.session_state[VIEW_KEY] = from_url
+            return from_url
     if VIEW_KEY not in st.session_state:
         return HOME
     return st.session_state[VIEW_KEY]
@@ -42,6 +75,11 @@ def current_view() -> str:
 
 def go_to(view: str) -> None:
     st.session_state[VIEW_KEY] = view
+    # 地址栏跟着走，这样刷新页面还在原处，也能直接复制链接给别人。
+    try:
+        st.query_params["view"] = view
+    except Exception:
+        pass
     st.rerun()
 
 
@@ -116,6 +154,8 @@ def render_home(settings: Any = None) -> None:
                 fn()
             idx += 1
 
+    render_discovery_errors()
+
 
 # 宿主可以往首页快捷区注册「不是功能」的工具动作（启动外部程序、跑体检等）。
 _QUICK_ACTIONS: list[tuple[str, str, Any]] = []
@@ -130,12 +170,22 @@ def register_quick_action(label: str, key: str, fn) -> None:
 def _extra_quick_actions():
     return list(_QUICK_ACTIONS)
 
+
+def render_discovery_errors() -> None:
+    """把「有功能模块没加载起来」显示在首页。
+
+    这段原本写在 _extra_quick_actions() 的 return 之后，永远执行不到，
+    于是 registry.errors 的设计意图（发现阶段出问题不要静默吞掉）整个失效：
+    某个功能导入失败时，它只是从侧边栏消失，界面上没有任何提示。
+    return 之后的代码不会报错也不会警告，所以这类 bug 只能靠通读发现。
+    """
     errors = registry.errors
-    if errors:
-        st.divider()
-        with st.expander(f"⚠️ {len(errors)} 个功能模块加载失败"):
-            for name, err in errors:
-                st.caption(f"`{name}`：{err}")
+    if not errors:
+        return
+    st.divider()
+    with st.expander(f"⚠️ {len(errors)} 个功能模块加载失败"):
+        for name, err in errors:
+            st.caption(f"`{name}`：{err}")
 
 
 # ── 侧边栏 ────────────────────────────────────────────────────────────────────
@@ -170,6 +220,22 @@ def render_sidebar() -> None:
 
 # ── 两种形态 ──────────────────────────────────────────────────────────────────
 
+def render_demo_banner() -> None:
+    """演示模式提示。
+
+    这条必须显眼且出现在每一页：演示模式下账户、持仓、行情全是合成的，
+    截图流出去很容易被当成真实交易记录。
+    """
+    from taa_futu.demo_gateway import demo_enabled
+    if not demo_enabled():
+        return
+    st.info(
+        "**演示模式（JQ_DEMO=1）** — 未连接富途，页面上的账户、持仓、成交与行情"
+        "全部是合成的示例数据，仅用于展示界面。所有下单路径在演示模式下被禁用。",
+        icon="🧪",
+    )
+
+
 def run_unified(settings: Any = None, *, render_header=None) -> None:
     """统一版：一个窗口装下所有功能。"""
     _ensure_discovered()
@@ -185,6 +251,7 @@ def run_unified(settings: Any = None, *, render_header=None) -> None:
         render_header()
 
     render_sidebar()
+    render_demo_banner()
 
     if view == HOME:
         render_home(settings)
@@ -198,6 +265,7 @@ def run_unified(settings: Any = None, *, render_header=None) -> None:
 def run_standalone(feature_id: str, settings: Any = None) -> None:
     """独立版：只跑一个功能，不显示导航。"""
     _ensure_discovered()
+    render_demo_banner()
     feat = registry.get(feature_id)
     if feat is None:
         st.error(
