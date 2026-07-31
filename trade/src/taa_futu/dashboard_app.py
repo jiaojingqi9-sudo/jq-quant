@@ -3908,9 +3908,22 @@ def render_live_monitor(settings) -> None:
     payload_key = f"{start.isoformat()}::{end.isoformat()}"
 
     def _load_live_payload() -> dict[str, object]:
+        # 临时计时：股票页首次渲染约 55 秒，需要定位耗时落在哪一步。
+        # 设 JQ_PROFILE_LIVE=1 时把各阶段耗时写到 runtime/live_payload_timing.json。
+        import time as _t
+        _prof_on = (os.environ.get("JQ_PROFILE_LIVE") or "").strip() in {"1", "true", "yes"}
+        _marks: list[tuple[str, float]] = []
+        _t0 = _t.perf_counter()
+
+        def _mark(label: str) -> None:
+            if _prof_on:
+                _marks.append((label, round(_t.perf_counter() - _t0, 2)))
+
         current_settings = _current_settings()
         cached_payload = st.session_state.get("live_payload")
+        _mark("准备设置")
         with FutuPaperTrader(current_settings) as trader:
+            _mark("连接 OpenD")
             # resolve_trade_account can fail if FutuOpenD connection drops mid-session.
             # Fall back to the cached acc_id so the rest of _safe_live_fetch calls
             # can still return stale data instead of letting the whole load explode.
@@ -3921,15 +3934,20 @@ def render_live_monitor(settings) -> None:
                 if cached_acc_id is None:
                     raise  # no cache yet — let the fragment's error handler show the warning
                 acc_id = cached_acc_id
+            _mark("解析账户")
             account = _safe_live_fetch(cached_payload, "account", lambda: trader.get_account_info(acc_id), pd.Series(dtype=object))
+            _mark("账户信息")
             positions = _safe_live_fetch(cached_payload, "positions", lambda: trader.get_positions(acc_id), pd.DataFrame())
+            _mark("持仓")
             open_orders = _safe_live_fetch(cached_payload, "open_orders", lambda: trader.get_open_orders(acc_id), pd.DataFrame())
+            _mark("挂单")
             order_history = _safe_live_fetch(
                 cached_payload,
                 "order_history",
                 lambda: trader.get_order_history(acc_id, start.isoformat(), end.isoformat()),
                 pd.DataFrame(),
             )
+            _mark("历史委托")
             market_now = datetime.now(ZoneInfo(current_settings.auto_trader_market_timezone))
             split_state = load_strategy_split_state()
             held_symbols = set(positions["code"].tolist()) if not positions.empty else set()
@@ -3942,6 +3960,7 @@ def render_live_monitor(settings) -> None:
                     pd.Timestamp(current_settings.start_date).date(),
                     (market_now.date() - timedelta(days=max(730, current_settings.lookback_months * 45))),
                 ).isoformat()
+                _mark("准备baseline")
                 baseline_prices = fetch_futu_daily_closes(
                     trader,
                     current_settings.symbols,
@@ -4063,12 +4082,14 @@ def render_live_monitor(settings) -> None:
                     ]
                 )
             )
+            _mark("各 sleeve 计算")
             snapshots_frame = _safe_live_fetch(
                 cached_payload,
                 "snapshots_frame",
                 lambda: trader.get_snapshots(all_symbols) if all_symbols else pd.DataFrame(),
                 pd.DataFrame(),
             )
+            _mark("行情快照")
             watchlist_rows = []
             for code in all_symbols:
                 snapshot_row = snapshots_frame.loc[code] if not snapshots_frame.empty and code in snapshots_frame.index else pd.Series(dtype=object)
@@ -4083,6 +4104,22 @@ def render_live_monitor(settings) -> None:
                         "状态 / Status": "held" if code in held_symbols else feature_map.get(code).reason if code in feature_map else "watch",
                     }
                 )
+            _mark("组装完成")
+            if _prof_on:
+                try:
+                    import json as _json
+                    _out = Path("runtime") / "live_payload_timing.json"
+                    _out.parent.mkdir(parents=True, exist_ok=True)
+                    _steps = []
+                    _prev = 0.0
+                    for _lbl, _at in _marks:
+                        _steps.append({"阶段": _lbl, "累计秒": _at, "本步秒": round(_at - _prev, 2)})
+                        _prev = _at
+                    _out.write_text(_json.dumps(
+                        {"总耗时": _marks[-1][1] if _marks else 0, "分步": _steps},
+                        ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
             return {
                 "payload_key": payload_key,
                 "acc_id": acc_id,
@@ -4127,6 +4164,7 @@ def render_live_monitor(settings) -> None:
                 "experiment_history": experiment_history,
                 "experiment_filled_cost_view": experiment_filled_cost_view,
             }
+
 
     def _get_live_payload(*, force_fetch: bool = False) -> dict[str, object]:
         payload = st.session_state.get("live_payload")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 import math
 import re
 import socket
@@ -422,9 +423,19 @@ class FutuPaperTrader:
 
         return normalized.groupby("code", as_index=True)[["qty", "can_sell_qty"]].sum()
 
-    def get_order_history(self, acc_id: int, start: str, end: str) -> pd.DataFrame:
-        self.ensure_trade_unlocked()
-        orders = self._expect_ok(
+    # 历史委托单次查询的天数上限。
+    #
+    # 实测（2026-07-31，模拟盘四 sleeve 每日下单的账户）：
+    #   7天 0.7s/251条 · 30天 2.9s/1214条 · 60天 3.8s/1658条 · 90天 10.4s/4174条
+    #   120天 → 重试 6 次后报 "Connection closed"，耗时 34.8 秒且拿不到任何数据。
+    #
+    # 控制终端默认查 2026-04-01 至今（121 天），正好越过这个临界点：每次打开股票页
+    # 都白等 35 秒，然后被 _safe_live_fetch 吞掉异常、静默显示空的历史委托。
+    # 分段查询同时解决两件事——数据能拿全，而且更快。
+    _ORDER_HISTORY_CHUNK_DAYS = 45
+
+    def _fetch_order_history_window(self, acc_id: int, start: str, end: str) -> pd.DataFrame:
+        return self._expect_ok(
             self._call_with_retry(
                 "history_order_list_query",
                 self.trade_ctx.history_order_list_query,
@@ -433,10 +444,44 @@ class FutuPaperTrader:
                 trd_env=self._trade_env(),
                 acc_id=acc_id,
                 order_market=self._trade_market(),
-            )
-            ,
+            ),
             context="history_order_list_query",
         )
+
+    def get_order_history(self, acc_id: int, start: str, end: str) -> pd.DataFrame:
+        self.ensure_trade_unlocked()
+
+        try:
+            start_date = pd.Timestamp(start).date()
+            end_date = pd.Timestamp(end).date()
+        except Exception:
+            # 日期解析不了就退回单次查询，保持原行为
+            orders = self._fetch_order_history_window(acc_id, start, end)
+            return (orders if orders.empty else
+                    orders.sort_values(["updated_time", "create_time"],
+                                       ascending=False).reset_index(drop=True))
+
+        frames: list[pd.DataFrame] = []
+        window_start = start_date
+        step = timedelta(days=self._ORDER_HISTORY_CHUNK_DAYS - 1)
+        while window_start <= end_date:
+            window_end = min(window_start + step, end_date)
+            chunk = self._fetch_order_history_window(
+                acc_id, window_start.isoformat(), window_end.isoformat()
+            )
+            if not chunk.empty:
+                frames.append(chunk)
+            window_start = window_end + timedelta(days=1)
+
+        if not frames:
+            return pd.DataFrame()
+
+        orders = pd.concat(frames, ignore_index=True)
+        # 相邻窗口不重叠，但同一委托可能在窗口边界被两侧都返回；按 order_id 去重。
+        if "order_id" in orders.columns:
+            orders = orders.drop_duplicates(subset=["order_id"], keep="last")
+        else:
+            orders = orders.drop_duplicates()
         if orders.empty:
             return orders
         return orders.sort_values(["updated_time", "create_time"], ascending=False).reset_index(drop=True)
