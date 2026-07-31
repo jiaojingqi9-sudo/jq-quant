@@ -112,7 +112,7 @@
     "source_trust": 0.76
   },
   "weibo": {
-    "enabled": true,
+    "enabled": false,
     "cookie_path": "~/.market_news/weibo_cookies.json",
     "queries": [
       "半导体",
@@ -151,7 +151,8 @@
     ],
     "browser_timeout_ms": 15000,
     "browser_warmup_ms": 1200,
-    "browser_fallback_enabled": false
+    "browser_fallback_enabled": false,
+    "disabled_reason": "2026-07-31 关闭：信噪比太低，聚类里大量无关内容。cookie 也已过期（存的是 2026-03-15 的登录态）。要重新启用：把 enabled 改回 true，并用 `python3 -m market_news cookies set-weibo --cookie-file <导出的.json>` 装新 cookie。"
   },
   "xueqiu": {
     "enabled": true,

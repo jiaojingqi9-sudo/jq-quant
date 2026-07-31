@@ -127,8 +127,26 @@ class HtmlCollectorTest(unittest.TestCase):
         collector = build_live_collector(config_path, user_agent="test-agent")
 
         names = [item.name for item in collector.collectors]
-        self.assertIn("weibo", names)
-        self.assertIn("xueqiu", names)
+
+        # 只断言机制，不断言某个源当前开着还是关着。
+        #
+        # 这里原来写 assertIn("weibo", names)，于是 2026-07-31 把微博关掉
+        # （信噪比太低）之后测试立刻红了——它测的其实是「当前配置恰好是什么」，
+        # 而不是「被禁用的源会不会被跳过」。真正该守住的是后者：只要
+        # live_sources.json 里 enabled=false，工厂就不能把它建出来。
+        # 这个 bug 有前科：RSS 源的 enabled 开关曾长期没被读取，直到
+        # 2026-07-30 才发现，正是因为没有测试盯住这条规则。
+        with open(config_path, encoding="utf-8") as handle:
+            live_cfg = json.load(handle)
+        for key in ("weibo", "xueqiu"):
+            cfg = live_cfg.get(key)
+            if not isinstance(cfg, dict):
+                continue
+            if cfg.get("enabled", False):
+                self.assertIn(key, names, f"{key} 配置为启用，却没被构造出来")
+            else:
+                self.assertNotIn(key, names, f"{key} 配置为禁用，却仍被构造出来")
+
         self.assertIn("cls", names)
         self.assertIn("csrc-home-updates", names)
         self.assertIn("eastmoney", names)

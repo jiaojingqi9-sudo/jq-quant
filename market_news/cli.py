@@ -34,7 +34,8 @@ from market_news.infrastructure.collectors.factory import build_live_collector
 from market_news.infrastructure.collectors.weibo import WeiboCollector
 from market_news.infrastructure.collectors.xueqiu import XueqiuCollector
 from market_news.infrastructure.collectors.local_json import LocalJSONCollector
-from market_news.infrastructure.cookie_store import install_cookie_file, market_news_cookie_dir, resolve_cookie_path
+from market_news.infrastructure.cookie_store import (install_cookie_file, market_news_cookie_dir,
+                                                     record_cookie_check, resolve_cookie_path)
 from market_news.infrastructure.http import UrllibHttpClient, default_user_agent
 from market_news.infrastructure.notifications.openclaw import OpenClawNotifier
 from market_news.infrastructure.persistence.sqlite_store import SQLiteRunStore
@@ -2593,7 +2594,11 @@ def run_cookies(args: argparse.Namespace) -> int:
             max_results_per_query=1,
             sleep_range=(0.0, 0.0),
         )
-        statuses.append(("weibo", *collector.check_session()))
+        ok, detail = collector.check_session()
+        # 实测结果要落回过期标记，否则看板永远显示上一次的状态：
+        # 一次临时失败会把源永久标红，而真坏了的源反而是绿的。
+        record_cookie_check(collector.cookie_path, ok, detail)
+        statuses.append(("weibo", ok, detail))
     xueqiu_config = payload.get("xueqiu", {})
     if isinstance(xueqiu_config, dict):
         collector = XueqiuCollector(
@@ -2604,7 +2609,9 @@ def run_cookies(args: argparse.Namespace) -> int:
             browser_timeout_ms=int(xueqiu_config.get("browser_timeout_ms", 15000)),
             browser_warmup_ms=int(xueqiu_config.get("browser_warmup_ms", 8000)),
         )
-        statuses.append(("xueqiu", *collector.check_session()))
+        ok, detail = collector.check_session()
+        record_cookie_check(collector.cookie_path, ok, detail)
+        statuses.append(("xueqiu", ok, detail))
 
     failed = 0
     for name, ok, detail in statuses:

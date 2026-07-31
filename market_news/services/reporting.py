@@ -857,12 +857,29 @@ class MarkdownJsonReporter:
             ("weibo",  cookie_dir / "weibo_cookies.json"),
             ("xueqiu", cookie_dir / "xueqiu_cookies.json"),
         ]
+        # 配置里被关掉的源不该按 cookie 状态报警。停用是刻意决定，
+        # 而它的 cookie 多半正好过期——不区分的话看板会挂一条永远消不掉的
+        # 红色告警，久了就没人再看这块了。
+        disabled: set[str] = set()
+        try:
+            live_cfg = _json.loads(
+                (Path(__file__).resolve().parents[2] / "config" / "live_sources.json")
+                .read_text(encoding="utf-8"))
+            for key in ("weibo", "xueqiu"):
+                cfg = live_cfg.get(key)
+                if isinstance(cfg, dict) and not bool(cfg.get("enabled", True)):
+                    disabled.add(key)
+        except Exception:
+            pass
+
         modules: list[dict[str, object]] = []
         any_error = False
         all_missing = True
 
         for name, path in known:
-            if not path.exists():
+            if name in disabled:
+                modules.append({"name": name, "status": "disabled", "reason": "已在配置里关闭"})
+            elif not path.exists():
                 modules.append({"name": name, "status": "missing"})
             else:
                 all_missing = False
@@ -887,7 +904,11 @@ class MarkdownJsonReporter:
                 else:
                     modules.append({"name": name, "status": "ok"})
 
-        if any_error:
+        if modules and all(m["status"] == "disabled" for m in modules):
+            # 两个源都关了。all_missing 仍是 True（停用分支不会翻它），
+            # 不特判的话会报「Cookie 未配置」，让人以为是配错了。
+            overall, detail = "ok", "需要 Cookie 的源都已关闭"
+        elif any_error:
             overall, detail = "error", "Cookie 已过期 — 运行 market-news cookies set-<source>"
         elif all_missing:
             overall, detail = "missing", "Cookie 未配置 — 运行 market-news cookies set-weibo/set-xueqiu"
@@ -2501,7 +2522,11 @@ class MarkdownJsonReporter:
       degraded: "降级",
       stale: "过期",
       error: "错误",
+      // "未启动" 是「本可以跑但没跑」，"已关闭" 是「刻意不跑」。
+      // 两者以前都落到红色，于是一个自愿关掉的源会在看板上永远挂着红牌，
+      // 时间一长这块就没人看了。
       missing: "未启动",
+      disabled: "已关闭",
       unknown: "未知"
     };
 

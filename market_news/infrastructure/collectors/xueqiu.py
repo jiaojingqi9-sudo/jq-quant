@@ -9,7 +9,8 @@ import re
 from market_news.common import utcnow
 from market_news.domain.models import RawNewsRecord
 from market_news.exceptions import CookieExpiredError
-from market_news.infrastructure.cookie_store import load_cookies, mark_cookie_expired
+from market_news.infrastructure.cookie_store import (clear_cookie_expired, load_cookies,
+                                                     mark_cookie_expired)
 from market_news.infrastructure.http import UrllibHttpClient
 
 
@@ -71,6 +72,12 @@ class XueqiuCollector:
         except Exception as exc:
             logger.warning("xueqiu HTML parsing failed: %s", exc)
             return []
+
+        # 抓到东西就说明 cookie 是活的——清掉可能残留的过期标记。
+        # 标记原先只在重装 cookie 时才清，一次临时失败会让这个源在看板上
+        # 永久标红，即使它早就恢复了。
+        if records:
+            clear_cookie_expired(self.cookie_path)
 
         if not records and html:
             logger.warning(
