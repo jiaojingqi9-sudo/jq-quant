@@ -1294,21 +1294,45 @@ def _inject_terminal_css() -> None:
     st.markdown(
         """
 <style>
+  /* ── JQ Quant 统一设计令牌 ────────────────────────────────────────────
+     与新闻看板 (news collector/market_news/services/reporting.py) 共用同一套
+     值，两者显示在同一个窗口里，配色必须一致。
+
+     这里原本有 28 个硬编码颜色，其中 7 个近乎相同的深蓝黑、4 个近乎相同的
+     灰、9 个近乎相同的边框灰。差一两个色值的边框并排出现时，眼睛察觉得到
+     不齐，却说不出哪里不对——这正是「看着不协调」的来源之一。归并成下面
+     8 个令牌后，改配色只动这一处。
+
+     涨跌沿用中港习惯：红涨绿跌。这与欧美相反，改动时务必保持。 */
+  :root {
+    --jq-bg-top: #f6f9fc;
+    --jq-bg-bottom: #eef3f8;
+    --jq-surface: #ffffff;
+    --jq-surface-soft: #f4f8fb;
+    --jq-line: #d9e3ee;
+    --jq-ink: #182534;
+    --jq-muted: #6b7d90;
+    --jq-up: #ff4d67;
+    --jq-down: #20c997;
+    --jq-radius-lg: 16px;
+    --jq-radius-md: 12px;
+    --jq-shadow: 0 10px 24px rgba(24, 37, 52, 0.07);
+  }
   .stApp {
     background:
       radial-gradient(circle at top left, rgba(97, 132, 177, 0.10), transparent 24%),
-      linear-gradient(180deg, #f6f9fc 0%, #eef3f8 100%);
-    color: #182534;
+      linear-gradient(180deg, var(--jq-bg-top) 0%, var(--jq-bg-bottom) 100%);
+    color: var(--jq-ink);
   }
   [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #f3f7fb 0%, #ebf1f7 100%);
-    border-right: 1px solid #d8e2ec;
+    background: linear-gradient(180deg, var(--jq-bg-top) 0%, var(--jq-bg-bottom) 100%);
+    border-right: 1px solid var(--jq-line);
   }
   .terminal-shell {
-    border: 1px solid #d8e3ee;
-    border-radius: 18px;
+    border: 1px solid var(--jq-line);
+    border-radius: var(--jq-radius-lg);
     background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(247,250,253,0.98) 100%);
-    box-shadow: 0 10px 28px rgba(34, 51, 84, 0.08);
+    box-shadow: var(--jq-shadow);
     padding: 14px 16px;
   }
   .terminal-header {
@@ -1316,19 +1340,19 @@ def _inject_terminal_css() -> None:
     justify-content: space-between;
     align-items: baseline;
     gap: 16px;
-    border-bottom: 1px solid #e4ebf3;
+    border-bottom: 1px solid var(--jq-line);
     padding-bottom: 10px;
     margin-bottom: 12px;
   }
   .terminal-title {
     font-size: 30px;
     font-weight: 800;
-    color: #162434;
+    color: var(--jq-ink);
     letter-spacing: 0.01em;
   }
   .terminal-subtitle {
     margin-top: 4px;
-    color: #6b7d90;
+    color: var(--jq-muted);
     font-size: 12px;
   }
   .terminal-price {
@@ -1337,10 +1361,10 @@ def _inject_terminal_css() -> None:
     line-height: 1;
   }
   .terminal-up {
-    color: #ff4d67;
+    color: var(--jq-up);
   }
   .terminal-down {
-    color: #20c997;
+    color: var(--jq-down);
   }
   .terminal-chip-row {
     display: flex;
@@ -1352,8 +1376,8 @@ def _inject_terminal_css() -> None:
     padding: 5px 10px;
     border-radius: 999px;
     background: rgba(242, 247, 252, 0.96);
-    border: 1px solid #d6e2ee;
-    color: #42576c;
+    border: 1px solid var(--jq-line);
+    color: var(--jq-muted);
     font-size: 11px;
     line-height: 1.2;
   }
@@ -1365,76 +1389,76 @@ def _inject_terminal_css() -> None:
   }
   .terminal-mini-card {
     padding: 10px 12px;
-    border-radius: 12px;
+    border-radius: var(--jq-radius-md);
     background: rgba(247, 250, 253, 0.98);
-    border: 1px solid #dbe5ef;
+    border: 1px solid var(--jq-line);
   }
   .terminal-mini-label {
-    color: #6e8196;
+    color: var(--jq-muted);
     font-size: 11px;
     margin-bottom: 4px;
   }
   .terminal-mini-value {
-    color: #172535;
+    color: var(--jq-ink);
     font-size: 18px;
     font-weight: 700;
   }
   .terminal-panel-title {
     font-size: 18px;
     font-weight: 700;
-    color: #162434;
+    color: var(--jq-ink);
     margin-bottom: 10px;
   }
   .terminal-caption {
-    color: #66798d;
+    color: var(--jq-muted);
     font-size: 12px;
   }
   .terminal-divider {
     height: 1px;
-    background: #e2e8f0;
+    background: var(--jq-line);
     margin: 12px 0;
   }
   div[data-testid="stDataFrame"] {
-    border: 1px solid #d9e3ee;
+    border: 1px solid var(--jq-line);
     border-radius: 14px;
     overflow: hidden;
-    background: #ffffff;
+    background: var(--jq-surface);
   }
   div[data-testid="stMetric"] {
-    border: 1px solid #dae4ef;
+    border: 1px solid var(--jq-line);
     border-radius: 14px;
-    background: #ffffff;
+    background: var(--jq-surface);
     padding: 8px 10px;
   }
   div[data-testid="stMetricValue"] {
-    color: #152231;
+    color: var(--jq-ink);
   }
   div[data-testid="stMetricLabel"] {
-    color: #66788d;
+    color: var(--jq-muted);
     white-space: normal !important;
     overflow-wrap: anywhere !important;
     line-height: 1.2 !important;
     font-size: 0.94rem !important;
   }
   .stSelectbox label, .stDateInput label, .stSegmentedControl label, .stToggle label, .stTabs [data-baseweb="tab"] {
-    color: #1b2a3a !important;
+    color: var(--jq-ink) !important;
   }
   .stMarkdown, .stCaption, .stAlert {
-    color: #1b2a3a;
+    color: var(--jq-ink);
   }
   [data-testid="stSidebarCollapseButton"] button,
   [data-testid="stSidebarCollapsedControl"] button,
   [data-testid="collapsedControl"] button {
-    background: #ffffff !important;
-    border: 1px solid #d6e0eb !important;
+    background: var(--jq-surface) !important;
+    border: 1px solid var(--jq-line) !important;
     border-radius: 10px !important;
     box-shadow: 0 4px 12px rgba(26, 42, 62, 0.10) !important;
-    color: #1c2b3a !important;
+    color: var(--jq-ink) !important;
   }
   [data-testid="stSidebarCollapseButton"] button:hover,
   [data-testid="stSidebarCollapsedControl"] button:hover,
   [data-testid="collapsedControl"] button:hover {
-    background: #f4f8fb !important;
+    background: var(--jq-surface-soft) !important;
   }
 </style>
 """,
