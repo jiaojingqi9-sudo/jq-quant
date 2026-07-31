@@ -513,9 +513,14 @@ def _stock_performance_summary(
     broker_unrealized: float | None,
     selected_range_trade_count: int,
 ) -> StockPerformanceSummary:
+    # 判定统一走 stock_runtime，不要在这里另写一套读取逻辑——
+    # 界面、Doctor、券商对账开关必须对同一份文件给出同一个结论。
+    from taa_futu.stock_runtime import epoch_is_set as _epoch_is_set
+    from taa_futu.stock_runtime import epoch_start_value as _epoch_start_value
+
     epoch_snapshot = dict((stock_ledger_epoch or {}).get("account_snapshot") or {})
-    epoch_start_value = _safe_float(epoch_snapshot.get("total_assets"))
-    ledger_has_epoch = bool((stock_ledger_epoch or {}).get("ts") and epoch_start_value > 0)
+    epoch_start_value = _epoch_start_value(stock_ledger_epoch)
+    ledger_has_epoch = _epoch_is_set(stock_ledger_epoch)
     ledger_realized = _ledger_attr(stock_ledger_v2, stock_ledger_projection, "net_realized_pnl", 0.0)
     ledger_fees = _ledger_attr(stock_ledger_v2, stock_ledger_projection, "fees_paid", 0.0)
     ledger_trade_count = int(_ledger_attr(stock_ledger_v2, stock_ledger_projection, "trade_count", 0.0))
@@ -3882,6 +3887,19 @@ def render_live_monitor(settings) -> None:
                 f"Fill log: {STOCK_FILLS_FILE} | Epoch: {STOCK_LEDGER_EPOCH_FILE}. "
                 "这里不会修改券商账户，只会把本地股票账本的统计起点改成当前时间。"
             )
+            # 说清楚代价。原来只写「不会修改券商账户」，读起来像是无害操作，
+            # 实际上重设 Epoch 会把 fills_count_at_reset 写成当前成交总数，
+            # 两个账本投影都按这个偏移量切片，已入账的成交会被整体排除出视图。
+            _fills_now = int(_ledger_attr(stock_ledger_v2, stock_ledger_projection,
+                                          "trade_count", 0.0))
+            if _fills_now:
+                st.warning(
+                    f"点下面的按钮会把账本起点移到此刻，**当前已入账的 {_fills_now:,} 笔成交"
+                    f"将被排除出账本视图**：净已实现、费用、分录数都会归零重新开始。\n\n"
+                    "成交流水文件本身不会被删除，但按钮不提供撤销——要恢复得手工把 "
+                    "epoch 里的 `fills_count_at_reset` 改回原值。\n\n"
+                    "只有在你确实要重新开始一段新的统计区间时才点。"
+                )
             if getattr(stock_ledger_projection, "warnings", ()):
                 for warning in stock_ledger_projection.warnings:
                     st.warning(warning)

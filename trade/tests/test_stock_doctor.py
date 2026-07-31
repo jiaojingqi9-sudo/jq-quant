@@ -41,7 +41,20 @@ def test_stock_doctor_accepts_coherent_runtime_contracts(tmp_path) -> None:
     packet = tmp_path / "stock_learning_review_packet.json"
     auto = tmp_path / "auto_trader_status.json"
     watchdog = tmp_path / "watchdog_status.json"
-    epoch.write_text(json.dumps({"ts": now.isoformat(), "account_snapshot": {}, "fills_count_at_reset": 0}), encoding="utf-8")
+    # account_snapshot 必须带 total_assets：那是「Epoch 后总盈亏」的减数，
+    # 也是界面与 Doctor 判定 Epoch 可用的依据。原来这里写空字典，等于把一份
+    # 并不自洽的 Epoch 当成基准，于是线上那个真实故障被测试放行了——
+    # 2026-07-31 查出：epoch 只有 cash 没有 total_assets，界面判「未设置」、
+    # Doctor 判「已设置」，券商对账被整块禁用。
+    epoch.write_text(
+        json.dumps({
+            "ts": now.isoformat(),
+            "account_snapshot": {"total_assets": 1_000_000.0, "cash": 1_000_000.0,
+                                 "market_val": 0.0, "position_count": 0, "positions": []},
+            "fills_count_at_reset": 0,
+        }),
+        encoding="utf-8",
+    )
     split.write_text(
         json.dumps(
             {
@@ -83,7 +96,20 @@ def test_stock_doctor_flags_split_weight_drift(tmp_path) -> None:
     epoch = tmp_path / "stock_ledger_epoch.json"
     split = tmp_path / "strategy_split_state.json"
     packet = tmp_path / "stock_learning_review_packet.json"
-    epoch.write_text(json.dumps({"ts": now.isoformat(), "account_snapshot": {}, "fills_count_at_reset": 0}), encoding="utf-8")
+    # account_snapshot 必须带 total_assets：那是「Epoch 后总盈亏」的减数，
+    # 也是界面与 Doctor 判定 Epoch 可用的依据。原来这里写空字典，等于把一份
+    # 并不自洽的 Epoch 当成基准，于是线上那个真实故障被测试放行了——
+    # 2026-07-31 查出：epoch 只有 cash 没有 total_assets，界面判「未设置」、
+    # Doctor 判「已设置」，券商对账被整块禁用。
+    epoch.write_text(
+        json.dumps({
+            "ts": now.isoformat(),
+            "account_snapshot": {"total_assets": 1_000_000.0, "cash": 1_000_000.0,
+                                 "market_val": 0.0, "position_count": 0, "positions": []},
+            "fills_count_at_reset": 0,
+        }),
+        encoding="utf-8",
+    )
     split.write_text(
         json.dumps(
             {
@@ -119,7 +145,20 @@ def test_stock_doctor_does_not_recommend_reset_for_post_epoch_reconciliation_bre
     epoch = tmp_path / "stock_ledger_epoch.json"
     split = tmp_path / "strategy_split_state.json"
     packet = tmp_path / "stock_learning_review_packet.json"
-    epoch.write_text(json.dumps({"ts": now.isoformat(), "account_snapshot": {}, "fills_count_at_reset": 0}), encoding="utf-8")
+    # account_snapshot 必须带 total_assets：那是「Epoch 后总盈亏」的减数，
+    # 也是界面与 Doctor 判定 Epoch 可用的依据。原来这里写空字典，等于把一份
+    # 并不自洽的 Epoch 当成基准，于是线上那个真实故障被测试放行了——
+    # 2026-07-31 查出：epoch 只有 cash 没有 total_assets，界面判「未设置」、
+    # Doctor 判「已设置」，券商对账被整块禁用。
+    epoch.write_text(
+        json.dumps({
+            "ts": now.isoformat(),
+            "account_snapshot": {"total_assets": 1_000_000.0, "cash": 1_000_000.0,
+                                 "market_val": 0.0, "position_count": 0, "positions": []},
+            "fills_count_at_reset": 0,
+        }),
+        encoding="utf-8",
+    )
     split.write_text(
         json.dumps(
             {

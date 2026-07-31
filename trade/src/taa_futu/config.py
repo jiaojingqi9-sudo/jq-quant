@@ -123,6 +123,10 @@ class Settings:
     auto_trader_end_time: str
     auto_trader_order_cooldown_seconds: int
     auto_trader_exit_confirm_cycles: int = 1
+    # 每次同步成交时往回查几天。1 天会让跨周末的漏记永久丢失（周五收盘前的
+    # 成交，周一查 [周日, 周一] 根本扫不到）。去重按 order_id 做，回溯多几天
+    # 只是多扫一遍，不会重复入账。
+    auto_trader_fill_lookback_days: int = 7
     auto_trader_min_symbol_interval_seconds: int = 0
     auto_trader_max_target_gross_exposure: float = 1.0
     auto_trader_max_target_weight: float = 1.0
@@ -318,6 +322,7 @@ def load_settings(env_file: str | Path = ".env") -> Settings:
         auto_trader_market_timezone=os.getenv("AUTO_TRADER_MARKET_TIMEZONE", "America/New_York"),
         auto_trader_start_time=os.getenv("AUTO_TRADER_START_TIME", "09:45"),
         auto_trader_end_time=os.getenv("AUTO_TRADER_END_TIME", "15:55"),
+        auto_trader_fill_lookback_days=int(os.getenv("AUTO_TRADER_FILL_LOOKBACK_DAYS", "7")),
         auto_trader_order_cooldown_seconds=int(os.getenv("AUTO_TRADER_ORDER_COOLDOWN_SECONDS", "300")),
         auto_trader_exit_confirm_cycles=int(os.getenv("AUTO_TRADER_EXIT_CONFIRM_CYCLES", "1")),
         auto_trader_min_symbol_interval_seconds=int(os.getenv("AUTO_TRADER_MIN_SYMBOL_INTERVAL_SECONDS", "0")),

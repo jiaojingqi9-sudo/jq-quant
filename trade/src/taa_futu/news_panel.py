@@ -262,4 +262,60 @@ def render_news(settings=None) -> None:
     if REVIEW_API_BASE not in html:
         st.caption("提示：看板里没有找到 review API 地址，问 AI 功能可能不可用。")
 
+    html = _blend_into_app(html)
     components.html(html, height=2400 if tall else DEFAULT_BOARD_HEIGHT, scrolling=True)
+
+
+# 嵌入时注入的样式。只在 app 里生效，独立打开看板时不受影响——
+# 那种场景下它就该是一张完整的网页，有自己的背景和大标题。
+_EMBED_CSS = """
+<style data-jq-embed="1">
+  /* 让看板融进 app，而不是「页面里套一张页面」。
+     配色令牌两边本来就是同一套（ink / muted / 阴影 / 圆角 / 字体），
+     所以剩下的全是接缝问题：
+
+     1) 自带的渐变页面背景，在 app 的浅底上会显出一块明显的矩形
+     2) body 的外边距，让内容离 app 的容器边缘忽宽忽窄
+     3) 顶部那张 hero 大标题（MARKET NEWS BOARD / 可点击市场消息控制台），
+        它是给独立页面用的门面，嵌进来就成了第二个页头
+     4) 内容宽度上限居中，两侧留白与 app 的栅格对不齐 */
+
+  html, body {
+    background: transparent !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  body::before, body::after { display: none !important; }
+
+  /* 独立页面的门面，嵌入时收掉 */
+  section.hero { display: none !important; }
+
+  /* 跟着 app 的容器走，不再自己限宽居中 */
+  .layout, .workspace, main, .container, .page {
+    max-width: none !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  /* 第一块内容不要再顶一段外边距，否则和上面的工具栏之间空一大截 */
+  section.toolbar { margin-top: 0 !important; padding-top: 0 !important; }
+
+  /* iframe 自己会滚，内部再套一层滚动条就会出现双滚动条 */
+  .column-scroll { overflow: visible !important; max-height: none !important; }
+</style>
+"""
+
+
+def _blend_into_app(html: str) -> str:
+    """把嵌入用样式塞进看板 HTML 的 head。
+
+    改这里而不是改生成器：生成器产出的那张页面还要独立打开、还要给推送用，
+    它有自己的门面是对的。只有嵌进 app 这一种场景才需要去掉接缝。
+    """
+    if 'data-jq-embed="1"' in html:
+        return html
+    if "</head>" in html:
+        return html.replace("</head>", _EMBED_CSS + "</head>", 1)
+    return _EMBED_CSS + html

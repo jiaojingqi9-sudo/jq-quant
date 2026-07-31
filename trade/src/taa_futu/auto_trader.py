@@ -495,7 +495,17 @@ def _record_new_fills(
 ) -> int:
     now_utc = now_utc or datetime.now(UTC)
     market_date = _market_now(now_utc, settings).date()
-    start = (market_date - timedelta(days=1)).isoformat()
+    # 回溯 7 天而不是 1 天。
+    #
+    # 原来查 [昨天, 今天]，一旦某笔成交当天没记上，就再也补不回来了：周五
+    # 15:54 成交，下一个交易日是周一，查询范围 [周日, 周一] 根本不含周五。
+    # 2026-07-31 查出的 5 笔漏记里，06-05 和 07-17 都是这样永久丢失的。
+    #
+    # 放宽到 7 天，任何原因造成的短期缺口都会在下次运行时自动补上。代价可控：
+    # 去重按 (order_id, 累计成交量) 做，重复扫到的不会写第二遍；富途接口在
+    # 约 5000 条时会断连，7 天的量远在安全线内（实测 7 天约 250 条）。
+    lookback_days = max(1, int(getattr(settings, "auto_trader_fill_lookback_days", 7)))
+    start = (market_date - timedelta(days=lookback_days)).isoformat()
     end = market_date.isoformat()
     try:
         history = trader.get_order_history(acc_id, start, end)
@@ -902,6 +912,32 @@ def run_cycle(settings: Settings, state: AutoTraderState, *, submit: bool) -> tu
     )
     market_open, window_detail = _market_window_state(now_utc, settings)
     if not market_open:
+        # 交易窗口关了不代表不用记账。
+        #
+        # 这里原本直接 return，于是 _record_new_fills 只在窗口内才跑。后果是
+        # 收盘前最后几分钟成交的单子永远进不了本地账本：成交发生在 15:54，
+        # 下一个轮询周期已过 AUTO_TRADER_END_TIME=15:55，函数提前返回，那笔
+        # 成交再也没人看一眼。2026-07-31 对账查出 5 笔漏记，时间戳分别是
+        # 15:54:30 / 15:54:36 / 15:54:12 / 15:55:09 / 15:54:54——全部卡在窗口
+        # 边界上，账本因此以为还持有 MSTR 631 股、IBIT 416 股、META 40 股，
+        # 而券商早已清仓。
+        #
+        # _record_new_fills 对券商只读（只调 get_order_history），不下单不撤单，
+        # 放在窗口外跑没有任何风险。补记完再返回 waiting，其余逻辑不变。
+        try:
+            with FutuPaperTrader(settings) as trader:
+                acc_id = trader.resolve_trade_account()
+                recorded = _record_new_fills(trader, acc_id, settings, state,
+                                             now_utc=now_utc, cycle_id=cycle_id)
+            if recorded:
+                append_stock_event("fill_sync_outside_window",
+                                   {"recorded": recorded, "detail": window_detail},
+                                   cycle_id=cycle_id)
+        except Exception as exc:
+            # 补记失败不能影响「窗口外就该待命」这个主结论
+            append_stock_event("fill_sync_error",
+                               {"detail": f"outside_window: {type(exc).__name__}: {exc}"},
+                               cycle_id=cycle_id)
         append_stock_event("cycle_waiting", {"detail": window_detail}, cycle_id=cycle_id)
         return "waiting", _stack_runtime_detail(settings, window_detail)
 
