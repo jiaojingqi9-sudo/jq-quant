@@ -14,7 +14,8 @@ from urllib.parse import quote
 from market_news.common import ensure_utc, utcnow
 from market_news.domain.models import RawNewsRecord
 from market_news.exceptions import CookieExpiredError
-from market_news.infrastructure.cookie_store import load_cookies, mark_cookie_expired
+from market_news.infrastructure.cookie_store import (clear_cookie_expired, load_cookies,
+                                                     mark_cookie_expired)
 from market_news.infrastructure.http import UrllibHttpClient
 
 
@@ -71,6 +72,9 @@ class WeiboCollector:
                 return []
             except Exception as exc:
                 logger.warning("weibo query failed: %s (%s)", query, exc)
+        # 抓到东西就说明 cookie 是活的，清掉可能残留的过期标记（自愈）。
+        if records:
+            clear_cookie_expired(self.cookie_path)
         return records
 
     def _cycle_queries(self) -> list[str]:

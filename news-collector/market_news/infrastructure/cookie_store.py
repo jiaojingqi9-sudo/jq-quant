@@ -52,6 +52,26 @@ def _expired_flag_path(cookie_path: str | Path) -> Path:
     return resolve_cookie_path(cookie_path).with_suffix(".expired")
 
 
+def record_cookie_check(cookie_path: str | Path, ok: bool, detail: str = "") -> None:
+    """把一次实测结果落到过期标记上。成功就清、失败就标。
+
+    以前标记只在重新安装 cookie 时才清（install_cookie_file），于是一次临时
+    失败会把这个源永久标红。2026-07-31 实测：雪球标记停在 2026-05-12
+    "Xueqiu session requires login"，而当天 `cookies check` 拿同一份 cookie
+    请求返回 "cookie accepted" —— 标记挂了两个半月，源其实一直是好的。
+
+    反过来，check 失败时以前也不写标记，所以真坏了的源在看板上是绿的。
+    同一天微博 check 报 "Expecting value: line 1 column 1"（拿回的不是 JSON，
+    多半是登录页），看板却显示正常。
+
+    两个方向都补上，看板才反映真实状态。
+    """
+    if ok:
+        clear_cookie_expired(cookie_path)
+    else:
+        mark_cookie_expired(cookie_path, reason=detail)
+
+
 def mark_cookie_expired(cookie_path: str | Path, *, reason: str = "") -> None:
     """Write an expiry sentinel alongside the cookie file (idempotent)."""
     flag = _expired_flag_path(cookie_path)
