@@ -456,15 +456,17 @@ class StockTab(ttk.Frame):
         launchers = ttk.LabelFrame(self, text="启动器 / Launchers", padding=10)
         launchers.pack(fill="x", pady=(0, 10))
 
+        # 2026-07-31 移除三个按钮，它们指向的启动器已随桌面整理移走：
+        #   「打开 监控Dashboard」「打开 TAA App」——两者都只是起交易终端，
+        #       现在桌面上的寻宝猫就是干这个的，而且用应用窗口而非浏览器标签页。
+        #   「修复启动脚本」——它修的是桌面上的「启动量化交易控制台.command」，
+        #       那个文件早已不在桌面，按钮点了也没有对象可修。
         _grid_buttons(launchers, [
             ("启动 量化交易控制台", lambda: self.app.run_launcher(STOCK_LAUNCHERS / "Launch_Trading_Control_Panel.command")),
-            ("打开 监控Dashboard", lambda: self.app.run_launcher(STOCK_LAUNCHERS / "Open_Trading_Dashboard.command")),
             ("启动 全天自动运行", lambda: self.app.run_launcher(STOCK_LAUNCHERS / "Start_All_Day_Auto_Run.command")),
             ("停止 全天自动运行", lambda: self.app.run_launcher(STOCK_LAUNCHERS / "Stop_All_Day_Auto_Run.command")),
             ("取消所有挂单", lambda: self.app.run_launcher(STOCK_LAUNCHERS / "Cancel_All_Orders.command")),
-            ("打开 TAA App", lambda: self.app.run_launcher(STOCK_LAUNCHERS / "Open_TAA_Quant_Trading_App.command")),
             ("重启 Dashboard", lambda: self.app.run_launcher(STOCK_LAUNCHERS / "重启Dashboard.command")),
-            ("修复启动脚本", lambda: self.app.run_launcher(STOCK_LAUNCHERS / "修复启动脚本.command")),
             ("Cascade 总控制台", lambda: self.app.run_launcher(CLAUDE_TRADE_DIR / "总控制台.command")),
         ])
 

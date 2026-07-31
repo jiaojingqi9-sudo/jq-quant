@@ -916,11 +916,11 @@ def _render_native_screener() -> None:
         "futu_stock_screener_desktop.py 是一个独立的 Tkinter 桌面 app（拉富途板块 + 实时筛选）。"
         "它不能直接嵌进 Streamlit 浏览器页面 — 点下面按钮会开一个新的窗口。"
     )
-    bc1, bc2 = st.columns(2)
-    if bc1.button("打开 Stock Screener", use_container_width=True):
+    # 原来这里还有第二个按钮「打开 TAA Quant Trading App」，2026-07-31 去掉：
+    # 它开的是旧的 TAA Quant Trading.app，而你现在正看的这个页面就是它，
+    # 桌面上的寻宝猫也是它。留着只会让人以为还有个别的程序。
+    if st.button("打开 Stock Screener", use_container_width=True):
         _open_command(STOCK_LAUNCHERS / "Open_Stock_Screener.command")
-    if bc2.button("打开 TAA Quant Trading App", use_container_width=True):
-        _open_command(STOCK_LAUNCHERS / "Open_TAA_Quant_Trading_App.command")
 
 
 # ─────────────────────────── 实时建议（独立子页） ───────────────────────────
