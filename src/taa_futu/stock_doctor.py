@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .stock_learning import STOCK_LEARNING_REVIEW_PACKET_JSON_FILE, load_learning_review_packet
-from .stock_runtime import STOCK_LEDGER_EPOCH_FILE, load_stock_ledger_epoch
+from .stock_runtime import STOCK_LEDGER_EPOCH_FILE, epoch_is_set, load_stock_ledger_epoch
 from .strategy_experiment import SPLIT_STATE_FILE, load_strategy_split_state, split_state_matches_current, split_state_weight_map
 
 
@@ -131,6 +131,20 @@ def run_stock_system_doctor(
                 "fail",
                 "股票事件账本还没有统一起点。",
                 "没有 Epoch 时，审计账本会把现有券商持仓看成初始化差异。",
+                ".venv/bin/taa-futu stock-system-reset",
+            )
+        )
+    elif not epoch_is_set(epoch):
+        # 有时间戳但起点资产缺失。Doctor 以前只看 ts，所以会说「已设置」，
+        # 而主界面要求 ts + 起点资产，会说「未设置」——同一份文件两种结论，
+        # 用户看到的是自相矛盾的界面。这一支就是为了让两边说同一句话。
+        findings.append(
+            StockDoctorFinding(
+                "system_epoch",
+                "warn",
+                "Epoch 有时间戳但缺起点资产，期间归因与券商对账都用不了。",
+                "account_snapshot 里没有 total_assets（也无法从空持仓的 cash 推出）。"
+                "多半是旧版 stock/tools/repair_ledger.py 手工拼 epoch 时漏写的。",
                 ".venv/bin/taa-futu stock-system-reset",
             )
         )

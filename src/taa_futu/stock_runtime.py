@@ -44,7 +44,24 @@ def load_stock_fill_records(fills_path: Path = STOCK_FILLS_FILE) -> list[dict[st
             continue
         if isinstance(row, dict):
             rows.append(row)
-    return rows
+
+    # 按成交时间稳定排序后再返回。
+    #
+    # 账本是按列表顺序回放做 FIFO 配对的，而这个文件是追加写的，正常情况下
+    # 文件顺序就是时间顺序，排序等于空操作（stable sort 保持原有相对次序）。
+    # 但补记历史成交时，那条记录只能追加到文件末尾——如果它的时间早于已有
+    # 记录，回放就会先卖后买：2026-07-31 补记 07-24 的 AAPL 买入 116 股后，
+    # 对应的卖出排在它前面，账本于是认为还持有 116 股，而券商已清零。
+    #
+    # 只在乱序时才改变行为，所以对既有数据无影响。ts 缺失的排到最前，
+    # 保持它们原有的相对次序。
+    def _sort_key(item: tuple[int, dict[str, Any]]) -> tuple[int, str]:
+        index, record = item
+        stamp = str(record.get("ts") or "").strip()
+        return (0, "") if not stamp else (1, stamp)
+
+    ordered = sorted(enumerate(rows), key=_sort_key)
+    return [record for _, record in ordered]
 
 
 def load_recorded_stock_fill_ids(fills_path: Path = STOCK_FILLS_FILE) -> set[str]:
@@ -91,6 +108,47 @@ def load_stock_ledger_epoch(epoch_path: Path = STOCK_LEDGER_EPOCH_FILE) -> dict[
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def epoch_start_value(epoch: dict[str, Any] | None) -> float:
+    """Epoch 那一刻的总资产。取不到就返回 0.0。
+
+    这是「Epoch 是否可用」的唯一判定依据，界面、Doctor、券商对账开关都必须走
+    这一个函数。以前三处各读各的字段：卡片只看 ``ts``、Doctor 只看 ``ts``、
+    而主界面要 ``ts`` 且 ``total_assets > 0``，于是同一个文件被判出两种相反结论
+    ——卡片显示着 Epoch 日期，旁边却写「还没有设置账本 Epoch」。
+
+    ``positions`` 为空时用 ``cash`` 兜底：没有持仓，总资产就等于现金。
+    这不是猜，是恒等式。真正需要它的原因是历史遗留——
+    ``stock/tools/repair_ledger.py`` 曾绕过 :func:`write_stock_ledger_epoch`
+    手工拼 epoch，只写了 ``cash``。那个脚本已修，但已经落盘的文件还在。
+    """
+    snapshot = (epoch or {}).get("account_snapshot") or {}
+    if not isinstance(snapshot, dict):
+        return 0.0
+
+    def _num(value: Any) -> float:
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return out if out == out else 0.0        # 挡住 NaN
+
+    total = _num(snapshot.get("total_assets"))
+    if total > 0:
+        return total
+    positions = snapshot.get("positions")
+    if isinstance(positions, (list, tuple)) and len(positions) == 0:
+        return _num(snapshot.get("cash"))
+    return 0.0
+
+
+def epoch_is_set(epoch: dict[str, Any] | None) -> bool:
+    """Epoch 是否已经设好、可以用来做期间归因与券商对账。
+
+    时间戳与起点资产缺一不可：只有时间戳算不出「Epoch 后总盈亏」。
+    """
+    return bool((epoch or {}).get("ts")) and epoch_start_value(epoch) > 0
 
 
 def write_stock_ledger_epoch(

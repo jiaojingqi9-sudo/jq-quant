@@ -91,11 +91,26 @@ def build_rebuilt_fills(settings) -> list[dict]:
 
 
 def _clean_epoch(settings) -> dict:
+    """构造重建用的干净 Epoch。
+
+    ``account_snapshot`` 必须含 ``total_assets``：那是「Epoch 后总盈亏」的减数，
+    也是界面判定 Epoch 可用与否的依据。这里开仓无持仓，所以总资产等于现金。
+
+    2026-06-02 那次重建漏了这个字段，落盘的 epoch 只有 ``cash``。后果是界面
+    判定「Epoch 未设置」，起点资产显示「未设置」、期间盈亏显示「待初始化」、
+    券商对账被整块禁用——而对账本身只需要 ``cash``，其实一直算得出结果，
+    只是不给看。同一份文件 Doctor 却说「已设置」（它只看 ``ts``）。
+    界面上于是出现 Epoch 卡片有日期、旁边写着「还没有设置 Epoch」。
+    """
+    opening_cash = float(getattr(settings, "initial_capital", 1_000_000.0))
     return {
         "ts": "2026-04-08T00:00:00+00:00",
         "reason": "broker_history_rebuild",
         "account_snapshot": {
-            "cash": float(getattr(settings, "initial_capital", 1_000_000.0)),
+            "total_assets": opening_cash,   # 无持仓 → 总资产 = 现金
+            "cash": opening_cash,
+            "market_val": 0.0,
+            "position_count": 0,
             "positions": [],
         },
         "fills_count_at_reset": 0,
@@ -155,6 +170,9 @@ def main(argv=None) -> int:
     raw_gap = round(actual_cash - (epoch["account_snapshot"]["cash"] + journal.cash_delta), 2)
     calibrated = round(actual_cash - journal.cash_delta, 2)
     epoch["account_snapshot"]["cash"] = calibrated
+    # 总资产要跟着走。开仓无持仓，两者恒等；只改 cash 会让 total_assets 停在
+    # 未校准的旧值上，期间盈亏就会差出这笔校准额。
+    epoch["account_snapshot"]["total_assets"] = calibrated
     epoch["reason"] = "broker_history_rebuild (opening cash inferred from current account - tracked flows)"
     epoch["calibration_note"] = f"absorbs ${raw_gap:,.0f} of fee-estimation/dividends vs an assumed $1M start"
     TMP_EPOCH.write_text(json.dumps(epoch, ensure_ascii=False, indent=2), encoding="utf-8")
