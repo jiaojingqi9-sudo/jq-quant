@@ -80,7 +80,80 @@ SyntaxWarning。改成 \\\\s 后生成的 JS 一字未变，噪音消除。""",
 
 新增回归测试覆盖「模型挂掉不得静默吞掉所有新闻」。""",
 
-    "trade": """清理冗余启动器，并去掉指向它们的按钮
+    "trade": """新增演示模式与 URL 路由，删除 1169 行死代码，重写 README
+
+**演示模式**：设 JQ_DEMO=1 就不连富途，改用合成数据，六个页面全部可用。
+没有富途账号、没有行情数据的人 clone 下来也能把界面点一遍——这是仓库能给别人
+看的前提，此前不具备。
+
+注入点只有一处：futu_gateway.__enter__ 返回 DemoTrader 而不是 self。
+全仓 26 个调用点都写 `with FutuPaperTrader(settings) as trader:`，而 with...as
+绑定的是 __enter__ 的返回值不是构造出的对象，所以改这一处即可覆盖全部，
+包括子进程里跑的 CLI（环境变量默认继承）。__init__ 本来就不连接任何东西，
+测试里 __new__ 绕过构造的用法也不受影响。
+
+合成数据的列名不是手写的，来自 demo_data/futu_schema.json——用
+futu_watcher/capture_schema.py 从真实接口抓取，只抓列名与 dtype、不抓任何数值。
+手写列名的话漏一个下游就是 KeyError，且要点进那个页面才炸。
+
+配套修了三处「演示时自相矛盾」：
+  · 状态栏原会探测真实端口，本机开着 OpenD 时显示「已连接」，与横幅的
+    「未连接富途」直接打架
+  · 系统体检查的是本机运行时文件，干净安装时必然全红，像程序坏了
+  · request_history_klines 原固定返回 250 根日线（约 8 个完整月），
+    而 TAA baseline 要 10 个月均线，股票页报「月线数据不足」
+
+所有下单路径在演示模式下直接抛异常——不是下到假账户，是根本不让调。
+
+**URL 路由**：?view=xxx 直接定位页面，地址栏跟随导航变化。页面可收藏、可分享，
+截图脚本也不必模拟点击。只在会话首次运行时读一次 URL，否则用户点侧边栏切走后
+下一次 rerun 又被拽回去，表现为「点了没反应」。
+
+**删死代码 1169 行**（先全仓 grep 确认零引用）：
+  · unified_app.py 246 行——依赖从未装进 dependencies 的 pywebview，实际执行
+    只会退化成打开浏览器，与 taa-futu dashboard 等价，且无任何调用方
+  · audit_log.py 69 行——模块与两个公开函数均 0 引用；真正在做审计账本的是
+    stock_ledger.py + stock_events.py
+  · _removed_features_backup/ 51 行——插件化尝试的残留，内容与 dashboard_app
+    里的现役登记逐字重复
+  · dashboard_app 六个函数 651 行——_render_symbol_detail / _candlestick_chart /
+    两个 _render_terminal_* 等，是一整套没有入口的「终端风格行情页」
+  · dashboard_extras 的 render_home / render_view / SIDEBAR_OPTIONS 等 137 行——
+    插件架构之前的手写分发，注册表上线后就没有调用方了。留着会让人以为
+    导航有两套
+
+覆盖这批代码的三个测试没有跟着删，而是改盯注册表：它们要防的事情没变
+（页面漏注册、render 签名不对、未知页面把外壳搞崩），只是清单的真实来源
+换了地方。测试数不变。
+
+**修两个功能失效**：
+  · shell.py 的 _extra_quick_actions() 在 return 之后还有一段展示
+    registry.errors 的代码，永远执行不到——插件导入失败会被完全静默吞掉，
+    功能从侧边栏消失而界面上没有任何提示。拆成 render_discovery_errors()
+    并在首页末尾调用。
+  · plugin.register 用 `is` 比对 render 判断重复登记。dashboard_app 把
+    stock/stock_history 的 render 写成 main() 内的闭包，而该文件是 Streamlit
+    直接执行的脚本，每次交互都重跑 main()，每次都是新函数对象——于是每次
+    交互都往日志刷两行「重复登记」，真正的重名冲突反被淹没。改成比对
+    (__module__, __qualname__)。
+
+**README 重写**：六张截图（演示模式下用 Chrome 调试协议截的整页图）、
+安装与演示步骤、六个页面各自做什么、四条策略、常用命令、插件架构怎么加功能、
+安全边界、常见问题。旧版是一篇 TAA 策略说明，看不出这是个能跑的东西。
+
+截图脚本 futu_watcher/make_screenshots.py 记了一个坑：
+chrome --headless --screenshot 配 --virtual-time-budget 会跳过 websocket 的
+真实往返，而 Streamlit 内容全靠 websocket 推——截出来是灰色骨架不是页面。
+改用调试协议，真的等到内容出现再截。
+
+**验证**：把工作区打成干净副本（去掉 .venv/runtime/.env/.git），在只有
+Python 3.12 的环境里照 README 的命令原样走一遍——pip install -e . 一次装上，
+演示模式起来，七个页面 AppTest 渲染零异常零错误、演示横幅每页都在。
+
+**pyproject**：删掉指向已删模块的 taa-futu-app 入口点。
+
+---
+清理冗余启动器，并去掉指向它们的按钮
 
 桌面入口收成一个「寻宝猫」之后，各处还散着 43 个 .command，其中不少只是
 「打开某个页面」——而那些页面现在都是 app 里的功能页。

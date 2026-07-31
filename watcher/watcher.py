@@ -131,6 +131,11 @@ SKILL_REG = {
     "tidy_restore":   (WATCHER_DIR / "restore_from_trash.py", False, []),
     "tidy_tests":     (WATCHER_DIR / "tidy_tests.py",     False, []),
     "tidy_verify":    (WATCHER_DIR / "tidy_verify.py",    False, []),
+    "capture_schema": (WATCHER_DIR / "capture_schema.py", False, []),
+    "demo_news":      (WATCHER_DIR / "make_demo_news.py", False, []),
+    "screenshots":    (WATCHER_DIR / "make_screenshots.py", False, []),
+    "deadcode_plan":  (WATCHER_DIR / "deadcode_cut.py",   False, []),
+    "deadcode_apply": (WATCHER_DIR / "deadcode_cut.py",   False, ["--apply"]),
 }
 
 # 这些 skill 走 multi 模式：watcher 把整个 task dict 透传给 script，
