@@ -12,7 +12,7 @@
 
 ## Packet
 
-- Generated: `2026-07-31T08:10:49.510721+00:00`
+- Generated: `2026-07-31T09:10:52.146395+00:00`
 - Input report: `/Users/jiao/All here/news collector/reports/live/latest_report.json`
 - Output dir: `/Users/jiao/All here/news collector/reports/news_learning`
 - Review packet JSON: `/Users/jiao/All here/news collector/reports/news_learning/news_learning_review_packet.json`
@@ -21,59 +21,59 @@
 ## Evidence Artifacts
 
 - `news_memory`: `/Users/jiao/All here/news collector/reports/news_learning/news_memory.jsonl`
-  - sha256: `9004ee81979862eb26aa3945ff91ea40d310fcd4bcf425c286662f9b4e027813`
+  - sha256: `a6511de228489fa1f784e1095ef95d74bf06c373f46df04a3b63e603d7556b77`
 - `news_claims`: `/Users/jiao/All here/news collector/reports/news_learning/news_claims.jsonl`
-  - sha256: `f66d7e0ddff31081f1df2c5f8bee0eb19f89134ec1744ed3116887a0c7987370`
+  - sha256: `784b52fd68069029be3fd2315b027cfacefd3e6b2c86dac078a227e69f95e235`
 - `news_outcomes`: `/Users/jiao/All here/news collector/reports/news_learning/news_outcomes.jsonl`
-  - sha256: `e537adb6049171054399e8a082714eac84096754b78ffcbb7ffac1a239468f20`
+  - sha256: `e8bb61b50b535eab093d4772172d2601bed99353b98c89896ce51659445d73a3`
 - `news_attribution`: `/Users/jiao/All here/news collector/reports/news_learning/news_attribution.json`
-  - sha256: `c5754d4303a6c7dc2292a7ff5fea44dd3b677ab0de491e8cde760816d4c3950b`
+  - sha256: `7d75f70a26734257f7a4bba65a0db49646123ac2993e9b1e626be784838ffde2`
 - `news_upgrade_candidates`: `/Users/jiao/All here/news collector/reports/news_learning/news_upgrade_candidates.jsonl`
-  - sha256: `3338310f0098186c104e9efda93521705219ba8776530039ce62324a48e7d683`
+  - sha256: `30a98632f59b02a79c90dfaa8fbcd6f705faf46149d54398aee008dd77d227d7`
 - `news_promotion_report`: `/Users/jiao/All here/news collector/reports/news_learning/news_promotion_report.json`
-  - sha256: `1ef1a7b2014f3b17799c446ee2c60689714b0dd0e7bcdad5995c16d14607b454`
+  - sha256: `98654eeacb7be7ddf679e88e7dad7f2e3cb0a459e3960c079a2a96d9d9476331`
 - `news_learning_codex_handoff`: `/Users/jiao/All here/news collector/reports/news_learning/news_learning_codex_handoff.md`
-  - sha256: `3a5666444a91a9024f37ae779fed4a82fa55ffcd68356ad1222948c470d0cc07`
+  - sha256: `b032337f8bac3d491c0fc83f7ec3baa9a93a086d5856bf9dbb1c46c8295ba46c`
 
 ## Quick Triage
 
-- Source diversity: `{"source_count": 13, "top_source": "eastmoney-ann", "top_source_share": 0.3443, "herfindahl": 0.176, "over_reliance": false}`
+- Source diversity: `{"source_count": 11, "top_source": "eastmoney-ann", "top_source_share": 0.3684, "herfindahl": 0.1936, "over_reliance": false}`
 - Candidate count in packet: `30`
-- Best sources: eastmoney-topic, gov-nhsa, xinhua-tech, gov-mot, sse_announcements
-- Worst sources: csrc_home, spacechina-news, hkex_news, sec_xbrl_usgaap, eastmoney-724
-- Best topics: execution, order-growth, 小消息可炒, 订单催化, 供需紧张, 服务器链, 具身智能, 机器人
+- Best sources: eastmoney-topic, gov-nhsa, xinhua-tech, eastmoney-ann, gov-mot
+- Worst sources: spacechina-news, sec_xbrl_usgaap, eastmoney-724, gov-mofcom, gov-cnsa
+- Best topics: execution, order-growth, 供需紧张, 服务器链, 小消息可炒, 订单催化, 主线题材, 算力扩张
 
 ## Candidates To Review First
 
-- `dac6c8d0-fe84-5803-bd0e-73fe5000d8ba` `add_market_impact_label` target=`system:price_reaction_join` confidence=0.8
+- `2038c5b9-4c3b-5606-846b-cd260f37d7c3` `add_market_impact_label` target=`system:price_reaction_join` confidence=0.8
   - reason: 新闻已能映射到候选资产，但尚未接入 5m/30m/1d 价格反应，建议作为下一阶段研究标签。
-- `7d1604da-8600-5748-8722-9d024ea9f40f` `uprank_source` target=`source:eastmoney-ann` confidence=0.72
+- `494135cc-d8a2-568e-bac8-4853992c1a15` `uprank_source` target=`source:eastmoney-724` confidence=0.72
   - reason: 来源确认率较高且滞后/反驳比例低，可作为候选高质量来源。
-- `34f41e87-9f52-52fe-adc5-a11c7037817c` `uprank_source` target=`source:eastmoney-topic` confidence=0.72
+- `53cdd19f-d374-5190-8050-0f04574aa90b` `uprank_source` target=`source:eastmoney-ann` confidence=0.72
   - reason: 来源确认率较高且滞后/反驳比例低，可作为候选高质量来源。
-- `9663d6c8-12b7-591c-8e99-ac482f08709f` `uprank_source` target=`source:gov-mot` confidence=0.72
+- `63086c36-7399-5305-be21-71fb251978a7` `uprank_source` target=`source:eastmoney-topic` confidence=0.72
   - reason: 来源确认率较高且滞后/反驳比例低，可作为候选高质量来源。
-- `7713f27c-8e1c-5c2a-9c8c-bb1f8f3a10e5` `uprank_source` target=`source:gov-nhsa` confidence=0.72
+- `e7b75f4b-0432-591b-b758-22c32abcc918` `uprank_source` target=`source:gov-mot` confidence=0.72
   - reason: 来源确认率较高且滞后/反驳比例低，可作为候选高质量来源。
-- `23e75f23-4eaa-5785-8f2f-dfe0da12f434` `downrank_source` target=`source:hkex_news` confidence=0.68
-  - reason: 滞后/过期新闻比例偏高，建议人工复核是否降权。
-- `d3f804d3-568c-5cb7-94cd-9d154f882863` `add_cross_source_verification` target=`source:spacechina-news` confidence=0.66
+- `994db36a-48b0-5b7b-bbd5-3a44adb045a0` `uprank_source` target=`source:gov-nhsa` confidence=0.72
+  - reason: 来源确认率较高且滞后/反驳比例低，可作为候选高质量来源。
+- `7020cc74-9dcc-5cf2-be66-28ff3d72348c` `add_cross_source_verification` target=`source:spacechina-news` confidence=0.66
   - reason: 单来源未验证比例偏高，应先要求交叉验证或补强实体/主题解析，不宜直接按过期新闻降权。
-- `ec9ed917-b639-577e-ae3f-58aa13973243` `add_entity_or_topic_filter` target=`topic:execution` confidence=0.66
+- `cf375522-78d5-554d-a944-33b2784a3282` `add_entity_or_topic_filter` target=`topic:execution` confidence=0.66
   - reason: 主题确认率和事件分数较好，适合进入人工复核的正向主题过滤候选。
-- `7afaf36f-9d66-50d8-b6ec-aaa6a02698d0` `add_entity_or_topic_filter` target=`topic:healthcare` confidence=0.66
+- `9ae29d8f-46c1-5b0e-b7d3-62bec9787ce9` `add_entity_or_topic_filter` target=`topic:healthcare` confidence=0.66
   - reason: 主题确认率和事件分数较好，适合进入人工复核的正向主题过滤候选。
-- `9264b325-fa8c-5ce1-96e7-f9b07b4bbec9` `add_entity_or_topic_filter` target=`topic:infrastructure` confidence=0.66
+- `b762db75-2cd1-5d15-abe5-1744dd5a39b6` `add_entity_or_topic_filter` target=`topic:infrastructure` confidence=0.66
   - reason: 主题确认率和事件分数较好，适合进入人工复核的正向主题过滤候选。
-- `235c134f-bacd-555b-a7ae-0d96542546b2` `add_entity_or_topic_filter` target=`topic:logistics` confidence=0.66
+- `26c7b7b2-7d2d-5249-870e-18804985fd84` `add_entity_or_topic_filter` target=`topic:logistics` confidence=0.66
   - reason: 主题确认率和事件分数较好，适合进入人工复核的正向主题过滤候选。
-- `ddb9dcdc-c0e7-51d7-9e2e-b3c96232b2cb` `add_entity_or_topic_filter` target=`topic:long-term-demand` confidence=0.66
+- `fe9404d1-4c10-5204-8f64-8294da644fd3` `add_entity_or_topic_filter` target=`topic:long-term-demand` confidence=0.66
   - reason: 主题确认率和事件分数较好，适合进入人工复核的正向主题过滤候选。
-- `58f3c3f3-771c-5c77-bad7-65515d35244d` `add_entity_or_topic_filter` target=`topic:order-growth` confidence=0.66
+- `a29259af-ec41-5605-8665-070ce1d5b33d` `add_entity_or_topic_filter` target=`topic:order-growth` confidence=0.66
   - reason: 主题确认率和事件分数较好，适合进入人工复核的正向主题过滤候选。
-- `91093ec9-59fb-59da-8735-72ce09c80db2` `add_entity_or_topic_filter` target=`topic:policy` confidence=0.66
+- `56a38fbb-81d7-5eaf-809e-f4b9df7d6784` `add_entity_or_topic_filter` target=`topic:policy` confidence=0.66
   - reason: 主题确认率和事件分数较好，适合进入人工复核的正向主题过滤候选。
-- `e3cf62b9-2b96-5853-9ada-a7a9dac979b8` `add_entity_or_topic_filter` target=`topic:policy-demand` confidence=0.66
+- `ee1d5b30-e75d-5f9f-b14b-68a822640239` `add_entity_or_topic_filter` target=`topic:policy-demand` confidence=0.66
   - reason: 主题确认率和事件分数较好，适合进入人工复核的正向主题过滤候选。
 
 ## Ask Codex

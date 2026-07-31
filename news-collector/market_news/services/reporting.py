@@ -2897,7 +2897,7 @@ class MarkdownJsonReporter:
     const dragNewsPayloadById = new Map();
 
     function compactText(value, fallback) {
-      const text = String(value || fallback || "").replace(/\s+/g, " ").trim();
+      const text = String(value || fallback || "").replace(/\\s+/g, " ").trim();
       return text || "n/a";
     }
 

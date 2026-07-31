@@ -10,10 +10,22 @@ user_id="$(id -u)"
 
 mkdir -p "$log_dir" "$agents_dir"
 
+# plist 是 XML，命令行里的 & < > 必须转义后才能塞进 <string>。
+#
+# 不转义的后果不是报错而是静默失效：notify 的命令行含
+# `[ -f "$HOME/.market_news/futu_env" ] && . "$HOME/.market_news/futu_env"`，
+# 那个裸 && 让生成的 plist 成为非法 XML，launchctl 加载失败，
+# 「把新闻发到手机」这一步就此消失——而已经在内存里的旧任务照常运行，
+# 所以直到下次重启才会暴露。2026-07-31 实测 plutil -lint 报
+# "unknown ampersand-escape sequence at line 11"。
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+}
+
 write_agent() {
   local label="$1"
   local interval="$2"
-  local command_line="$3"
+  local command_line="$(xml_escape "$3")"
   local stdout_path="$4"
   local stderr_path="$5"
   local plist_path="$6"
@@ -61,7 +73,7 @@ EOF
 
 write_keepalive_agent() {
   local label="$1"
-  local command_line="$2"
+  local command_line="$(xml_escape "$2")"
   local stdout_path="$3"
   local stderr_path="$4"
   local plist_path="$5"
