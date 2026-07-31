@@ -3047,5 +3047,63 @@
       "reason": "标准金融产品缩写，能稳定识别被动资金与主题资金流相关科技行情语境。",
       "reviewed_at": "2026-05-25T00:30:43.048916+00:00"
     }
+  },
+  {
+    "canonical_text": "碳达峰",
+    "term_type": "policy",
+    "synonyms": [
+      "碳达峰"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "aerospace-defense": 0.361,
+      "new-materials": 0.322,
+      "energy-storage": 0.239,
+      "chip-design": 0.173,
+      "ai-energy": 0.151
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.75,
+      "reason": "“十五五”碳达峰行动方案等稳定政策链条词，可持续关联新能源、储能、绿色制造主线",
+      "reviewed_at": "2026-07-31T07:01:53.714644+00:00"
+    }
+  },
+  {
+    "canonical_text": "WAIC",
+    "term_type": "catalyst",
+    "synonyms": [
+      "WAIC"
+    ],
+    "regexes": [],
+    "impact_vector": {
+      "robotics": 0.61,
+      "model-applications": 0.541,
+      "ai-hardware": 0.46,
+      "ai-compute": 0.171,
+      "domestic-substitution": 0.077
+    },
+    "trigger_tags": [
+      "待补充"
+    ],
+    "base_confidence": 0.65,
+    "spec_weight": 0.6,
+    "heat_weight": 0.6,
+    "importance_weight": 0.65,
+    "direction_hint": "positive",
+    "review_meta": {
+      "source": "ai-auto",
+      "confidence": 0.85,
+      "reason": "世界人工智能大会缩写，每年稳定触发AI、机器人、算力产品发布与合作催化",
+      "reviewed_at": "2026-07-31T07:01:53.896213+00:00"
+    }
   }
 ]
