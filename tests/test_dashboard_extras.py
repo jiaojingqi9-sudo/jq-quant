@@ -15,26 +15,35 @@ from pathlib import Path
 import pytest
 
 
-def test_module_imports_and_exposes_pages() -> None:
-    from taa_futu import dashboard_extras as e
+"""这三个测试原本盯的是 dashboard_extras 里的 EXTRA_PAGE_OPTIONS /
+PAGE_RENDERERS / maybe_render —— 插件架构之前那套手写分发。它已被注册表取代且
+无任何调用方，2026-07-31 随死代码一起删除。
 
-    assert isinstance(e.EXTRA_PAGE_OPTIONS, list)
-    assert len(e.EXTRA_PAGE_OPTIONS) == 3
-    # The three known pages must match the renderer dict
-    assert set(e.EXTRA_PAGE_OPTIONS) == set(e.PAGE_RENDERERS.keys())
-    # Labels must be the constants exported for the host to dispatch on
-    assert e.PAGE_CRYPTO in e.EXTRA_PAGE_OPTIONS
-    assert e.PAGE_SCREENER in e.EXTRA_PAGE_OPTIONS
-    assert e.PAGE_LIVE_SIGNAL in e.EXTRA_PAGE_OPTIONS
+测试没有跟着删，而是改盯注册表：它们要防的事情没变（页面被漏注册、渲染函数
+签名不对、未知页面把外壳搞崩），只是"页面清单"的真实来源换了地方。
+"""
 
 
-def test_maybe_render_unknown_page_returns_false() -> None:
-    from taa_futu.dashboard_extras import maybe_render
+def test_registry_exposes_the_three_extra_pages() -> None:
+    from taa_futu.plugin import registry
+    from taa_futu.shell import _ensure_discovered
 
-    # Calling with a label we don't own must NOT call any renderer; returns
-    # False so the host falls back to its own dispatch.
-    assert maybe_render("Some other page", settings=None) is False
-    assert maybe_render("", settings=None) is False
+    _ensure_discovered()
+    ids = {f.id for f in registry.all()}
+    # dashboard_extras 负责渲染的三个页面必须都在注册表里
+    for expected in ("crypto", "screener", "live_signal"):
+        assert expected in ids, f"{expected} 没有注册，界面上会进不去"
+
+
+def test_render_unknown_feature_does_not_crash() -> None:
+    """未知页面 id 不能把外壳搞崩。
+
+    以前由 maybe_render 返回 False 让宿主回退，现在由注册表自己兜住。
+    """
+    from taa_futu.plugin import registry
+
+    assert registry.get("某个不存在的页面") is None
+    assert registry.get("") is None
 
 
 def test_read_json_missing_returns_none(tmp_path: Path) -> None:
@@ -128,18 +137,20 @@ def test_state_badge_has_known_states() -> None:
     assert _state_badge("xxx") != ""
 
 
-def test_renderer_functions_callable() -> None:
-    """Each registered renderer must be a callable taking one arg.
+def test_registered_renderers_callable() -> None:
+    """每个注册进来的功能，render 必须是可调用且能接 settings。
 
-    We can't actually call them without a Streamlit context, but checking
-    the signature prevents an empty dict from getting installed by mistake.
+    没有 Streamlit 上下文就没法真调，但查签名足以拦住「注册了个 None」
+    或「render 少个参数」这类会在点进页面那一刻才炸的问题。
     """
     import inspect
-    from taa_futu.dashboard_extras import PAGE_RENDERERS
+    from taa_futu.plugin import registry
+    from taa_futu.shell import _ensure_discovered
 
-    for label, fn in PAGE_RENDERERS.items():
-        assert callable(fn), f"{label} renderer not callable"
-        sig = inspect.signature(fn)
-        # Each renderer accepts a positional ``settings`` arg
-        params = list(sig.parameters.values())
-        assert len(params) >= 1, f"{label} renderer should take settings"
+    _ensure_discovered()
+    features = registry.all()
+    assert features, "注册表是空的，首页会没有任何入口"
+    for feat in features:
+        assert callable(feat.render), f"{feat.id} 的 render 不可调用"
+        params = list(inspect.signature(feat.render).parameters.values())
+        assert len(params) >= 1, f"{feat.id} 的 render 应该接一个 settings 参数"

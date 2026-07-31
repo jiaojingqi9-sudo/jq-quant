@@ -102,6 +102,16 @@ class FutuPaperTrader:
         self._lob_push_handler = None
 
     def __enter__(self) -> "FutuPaperTrader":
+        # 演示模式：返回一个只读的假网关，不连 OpenD。
+        #
+        # 之所以改这里而不是各个调用点：全仓 26 处都写
+        # `with FutuPaperTrader(settings) as trader:`，而 `with ... as` 绑定的是
+        # __enter__ 的返回值，不是构造出来的对象，所以这一处返回别的对象就能
+        # 覆盖全部调用点，包括子进程里跑的 CLI（环境变量默认继承）。
+        from taa_futu.demo_gateway import DemoTrader, demo_enabled
+        if demo_enabled():
+            return DemoTrader(self.settings)  # type: ignore[return-value]
+
         try:
             with socket.create_connection((self.settings.futu_host, self.settings.futu_port), timeout=2):
                 pass

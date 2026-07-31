@@ -30,7 +30,10 @@ dev = [
 taa-futu = "taa_futu.cli:main"
 taa-futu-panel = "taa_futu.control_panel:main"
 taa-futu-unified = "taa_futu.unified_panel:main"
-taa-futu-app = "taa_futu.unified_app:main"
+# 曾有 taa-futu-app 指向 unified_app.py（pywebview 原生窗口壳）。那个模块依赖
+# 从未装进 dependencies 的 pywebview，实际执行只会退化成打开浏览器，与
+# `taa-futu dashboard` 完全等价，且无任何调用方。2026-07-31 连同模块一起删除。
+# 现在要开界面就用桌面上的寻宝猫，或直接 streamlit run src/taa_futu/dashboard_app.py。
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "claude-trade/src"]

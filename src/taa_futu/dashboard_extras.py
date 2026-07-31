@@ -1,20 +1,23 @@
-"""Unified Trading Terminal — 主页 + 加密交易 + 选股器 Streamlit pages.
+"""加密交易 / 选股器 / 实时建议 三个页面的渲染实现。
 
-Plugs three new sections into the existing TAA Futu Trading Terminal so the
-user does not have to bounce between four separate apps. The host's
-``dashboard_app.main()`` dispatches based on ``st.session_state["view"]``:
+这个模块只提供渲染函数，不负责导航。谁在什么时候调它们由注册表决定：
+``features/crypto.py`` ``features/screener.py`` ``features/live_signal.py``
+各自登记一个 Feature，外壳 ``shell.py`` 从注册表生成侧边栏与首页。
 
-* ``home``   → :func:`render_home` (three big entry cards)
-* ``crypto`` → :func:`render_crypto_trading_full` (full Crypto OFIM Binance UI)
-* ``screener`` → :func:`render_screener_full` (online multi-factor pick + app launcher)
-* ``live_signal`` → :func:`render_live_signal` (read-only four-sleeve query)
+* ``crypto``      → :func:`render_crypto_trading_full`
+* ``screener``    → :func:`render_screener_full`
+* ``live_signal`` → :func:`render_live_signal`
 
-The stock trading view (live monitor + historical sim) stays inside
-``dashboard_app.py`` so we don't import-cycle.
+本文件里曾经还有一份 ``render_home`` / ``render_view`` / ``SIDEBAR_OPTIONS``
+的手写分发，是插件架构之前的实现。注册表上线后它就没有调用方了，
+2026-07-31 删除——留着会让人以为导航有两套。现在只有一套，入口在
+``shell.py``。
 
-All render functions are read-only against live state — they NEVER submit
-orders. Any CLI invocation is via ``subprocess`` to the existing
-``taa-futu`` entry point.
+股票交易与历史模拟不放这里：它们由 ``dashboard_app.py`` 自己登记，
+原因见 ``features/_host_owned.py``。
+
+所有渲染函数对实盘状态只读，**从不下单**。需要执行命令时一律通过
+``subprocess`` 调 ``taa-futu`` 命令行入口。
 """
 
 from __future__ import annotations
@@ -216,9 +219,20 @@ def _open_command(cmd_path: Path) -> None:
 
 
 def render_top_status_bar() -> None:
-    """Always-visible status row showing the infra everything depends on:
-    邮差 (futu_watcher) and OpenD socket. Reads files only — never reaches
-    out to OpenD synchronously beyond a 1.5s socket test."""
+    """常驻状态栏：邮差、OpenD、以及三个自动运行进程。
+
+    只读文件，唯一的网络动作是对 OpenD 端口做 1.5 秒 socket 探测。
+    """
+    from taa_futu.demo_gateway import demo_enabled
+    if demo_enabled():
+        # 演示模式下不探测真实端口。否则会出现「横幅说未连接富途、状态栏却
+        # 显示 OpenD 已连接」这种自相矛盾——本机恰好开着 OpenD 时就会这样，
+        # 截图发出去更是误导。
+        cols = st.columns([1, 1, 1, 1, 1])
+        for col, label in zip(cols, ("邮差", "OpenD", "股票 auto", "加密 OFIM", "加密 Perp")):
+            col.markdown(f"**{label}**: 🧪 演示")
+        return
+
     cols = st.columns([1, 1, 1, 1, 1])
     # 邮差
     if FUTU_QUEUE_ALIVE.exists():
@@ -265,82 +279,6 @@ def render_nav_breadcrumb(current_label: str) -> None:
     cols[1].markdown(f"### {current_label}")
     if cols[2].button("🔄 刷新", use_container_width=True, key=f"refresh_{current_label}"):
         st.rerun()
-
-
-# ─────────────────────────── 主页 ───────────────────────────
-
-
-def render_home() -> None:
-    """The unified landing page — three giant entry cards."""
-    st.markdown("## 🏠 交易总控 / Trading Hub")
-    st.caption("选择一个子系统进入完整功能。顶部状态栏每次刷新都会更新。")
-    render_top_status_bar()
-    st.divider()
-
-    # Three entry cards laid out as three equal columns
-    cols = st.columns(3, gap="large")
-
-    with cols[0]:
-        st.markdown("### 📈 股票交易")
-        st.markdown(
-            "**TAA + Fusion + OFIM + Cascade**\n\n"
-            "四 sleeve 量化 stack，模拟盘自动运行。\n\n"
-            "进去能看：实时监控 / 持仓 / 订单 / 日内信号；\n"
-            "能操作：启动停止自动运行 / pre-gate 切换 / 调整 stack 权重。"
-        )
-        if st.button("进入股票交易 →", key="enter_stock", use_container_width=True, type="primary"):
-            _go_to(VIEW_STOCK)
-        st.caption("子页：实时监控 + 历史模拟")
-
-    with cols[1]:
-        st.markdown("### 💰 加密货币交易")
-        st.markdown(
-            "**Binance Spot OFIM + USD-M Perp**\n\n"
-            "完全独立于富途的另一条 sleeve，跑 Binance 测试网。\n\n"
-            "进去能看：连接状态 / 账本 / 信号 / 订单；\n"
-            "能操作：调币种池 / 改阈值 / 试算 / 模拟下单。"
-        )
-        if st.button("进入加密交易 →", key="enter_crypto", use_container_width=True, type="primary"):
-            _go_to(VIEW_CRYPTO)
-        st.caption("完整 Crypto OFIM Binance App 内嵌")
-
-    with cols[2]:
-        st.markdown("### 🔍 选股器")
-        st.markdown(
-            "**多因子在线筛选 + AH 多因子扫描**\n\n"
-            "用四 sleeve 的实时评分对 universe 排序，\n"
-            "也能跑 AH 连板 / 缩量上涨 / 接近新高扫描。\n\n"
-            "可选择直接在页面里筛选，或启动桌面 Screener。"
-        )
-        if st.button("进入选股器 →", key="enter_screener", use_container_width=True, type="primary"):
-            _go_to(VIEW_SCREENER)
-        st.caption("Live-signal 排序 + AH 扫描结果")
-
-    st.divider()
-
-    # News gets a full-width block of its own rather than a fourth card: it is
-    # the one panel where the content itself (today's alerts) is worth showing
-    # on the landing page, not just a door to walk through.
-    try:
-        from taa_futu.news_panel import render_news_home_block
-        render_news_home_block()
-    except Exception as exc:  # never let the news side break the hub
-        st.caption(f"新闻模块暂不可用：{exc}")
-
-    st.divider()
-    # Smaller secondary entries
-    st.markdown("##### 快速链接 / Quick Links")
-    qc = st.columns(4)
-    if qc[0].button("🤖 Live Signal 多 sleeve 查询", use_container_width=True, key="enter_live"):
-        _go_to(VIEW_LIVE_SIGNAL)
-    if qc[1].button("📊 历史回测 / Backtest", use_container_width=True, key="enter_history"):
-        _go_to(VIEW_STOCK_HISTORY)
-    if qc[2].button("🎛️ 启动桌面控制台", use_container_width=True, key="launch_panel"):
-        _open_command(STOCK_LAUNCHERS / "Launch_Trading_Control_Panel.command")
-    if qc[3].button("📋 系统体检 Doctor", use_container_width=True, key="run_doctor"):
-        with st.spinner("stock-system-doctor…"):
-            res = _run_cli(["stock-system-doctor"], timeout=30)
-        st.code(res["stdout"] or res["stderr"] or "(空)", language="text")
 
 
 # ─────────────────────────── 加密交易 完整版 ───────────────────────────
@@ -1049,69 +987,8 @@ def render_live_signal(settings) -> None:
         st.json(report)
 
 
-# ─────────────────────────── Dispatch helpers for the host main() ──────────
-
-
-def render_view(view: str, settings) -> bool:
-    """Render the named view if we own it. Returns True iff handled.
-
-    Views we own: home, crypto, screener, live_signal.
-    The host owns: stock (live monitor), stock_history (historical sim).
-    """
-    if view == VIEW_HOME:
-        render_home()
-        return True
-    if view == VIEW_CRYPTO:
-        render_crypto_trading_full(settings)
-        return True
-    if view == VIEW_SCREENER:
-        render_screener_full(settings)
-        return True
-    if view == VIEW_LIVE_SIGNAL:
-        render_live_signal(settings)
-        return True
-    if view == VIEW_NEWS:
-        # Imported lazily and defensively: the news collector is an optional
-        # companion system, and a problem there must never stop the trading app
-        # from starting.
-        try:
-            from taa_futu.news_panel import render_news
-        except Exception as exc:  # pragma: no cover - defensive
-            st.error(f"新闻面板加载失败：{exc}")
-            return True
-        render_news(settings)
-        return True
-    return False
-
-
-# Sidebar option labels used by the host so users can also jump from sidebar.
-SIDEBAR_OPTIONS = [
-    ("🏠 首页 / Home", VIEW_HOME),
-    ("📈 股票交易 / Stock Trading", VIEW_STOCK),
-    ("💰 加密交易 / Crypto Trading", VIEW_CRYPTO),
-    ("🔍 选股器 / Screener", VIEW_SCREENER),
-    ("🤖 实时建议 / Live Signal", VIEW_LIVE_SIGNAL),
-    ("📰 市场新闻 / Market News", VIEW_NEWS),
-    ("📊 历史模拟 / Historical Sim", VIEW_STOCK_HISTORY),
-]
-
-
 # Legacy compatibility: keep these names so any caller still using the
 # pre-home dispatch (e.g. older dashboard_app.main()) continues working.
 PAGE_CRYPTO = "💰 加密交易 / Crypto Trading"
 PAGE_SCREENER = "🔍 选股器 / Screener"
 PAGE_LIVE_SIGNAL = "🤖 实时建议 / Live Signal"
-PAGE_RENDERERS = {
-    PAGE_CRYPTO: render_crypto_trading_full,
-    PAGE_SCREENER: render_screener_full,
-    PAGE_LIVE_SIGNAL: render_live_signal,
-}
-EXTRA_PAGE_OPTIONS = list(PAGE_RENDERERS.keys())
-
-
-def maybe_render(page: str, settings) -> bool:
-    fn = PAGE_RENDERERS.get(page)
-    if fn is None:
-        return False
-    fn(settings)
-    return True
