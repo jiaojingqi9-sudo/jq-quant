@@ -17,9 +17,38 @@ REPOS = {
     "trade": HOME / "All here" / "trade",
 }
 MESSAGES = {
-    "news collector": """无代码改动，同步生成物
+    "news collector": """修复生成 launchd 配置时不转义 XML，并清理冗余启动器
 
-本次提交仅为保存工作区状态。看板样式的实际改动在上一个提交。""",
+推送任务的配置文件在磁盘上是坏的，而且一直没人发现。
+
+plist 是 XML，命令行里的 & 必须写成 &amp;。write_agent 只转义了自己拼接的
+那个 &&（`cd '$workdir' &amp;&amp; $command_line`），把 $command_line 原样
+插进 <string>。五个任务里只有 notify 的命令行含 &：
+
+    [ -f "$HOME/.market_news/futu_env" ] && . "$HOME/.market_news/futu_env"
+
+于是只有它生成出非法 XML。plutil -lint 报 "unknown ampersand-escape sequence
+at line 11"。
+
+看着没事是因为 launchd 内存里加载的是更早那份合法版本，任务照常每 5 分钟跑。
+一旦重启或重新加载就会读磁盘上这份，加载失败，「把新闻发到手机」这一步静默
+消失——和之前断推 58 天是同一类故障，且同样不会报错。
+
+修 write_agent 与 write_keepalive_agent，统一走 xml_escape 处理 & < >。
+已装的那份用 futu_watcher/fix_notify_plist.py 就地补了两个字符，改前备份、
+改后 plutil 校验通过、重新 bootstrap 成功、命令行内容逐字核对未变。
+
+同时移走 8 个启动器（进回收站，未删除）：
+  · 4 个 Codex 遗留（codex_review_auto 与 thread_review_auto 及其停止脚本），
+    thread_review 直接调 /Applications/Codex.app 的二进制，订阅已停
+  · market_news_board——看板已是 app 里的一个页面
+  · console / delivery / health——这三个会先 pkill 掉 launchd 常驻的同名任务
+    再前台重跑，而 launchd 随后又拉起自己那份，结果两个采集器同时写库
+
+剩下的 9 个写进 scripts/README.md，逐个说明什么时候用。
+
+另修 reporting.py 里一处 \\s 未转义，每次 notify 运行都往错误日志写
+SyntaxWarning。改成 \\\\s 后生成的 JS 一字未变，噪音消除。""",
 
     "_old_news": """修复新闻推送中断，模型层切换到 Claude，并清理仓库
 
@@ -51,7 +80,41 @@ MESSAGES = {
 
 新增回归测试覆盖「模型挂掉不得静默吞掉所有新闻」。""",
 
-    "trade": """修复历史委托查询失败，并加入计时探针
+    "trade": """清理冗余启动器，并去掉指向它们的按钮
+
+桌面入口收成一个「寻宝猫」之后，各处还散着 43 个 .command，其中不少只是
+「打开某个页面」——而那些页面现在都是 app 里的功能页。
+
+移走 5 个（进回收站，未删除）：
+  · Open_TAA_Quant_Trading_App——全文只有一行 open 旧的 .app
+  · Open_Trading_Dashboard——跑 taa_futu.cli dashboard，就是寻宝猫做的事
+  · 启动量化交易控制台——与 Launch_Trading_Control_Panel 重复
+  · 修复启动脚本——它修的是桌面上的「启动量化交易控制台.command」，
+    那个文件早已不在桌面，点了也没有对象可修
+  · Open_Crypto_OFIM_App（crypto/launchers）
+
+同步去掉调用它们的按钮：unified_panel 的「打开 监控Dashboard」「打开 TAA App」
+「修复启动脚本」，dashboard_extras 的「打开 TAA Quant Trading App」。
+不去掉的话按钮还在，点了显示「找不到 .../xxx.command」。
+
+其中两个判断错了，已放回：
+  · Open_Stock_Screener 起的是 futu_stock_screener_desktop.py，一个独立的
+    Tkinter 窗口，和 Streamlit 的选股器页不是同一个东西，后者也嵌不进前者；
+    app 选股器页底部那个按钮调的正是它
+  · Open_Crypto_OFIM_App 是加密页嵌入渲染失败时的兜底路径，兜底本来就是给
+    「主路径坏了」准备的，不能因为主路径现在好用就删
+
+之所以能确定移走不会断掉后台，是先盘点了本机已加载的 launchd 任务：九个
+全部直接调 python 模块，没有一个指向 .command（futu_watcher/launchd_audit.py）。
+而 app 首页「启动桌面控制台」按钮确实依赖 Launch_Trading_Control_Panel.command，
+这一个保留。
+
+同时移走 runtime/desktop_launcher_archive_20260310（文件名已叠成
+.app.bak-20260310-v2.app.bak-20260310-v2）与根目录无人引用的 .venv（140MB）。
+
+剩下的启动器写进各目录的 README.md，逐个说明什么时候用。""",
+
+    "_old_trade_orderhistory": """修复历史委托查询失败，并加入计时探针
 
 历史委托一直查不到数据，而且没人发现。
 

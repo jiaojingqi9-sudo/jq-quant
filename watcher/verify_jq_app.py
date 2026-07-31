@@ -2,9 +2,12 @@
 """verify_jq_app - 确认 app 用的是应用窗口模式，并检查图标。"""
 import json, plistlib, subprocess
 from pathlib import Path
-APP=Path.home()/"Desktop"/"JQ Quant.app"
+# app 已从 JQ Quant 改名为寻宝猫，两个名字都认，免得改名后校验假报错。
+DESKTOP=Path.home()/"Desktop"
+APP=next((DESKTOP/n for n in ("寻宝猫.app","JQ Quant.app") if (DESKTOP/n).exists()),
+         DESKTOP/"寻宝猫.app")
 exe=APP/"Contents"/"MacOS"/"jq-quant"
-out={"kind":"verify_jq_app"}
+out={"kind":"verify_jq_app","app":APP.name}
 if exe.exists():
     txt=exe.read_text(encoding="utf-8")
     out["uses_app_window"]="--app=" in txt

@@ -122,6 +122,15 @@ SKILL_REG = {
     # 综合多策略实时建议 (read-only, 走 trade venv)
     "live_signal":    (WATCHER_DIR / "live_signal_proxy.py", False, []),
     "filter":         (WATCHER_DIR / "stock_filter.py", False, []),
+    # 文件整理（只读盘点在前，实际移动要显式 _apply）
+    "launchd_audit":  (WATCHER_DIR / "launchd_audit.py", False, []),
+    "plist_probe":    (WATCHER_DIR / "plist_probe.py",   False, []),
+    "fix_notify_plist": (WATCHER_DIR / "fix_notify_plist.py", False, []),
+    "tidy_plan":      (WATCHER_DIR / "tidy_launchers.py", False, []),
+    "tidy_apply":     (WATCHER_DIR / "tidy_launchers.py", False, ["--apply"]),
+    "tidy_restore":   (WATCHER_DIR / "restore_from_trash.py", False, []),
+    "tidy_tests":     (WATCHER_DIR / "tidy_tests.py",     False, []),
+    "tidy_verify":    (WATCHER_DIR / "tidy_verify.py",    False, []),
 }
 
 # 这些 skill 走 multi 模式：watcher 把整个 task dict 透传给 script，
