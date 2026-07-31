@@ -1294,21 +1294,45 @@ def _inject_terminal_css() -> None:
     st.markdown(
         """
 <style>
+  /* ── JQ Quant 统一设计令牌 ────────────────────────────────────────────
+     与新闻看板 (news collector/market_news/services/reporting.py) 共用同一套
+     值，两者显示在同一个窗口里，配色必须一致。
+
+     这里原本有 28 个硬编码颜色，其中 7 个近乎相同的深蓝黑、4 个近乎相同的
+     灰、9 个近乎相同的边框灰。差一两个色值的边框并排出现时，眼睛察觉得到
+     不齐，却说不出哪里不对——这正是「看着不协调」的来源之一。归并成下面
+     8 个令牌后，改配色只动这一处。
+
+     涨跌沿用中港习惯：红涨绿跌。这与欧美相反，改动时务必保持。 */
+  :root {
+    --jq-bg-top: #f6f9fc;
+    --jq-bg-bottom: #eef3f8;
+    --jq-surface: #ffffff;
+    --jq-surface-soft: #f4f8fb;
+    --jq-line: #d9e3ee;
+    --jq-ink: #182534;
+    --jq-muted: #6b7d90;
+    --jq-up: #ff4d67;
+    --jq-down: #20c997;
+    --jq-radius-lg: 16px;
+    --jq-radius-md: 12px;
+    --jq-shadow: 0 10px 24px rgba(24, 37, 52, 0.07);
+  }
   .stApp {
     background:
       radial-gradient(circle at top left, rgba(97, 132, 177, 0.10), transparent 24%),
-      linear-gradient(180deg, #f6f9fc 0%, #eef3f8 100%);
-    color: #182534;
+      linear-gradient(180deg, var(--jq-bg-top) 0%, var(--jq-bg-bottom) 100%);
+    color: var(--jq-ink);
   }
   [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #f3f7fb 0%, #ebf1f7 100%);
-    border-right: 1px solid #d8e2ec;
+    background: linear-gradient(180deg, var(--jq-bg-top) 0%, var(--jq-bg-bottom) 100%);
+    border-right: 1px solid var(--jq-line);
   }
   .terminal-shell {
-    border: 1px solid #d8e3ee;
-    border-radius: 18px;
+    border: 1px solid var(--jq-line);
+    border-radius: var(--jq-radius-lg);
     background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(247,250,253,0.98) 100%);
-    box-shadow: 0 10px 28px rgba(34, 51, 84, 0.08);
+    box-shadow: var(--jq-shadow);
     padding: 14px 16px;
   }
   .terminal-header {
@@ -1316,19 +1340,19 @@ def _inject_terminal_css() -> None:
     justify-content: space-between;
     align-items: baseline;
     gap: 16px;
-    border-bottom: 1px solid #e4ebf3;
+    border-bottom: 1px solid var(--jq-line);
     padding-bottom: 10px;
     margin-bottom: 12px;
   }
   .terminal-title {
     font-size: 30px;
     font-weight: 800;
-    color: #162434;
+    color: var(--jq-ink);
     letter-spacing: 0.01em;
   }
   .terminal-subtitle {
     margin-top: 4px;
-    color: #6b7d90;
+    color: var(--jq-muted);
     font-size: 12px;
   }
   .terminal-price {
@@ -1337,10 +1361,10 @@ def _inject_terminal_css() -> None:
     line-height: 1;
   }
   .terminal-up {
-    color: #ff4d67;
+    color: var(--jq-up);
   }
   .terminal-down {
-    color: #20c997;
+    color: var(--jq-down);
   }
   .terminal-chip-row {
     display: flex;
@@ -1352,8 +1376,8 @@ def _inject_terminal_css() -> None:
     padding: 5px 10px;
     border-radius: 999px;
     background: rgba(242, 247, 252, 0.96);
-    border: 1px solid #d6e2ee;
-    color: #42576c;
+    border: 1px solid var(--jq-line);
+    color: var(--jq-muted);
     font-size: 11px;
     line-height: 1.2;
   }
@@ -1365,76 +1389,76 @@ def _inject_terminal_css() -> None:
   }
   .terminal-mini-card {
     padding: 10px 12px;
-    border-radius: 12px;
+    border-radius: var(--jq-radius-md);
     background: rgba(247, 250, 253, 0.98);
-    border: 1px solid #dbe5ef;
+    border: 1px solid var(--jq-line);
   }
   .terminal-mini-label {
-    color: #6e8196;
+    color: var(--jq-muted);
     font-size: 11px;
     margin-bottom: 4px;
   }
   .terminal-mini-value {
-    color: #172535;
+    color: var(--jq-ink);
     font-size: 18px;
     font-weight: 700;
   }
   .terminal-panel-title {
     font-size: 18px;
     font-weight: 700;
-    color: #162434;
+    color: var(--jq-ink);
     margin-bottom: 10px;
   }
   .terminal-caption {
-    color: #66798d;
+    color: var(--jq-muted);
     font-size: 12px;
   }
   .terminal-divider {
     height: 1px;
-    background: #e2e8f0;
+    background: var(--jq-line);
     margin: 12px 0;
   }
   div[data-testid="stDataFrame"] {
-    border: 1px solid #d9e3ee;
+    border: 1px solid var(--jq-line);
     border-radius: 14px;
     overflow: hidden;
-    background: #ffffff;
+    background: var(--jq-surface);
   }
   div[data-testid="stMetric"] {
-    border: 1px solid #dae4ef;
+    border: 1px solid var(--jq-line);
     border-radius: 14px;
-    background: #ffffff;
+    background: var(--jq-surface);
     padding: 8px 10px;
   }
   div[data-testid="stMetricValue"] {
-    color: #152231;
+    color: var(--jq-ink);
   }
   div[data-testid="stMetricLabel"] {
-    color: #66788d;
+    color: var(--jq-muted);
     white-space: normal !important;
     overflow-wrap: anywhere !important;
     line-height: 1.2 !important;
     font-size: 0.94rem !important;
   }
   .stSelectbox label, .stDateInput label, .stSegmentedControl label, .stToggle label, .stTabs [data-baseweb="tab"] {
-    color: #1b2a3a !important;
+    color: var(--jq-ink) !important;
   }
   .stMarkdown, .stCaption, .stAlert {
-    color: #1b2a3a;
+    color: var(--jq-ink);
   }
   [data-testid="stSidebarCollapseButton"] button,
   [data-testid="stSidebarCollapsedControl"] button,
   [data-testid="collapsedControl"] button {
-    background: #ffffff !important;
-    border: 1px solid #d6e0eb !important;
+    background: var(--jq-surface) !important;
+    border: 1px solid var(--jq-line) !important;
     border-radius: 10px !important;
     box-shadow: 0 4px 12px rgba(26, 42, 62, 0.10) !important;
-    color: #1c2b3a !important;
+    color: var(--jq-ink) !important;
   }
   [data-testid="stSidebarCollapseButton"] button:hover,
   [data-testid="stSidebarCollapsedControl"] button:hover,
   [data-testid="collapsedControl"] button:hover {
-    background: #f4f8fb !important;
+    background: var(--jq-surface-soft) !important;
   }
 </style>
 """,
@@ -5675,59 +5699,79 @@ def main() -> None:
     # The news workspace embeds a board that ships its own header and metrics.
     # Printing the terminal title above it stacked two headers and pushed the
     # actual news ~600px down the page, so that view opts out of the app header.
-    _view_now = st.session_state.get("view", "home")
-    if _view_now != "news":
-        st.title("TAA + Futu 控制终端 / Trading Terminal")
+    def _render_header() -> None:
+        st.title("JQ Quant · 控制终端")
         st.caption(
             f"市场 / Market: {settings.futu_trd_market} | 交易环境 / Trade Env: {settings.futu_trd_env} | OpenD: {settings.futu_host}:{settings.futu_port}"
         )
         st.caption(f"版本 / Version: {version} | 标签 / Tag: {tag} | 提交 / Commit: {commit}")
+
     _inject_terminal_css()
     _render_sidebar_toolbar()
 
-    # View routing.
-    # Previously this used st.sidebar.radio which has a "widget state vs
-    # programmatic state" race: clicking ANY button inside a sub-page
-    # triggers a rerun, the radio widget reads its persisted state, and
-    # under some streamlit versions stomps session_state["view"] back to
-    # whatever the radio remembers — bouncing the user to home.
+    # 导航与分发交给外壳（taa_futu.shell），功能清单由注册表生成。
     #
-    # Fix: render the sidebar as plain buttons. session_state["view"] is
-    # the single source of truth; widgets only set it, never read it.
-    from taa_futu.dashboard_extras import (
-        SIDEBAR_OPTIONS, VIEW_HOME, VIEW_STOCK, VIEW_STOCK_HISTORY, render_view,
-    )
+    # 这里曾经是一份手工维护的 SIDEBAR_OPTIONS 加一串 if/elif：每加一个功能都要
+    # 改三处（常量、清单、分发），漏改一处就出现「侧边栏有按钮但点了没反应」。
+    # 现在功能自己登记，外壳照单渲染，加功能不必碰这个文件。
+    #
+    # 侧边栏仍然用普通按钮而非 radio：radio 有「控件状态 vs 程序状态」的竞态，
+    # 子页里点任何按钮触发 rerun 时，radio 会用它记住的旧值覆盖 session_state，
+    # 把用户弹回首页。session_state["view"] 是唯一事实来源，控件只写不读。
+    from taa_futu.plugin import Feature, registry
+    from taa_futu.shell import run_unified
 
-    if "view" not in st.session_state:
-        st.session_state["view"] = VIEW_HOME
-
-    st.sidebar.markdown("### 页面 / View")
-    current_view = st.session_state["view"]
-    for label, key in SIDEBAR_OPTIONS:
-        is_current = (key == current_view)
-        if st.sidebar.button(
-            ("● " if is_current else "○ ") + label,
-            key=f"sidebar_btn_{key}",
-            use_container_width=True,
-            type="primary" if is_current else "secondary",
-            disabled=is_current,  # don't let the user re-click the current view
-        ):
-            st.session_state["view"] = key
-            # Clear any stale view-toggle markers the old radio code wrote.
-            st.session_state.pop("sidebar_view_radio", None)
-            st.rerun()
-
-    view = st.session_state["view"]
-    if view == VIEW_STOCK:
+    # 股票与历史模拟的实现就在本模块里，由本模块直接登记，不放进 features/ 包。
+    #
+    # 原因：本文件是 Streamlit 直接执行的脚本。若在 features/ 里写模块去
+    # `from taa_futu.dashboard_app import render_live_monitor`，Python 会把这
+    # 5700 行的模块再完整导入一次（一份是被执行的脚本，一份是普通模块），
+    # 模块级代码跑两遍——实测让端到端测试 30 秒超时。用本地函数引用登记则
+    # 完全绕开这个问题。
+    def _render_stock(s):
         from taa_futu.dashboard_extras import render_nav_breadcrumb
         render_nav_breadcrumb("📈 股票交易 / Stock Trading")
-        render_live_monitor(settings)
-    elif view == VIEW_STOCK_HISTORY:
+        render_live_monitor(s)
+
+    def _render_history(s):
         from taa_futu.dashboard_extras import render_nav_breadcrumb
         render_nav_breadcrumb("📊 历史模拟 / Historical Simulation")
-        render_historical_simulation(settings)
-    elif not render_view(view, settings):
-        st.error(f"未知页面 / Unknown view: {view}")
+        render_historical_simulation(s)
+
+    registry.register(Feature(
+        id="stock", label="股票交易 / Stock Trading", icon="📈", order=10,
+        summary=(
+            "TAA + Fusion + OFIM + Cascade 四 sleeve 量化 stack，模拟盘自动运行。\n\n"
+            "看：实时监控 / 持仓 / 订单 / 日内信号；\n"
+            "做：启停自动运行 / pre-gate 切换 / 调整 stack 权重。"
+        ),
+        render=_render_stock,
+    ))
+    registry.register(Feature(
+        id="stock_history", label="历史模拟 / Historical Sim", icon="📊", order=70,
+        summary="用历史数据回放策略，检验参数与假设。",
+        # 原本就是首页底部的快捷链接，key 沿用 enter_history
+        placement="quick", home_button_key="enter_history",
+        render=_render_history,
+    ))
+
+    # 首页底部的工具动作。它们不是「功能」（没有自己的页面），所以不进注册表，
+    # 由宿主单独登记——这正是把「功能」和「动作」分开的价值。
+    from taa_futu.shell import register_quick_action
+    from taa_futu.dashboard_extras import STOCK_LAUNCHERS, _open_command, _run_cli
+
+    def _launch_panel() -> None:
+        _open_command(STOCK_LAUNCHERS / "Launch_Trading_Control_Panel.command")
+
+    def _run_doctor() -> None:
+        with st.spinner("stock-system-doctor…"):
+            res = _run_cli(["stock-system-doctor"], timeout=30)
+        st.code(res["stdout"] or res["stderr"] or "(空)", language="text")
+
+    register_quick_action("🎛️ 启动桌面控制台", "launch_panel", _launch_panel)
+    register_quick_action("📋 系统体检 Doctor", "run_doctor", _run_doctor)
+
+    run_unified(settings, render_header=_render_header)
 
 
 if __name__ == "__main__":
