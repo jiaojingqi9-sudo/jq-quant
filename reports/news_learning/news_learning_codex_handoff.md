@@ -12,7 +12,7 @@
 
 ## Packet
 
-- Generated: `2026-07-31T06:38:48.817299+00:00`
+- Generated: `2026-07-31T06:43:49.034911+00:00`
 - Input report: `/Users/jiao/All here/news collector/reports/live/latest_report.json`
 - Output dir: `/Users/jiao/All here/news collector/reports/news_learning`
 - Review packet JSON: `/Users/jiao/All here/news collector/reports/news_learning/news_learning_review_packet.json`
@@ -25,15 +25,15 @@
 - `news_claims`: `/Users/jiao/All here/news collector/reports/news_learning/news_claims.jsonl`
   - sha256: `4dd99c5e95547e50cc968629aecd89ac09cd0417ac018cc94ce1733a2a4ea9dc`
 - `news_outcomes`: `/Users/jiao/All here/news collector/reports/news_learning/news_outcomes.jsonl`
-  - sha256: `91e1638f100a7c887b0112ba739a7f90f7f8aff41a22f9210d4075d32f239933`
+  - sha256: `9a1a0778843b07a6cf657c7c77a337ada0ffa04cf44eb7af46197ba5bb54cf88`
 - `news_attribution`: `/Users/jiao/All here/news collector/reports/news_learning/news_attribution.json`
-  - sha256: `455295f59e0646afb3bce460632a4087409b9091a01e526b2ebad1d9bf733f77`
+  - sha256: `bca145003e4882c3a84befdfb9b1e95f0e87e92b1e76562e7bf1b69551ad24d7`
 - `news_upgrade_candidates`: `/Users/jiao/All here/news collector/reports/news_learning/news_upgrade_candidates.jsonl`
   - sha256: `faa99b12516da53c437a5a2db01a7eab1e10fdc27e3a12f6298ba98adb686134`
 - `news_promotion_report`: `/Users/jiao/All here/news collector/reports/news_learning/news_promotion_report.json`
-  - sha256: `a6c78d9e5bca8929184cce35c191c894480de30a1afe58a88238d3fe747111b7`
+  - sha256: `512b66122b5de1f82b2b54533836761e26ef70e509fa22ba27cd6be55ff7f364`
 - `news_learning_codex_handoff`: `/Users/jiao/All here/news collector/reports/news_learning/news_learning_codex_handoff.md`
-  - sha256: `6224a0b7fd02f0a2670204198cf8cf7ffe4c805e0b3269542c521364481de22d`
+  - sha256: `d9fe97c7b839661bc1c6f7f107f1eda9344f7492ba417258275feae6a1d69851`
 
 ## Quick Triage
 
