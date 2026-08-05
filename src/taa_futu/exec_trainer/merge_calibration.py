@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import glob
 import json
+import math
 import statistics
 import sys
 from pathlib import Path
@@ -20,10 +21,16 @@ CAL_DIR = REPO / "runtime" / "exec_trainer" / "calibration"
 
 def merge(symbol: str) -> dict:
     tag = symbol.replace(".", "_")
-    files = sorted(CAL_DIR.glob(f"{tag}_*.json"))
+    # 只收「US_NVDA_2026-08-04.json」这种盘口标定结果。
+    # 不能用 f"{tag}_*.json"：那会把成交量标定的 US_NVDA_vol_*.json 也收进来，
+    # 两种文件字段完全不同，合并时会直接 KeyError。
+    files = sorted(CAL_DIR.glob(f"{tag}_20*.json"))
     if not files:
         raise SystemExit(f"{CAL_DIR} 里没有 {symbol} 的标定结果，先跑 calibrate.py")
     rows = [json.loads(p.read_text(encoding="utf-8")) for p in files]
+    rows = [r for r in rows if "depth_profile" in r]
+    if not rows:
+        raise SystemExit(f"{CAL_DIR} 里没有 {symbol} 的盘口标定结果，先跑 calibrate.py")
 
     def med(fn) -> float:
         vals = [fn(r) for r in rows]
@@ -32,6 +39,16 @@ def merge(symbol: str) -> dict:
 
     n_levels = min(len(r["depth_profile"]) for r in rows)
     depth = [med(lambda r, i=i: r["depth_profile"][i]["median"]) for i in range(n_levels)]
+    # 各档挂单量的离散度。引擎里做市商每次重挂都要按这个抖一下，
+    # 否则每一档永远是同一个数，盘口看起来像画上去的。
+    # 对数正态下 p75/p25 = exp(2 × 0.6745 × sigma)，反解出 sigma。
+    disp = []
+    for i in range(n_levels):
+        p25 = med(lambda r, i=i: r["depth_profile"][i]["p25"])
+        p75 = med(lambda r, i=i: r["depth_profile"][i]["p75"])
+        if p25 > 0 and p75 > p25:
+            disp.append(math.log(p75 / p25) / 1.349)
+    dispersion = statistics.median(disp) if disp else 0.35
 
     # 价差分布合并成概率，引擎按这个分布决定做市商挂多宽
     hist: dict[str, int] = {}
@@ -57,6 +74,7 @@ def merge(symbol: str) -> dict:
         # 单边各档的目标挂单量。做市商的梯子要挂成这个形状——注意是驼峰形，
         # 最优档最薄，第 3–6 档最厚：做市商不会把大量堆在最前面，怕被一扫而空。
         "depth_profile_shares": depth,
+        "depth_dispersion": round(dispersion, 4),
         "depth_top5_shares": sum(depth[:5]),
         "depth_top10_shares": sum(depth[:10]),
         # 中间价的随机游走强度与均值回复速度

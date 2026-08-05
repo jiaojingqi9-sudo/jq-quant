@@ -44,6 +44,13 @@ RTH_END_SEC = 20.0 * 3600
 # （实测 7/31 被一个坏点抬到 19%，而正常是 0.2%）。
 MAX_STEP_RETURN = 0.05
 
+# 日内活跃度按半小时一格统计。美股 9:30–16:00 共 6.5 小时 = 13 格。
+# 为什么要这一格一格地量：真实市场开盘和收盘最忙、中午最闲，而
+# 「在量大的时候多做」是做大单最核心的一课。引擎里如果一整天流量都一样，
+# 这一课既练不到也测不出来。
+BUCKET_SEC = 1800.0
+N_BUCKETS = int((RTH_END_SEC - RTH_START_SEC) / BUCKET_SEC)
+
 
 def _open_any(day_dir: Path, name: str):
     """同一份数据可能是明文也可能是 .gz（老日期会被压缩）。"""
@@ -84,6 +91,8 @@ def collect(day: str, symbol: str) -> dict:
     prev_book: dict[float, float] | None = None
     prev_t: float | None = None
     last_sample_t = -1e9
+    # 每格：观测到的秒数、挂撤单事件数、变动股数、快照数
+    buckets = [{"span": 0.0, "events": 0, "shares": 0.0, "snaps": 0} for _ in range(N_BUCKETS)]
 
     with fh:
         for line in fh:
@@ -117,6 +126,8 @@ def collect(day: str, symbol: str) -> dict:
                 n_crossed += 1
                 continue
             n_snap += 1
+            bi = min(max(int((t - RTH_START_SEC) // BUCKET_SEC), 0), N_BUCKETS - 1)
+            buckets[bi]["snaps"] += 1
             # 换算成「几个最小变动价位」。美股 1 tick = 0.01，浮点直接比会有误差。
             spreads_tick.append(int(round(spread * 100)))
 
@@ -140,7 +151,10 @@ def collect(day: str, symbol: str) -> dict:
                     d = q - prev_book.get(p, 0.0)
                     if d:
                         deltas.append(abs(d))
+                        buckets[bi]["events"] += 1
+                        buckets[bi]["shares"] += abs(d)
                 delta_span_sec += t - prev_t
+                buckets[bi]["span"] += t - prev_t
             prev_book, prev_t = book, t
 
     if n_snap == 0:
@@ -202,6 +216,23 @@ def collect(day: str, symbol: str) -> dict:
     deltas.sort()
     events_per_sec = len(deltas) / delta_span_sec if delta_span_sec > 0 else 0.0
 
+    # ── 日内活跃度曲线 ───────────────────────────────────────────────
+    # 关键：除以「这一格实际观测到多少秒」，不是除以 1800 秒。
+    # 数据本身有大量空洞（逐笔覆盖率只有约 17%），直接数事件数量出来的是
+    # 「采集器那半小时勤不勤快」，不是「市场那半小时忙不忙」。
+    intraday = []
+    for i, bk in enumerate(buckets):
+        rate = bk["events"] / bk["span"] if bk["span"] > 0 else 0.0
+        intraday.append({
+            "bucket": i,
+            "start_et": f"{9 + (30 + i * 30) // 60}:{(30 + i * 30) % 60:02d}",
+            "events_per_sec": rate,
+            "shares_per_sec": (bk["shares"] / bk["span"]) if bk["span"] > 0 else 0.0,
+            "observed_sec": round(bk["span"], 1),
+            "coverage": round(bk["span"] / BUCKET_SEC, 3),
+            "snapshots": bk["snaps"],
+        })
+
     return {
         "day": day,
         "symbol": symbol,
@@ -222,6 +253,7 @@ def collect(day: str, symbol: str) -> dict:
             "jump_count": len(jumps),
             "jump_abs_median_bp": (statistics.median([abs(j) for j in jumps]) * 1e4) if jumps else 0.0,
         },
+        "intraday": intraday,
         "order_events": {
             "events_per_sec": events_per_sec,
             "size_median": _pct(deltas, 0.5),

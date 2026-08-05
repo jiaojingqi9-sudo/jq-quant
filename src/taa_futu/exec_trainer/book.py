@@ -25,9 +25,20 @@ class Order:
     oid: int
     side: int          # BUY / SELL
     price: int         # 以「几个最小变动价位」计的整数价，避免浮点比较出错
-    qty: int
-    owner: str         # 谁下的：mm / noise / value / momentum / player
+    qty: int           # 还没成交的总量（含没露出来的部分）
+    owner: str         # 谁下的：mm / inst / noise / value / momentum / player
     ts: float
+    # 露出多少。冰山单／隐藏单：盘口上只看得见 display 这么多，
+    # 但排队和成交按 qty 全额算。
+    #
+    # 这不是为了炫技，是两组实测数据对不上时唯一的解释：
+    # 富途盘口量出来买一中位数只有 125 股，而 K 线量出来 NVDA 一天成交
+    # 七千万股（每秒 3027 股）。125 股的盘口撑不起每秒 3000 股的成交，
+    # 除非绝大部分挂单根本没显示出来。显示出来的只是冰山一角。
+    #
+    # 对练习者来说这是最要紧的一课：盘口显示买一 125 股、你排第二个，
+    # 不代表马上就轮到你——前面还压着看不见的量。
+    display: int = 10**9
 
 
 @dataclass
@@ -81,12 +92,18 @@ class Book:
         return None if b is None or a is None else a - b
 
     def depth(self, side: int, levels: int) -> list[tuple[int, int]]:
-        """从最优价往里数 levels 档，返回 [(整数价, 总量)]。"""
+        """从最优价往里数 levels 档，返回 [(整数价, 看得见的量)]。"""
         side_book = self._bids if side == BUY else self._asks
         prices = sorted(side_book, reverse=(side == BUY))[:levels]
-        return [(p, sum(o.qty for o in side_book[p])) for p in prices]
+        return [(p, sum(min(o.qty, o.display) for o in side_book[p])) for p in prices]
 
     def level_qty(self, side: int, price: int) -> int:
+        """这一档盘口上显示多少股。"""
+        side_book = self._bids if side == BUY else self._asks
+        return sum(min(o.qty, o.display) for o in side_book.get(price, ()))
+
+    def level_qty_true(self, side: int, price: int) -> int:
+        """这一档实际有多少股（含没露出来的）。只有引擎和评分能看，界面不能。"""
         side_book = self._bids if side == BUY else self._asks
         return sum(o.qty for o in side_book.get(price, ()))
 
@@ -96,7 +113,11 @@ class Book:
         return sum(o.qty for o in side_book.get(price, ()) if o.owner == owner)
 
     def queue_ahead(self, oid: int) -> int:
-        """我这张单前面还排着多少股。第二版做队列成交模型时要用。"""
+        """我这张单前面还排着多少股——按真实量算，含看不见的部分。
+
+        界面上要把这个数显示给练习者：他看到的盘口只有一百多股，
+        实际排在前面的可能是它的十倍，这个落差是必须让他感觉到的。
+        """
         o = self._index.get(oid)
         if o is None:
             return 0
@@ -113,7 +134,7 @@ class Book:
 
     # ── 下单 ─────────────────────────────────────────────────────────────
     def limit(self, side: int, price: int, qty: int, owner: str, ts: float,
-              ioc: bool = False) -> tuple[int | None, list[Trade]]:
+              ioc: bool = False, display: int | None = None) -> tuple[int | None, list[Trade]]:
         """限价单。能立即成交的先成交，剩下的挂进簿里。
 
         ioc=True 表示「成交多少算多少，剩下的不挂」。冲着吃单去的策略要用这个：
@@ -133,7 +154,8 @@ class Book:
             return None, fills
         oid = self._next_oid
         self._next_oid += 1
-        order = Order(oid, side, price, remaining, owner, ts)
+        order = Order(oid, side, price, remaining, owner, ts,
+                      display=remaining if display is None else max(0, int(display)))
         self._insert(order)
         return oid, fills
 

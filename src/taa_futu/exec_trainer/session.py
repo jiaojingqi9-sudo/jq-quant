@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import math
 import statistics
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .book import BUY, SELL, Trade
 from .market import MarketConfig, SyntheticMarket
@@ -47,6 +47,10 @@ class TaskSpec:
     total_shares: int = 100_000
     horizon_sec: float = 3600.0     # 必须在这段时间内做完
     turn_sec: float = 30.0          # 一个回合推进多少秒
+    # 从开盘（09:30 ET）后第几秒开始。这个不是装饰：市场的活跃度一天里
+    # 差四倍，开盘半小时占全天成交的 17%，午后那一格只占 3.9%。
+    # 同样一笔单，早上做和中午做完全是两件事。
+    start_sec_after_open: float = 3600.0
     # 没做完的部分怎么罚：收盘一把市价扫掉，按当时的价格算，再加这个惩罚。
     # 不罚的话「干脆不做」就成了最优解。
     unfilled_penalty_bp: float = 50.0
@@ -84,6 +88,8 @@ class Session:
     def __init__(self, task: TaskSpec | None = None, cfg: MarketConfig | None = None):
         self.task = task or TaskSpec()
         cfg = cfg or MarketConfig()
+        # 任务说几点开始，市场就从那个时段的活跃度开始跑
+        cfg = replace(cfg, session_start_sec=float(self.task.start_sec_after_open))
         self.market = SyntheticMarket(cfg)
         # 影子市场：同一个种子、同一段时间，但你不进场。用来当计分基准。
         self.shadow = SyntheticMarket(cfg)
@@ -128,6 +134,31 @@ class Session:
         """任务开始以来市场上所有的成交（含自己的）。"""
         return self.market.book.trades[self._trade_mark:]
 
+    def my_orders(self) -> list[dict]:
+        """自己还挂着的单，带排队位置。
+
+        排队位置是这一版最该看的数字：盘口上买一显示一百多股，
+        实际压在你前面的可能是它的六倍——那些是别人的冰山单，不显示。
+        看着「才一百股，马上轮到我」就一直等下去，是新手最常犯的错。
+        """
+        out = []
+        for oid, (px, _) in self.open_orders.items():
+            o = self.market.book._index.get(oid)
+            if o is None:
+                continue
+            out.append({
+                "oid": oid,
+                "price": self.market.book.to_price(px),
+                "left": o.qty,
+                "shown": min(o.qty, o.display),
+                "queue_ahead": self.market.book.queue_ahead(oid),
+                # 这一档别人显示了多少（不含自己）——含自己的话，
+                # 挂个大单进去这个数就被自己撑起来，看不出别人有多厚
+                "level_others": (self.market.book.level_qty(o.side, px)
+                                 - min(o.qty, o.display)),
+            })
+        return sorted(out, key=lambda r: -r["price"])
+
     def board(self, levels: int = 10) -> dict:
         """价格阶梯要显示的东西。自己挂在哪一档也标出来。"""
         tick = self.market.cfg.tick
@@ -150,6 +181,9 @@ class Session:
             "done": self.done_shares, "left": self.left_shares,
             "elapsed": self.elapsed, "remaining": self.remaining_sec,
             "avg_price": self.avg_price(),
+            "clock": self.market.time_of_day(),
+            "flow_mult": self.market.flow_mult(),
+            "my_orders": self.my_orders(),
         }
 
     # ── 下单 ─────────────────────────────────────────────────────────────
@@ -168,8 +202,13 @@ class Session:
         self._record(fills, passive=False)
         return sum(f.qty for f in fills)
 
-    def send_limit(self, price: float, qty: int) -> int | None:
+    def send_limit(self, price: float, qty: int, display: int | None = None) -> int | None:
         """挂限价单。price 用真实价格（如 210.03）。返回单号，全成交则返回 None。
+
+        display 是冰山单的显示量——盘口上只露这么多，剩下的藏着。
+        券商终端上这叫「冰山单」或「隐藏量」，是做大单的标准工具：
+        露得少，别人看不出你要买一大笔，就不会抢在你前面挂；
+        代价是排队照全额排，成交不会更快。这个取舍就是要练的东西。
 
         挂得比对手价还激进的话会立刻成交一部分，那部分算主动吃。
         """
@@ -178,7 +217,7 @@ class Session:
             return None
         self.n_orders += 1
         px = int(round(price / self.market.cfg.tick))
-        oid, fills = self.market.player_limit(self.task.side, px, qty)
+        oid, fills = self.market.player_limit(self.task.side, px, qty, display=display)
         self._record(fills, passive=False)     # 立刻成交的部分是自己穿过去的
         if oid is not None:
             self.open_orders[oid] = (px, qty - sum(f.qty for f in fills))
@@ -245,8 +284,10 @@ class Session:
         mkt_qty = sum(t.qty for t in trades)
         tick = self.market.cfg.tick
         # 基准只算「你实际在干活」的那段时间：干完就收工的话，后面的行情
-        # 不该算进你的基准里。
-        end = max((f.ts for f in self.fills), default=self.market.t)
+        # 不该算进你的基准里。但至少要算一个回合——一秒钟把单子全打出去的话，
+        # 那一秒里影子市场可能一笔成交都没有，基准会算出 nan。
+        end = max(max((f.ts for f in self.fills), default=self.t0),
+                  self.t0 + self.task.turn_sec)
         shadow = [t for t in self.shadow.book.trades[self._shadow_mark:] if t.ts <= end]
         sq = sum(t.qty for t in shadow)
         vwap = (sum(t.price * t.qty for t in shadow) / sq * tick) if sq else float("nan")
@@ -298,6 +339,10 @@ class Session:
 
         if part > 0.25:
             notes.append(f"参与率 {part*100:.0f}%，砸得太急了——一般不超过 20%")
+        if 0 < passive_rate < 0.5 and self.n_orders > 5:
+            notes.append(
+                "挂单成交得少，多半是排队排不上：盘口显示的量只是冰山一角，"
+                "前面通常还压着五六倍的隐藏量。要么挂早一点，要么认了去吃单。")
         if passive_rate < 0.2:
             notes.append(f"被动成交只占 {passive_rate*100:.0f}%，几乎全是主动吃单，价差白付了")
         return Report(done, self.task.total_shares, avg, self.arrival, vwap, twap,
