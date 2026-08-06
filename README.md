@@ -282,6 +282,8 @@ Binance 现货 OFIM 与 USD-M 永续多空。有自己的看门狗、行情流�
 .venv/bin/taa-futu stock-system-doctor         # 检查账本起点、分账、自动交易、对账
 .venv/bin/taa-futu stock-system-reset          # 统一设置账本 Epoch 与四策略分账起点
 .venv/bin/taa-futu real-check                  # 与券商回报对账
+.venv/bin/taa-futu stock-recon-snapshot        # 记一行当日「券商 vs 账本」快照
+.venv/bin/taa-futu stock-recon-history         # 看差额的逐日变化
 ```
 
 `stock-system-reset` 要统一用这一个命令：它会同时设置事件审计账本 Epoch 和四策略
@@ -329,7 +331,7 @@ trade/
 ├─ docs/screenshots/       本文档里的截图
 ├─ stock/launchers/        股票侧运维脚本
 ├─ crypto/launchers/       加密侧运维脚本
-└─ tests/                  464 个测试
+└─ tests/                  471 个测试
 ```
 
 架构细节见 [ARCHITECTURE.md](ARCHITECTURE.md)。
@@ -402,7 +404,7 @@ registry.register(Feature(
 .venv\Scripts\python -m pytest -q          # Windows
 ```
 
-464 个测试，约 27 分钟——股票页的端到端测试要真的把整个界面渲染一遍。
+471 个测试，约 27 分钟——股票页的端到端测试要真的把整个界面渲染一遍。
 
 只跑快的那部分：
 

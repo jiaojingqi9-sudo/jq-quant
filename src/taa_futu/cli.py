@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import date, datetime
 import json
+import math
 from pathlib import Path
 import os
 import subprocess
@@ -105,6 +106,13 @@ from .stock_runtime import (
     write_stock_ledger_epoch,
 )
 from .stock_doctor import run_stock_system_doctor
+from .stock_reconciliation_log import (
+    RECON_LOG_FILE,
+    append_snapshot,
+    build_snapshot,
+    load_snapshots,
+    with_daily_delta,
+)
 from .stock_ledger import build_stock_double_entry_ledger, reconcile_stock_ledger, write_stock_journal
 from .stock_learning import (
     STOCK_ATTRIBUTION_FILE,
@@ -270,6 +278,9 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("stock-ledger-reset", help="Record a fresh stock ledger accounting epoch from the current Futu account snapshot.")
     subparsers.add_parser("stock-ledger-status", help="Show stock fill-ledger projection since the current epoch.")
     subparsers.add_parser("stock-ledger-audit", help="Build the double-entry stock journal and write runtime/stock_journal.jsonl.")
+    subparsers.add_parser("stock-recon-snapshot", help="Record one daily broker-vs-ledger reconciliation row (read-only).")
+    recon_history = subparsers.add_parser("stock-recon-history", help="Show the daily reconciliation gap and its day-over-day change.")
+    recon_history.add_argument("--days", type=int, default=30, help="How many recent rows to show.")
     subparsers.add_parser("stock-learning-build", help="Build stock order outcomes, attribution, strategy candidates and promotion report.")
     subparsers.add_parser("stock-learning-export", help="Build a human/Codex review packet from the latest stock learning evidence.")
     subparsers.add_parser("stock-learning-status", help="Show the latest stock strategy learning report.")
@@ -551,6 +562,68 @@ def cmd_stock_ledger_audit(_args: argparse.Namespace) -> None:
     except Exception as exc:
         rows.append(["reconciliation_ok", f"not_checked: {type(exc).__name__}: {exc}"])
     _print_table(rows, ["audit_metric", "value"])
+
+
+def cmd_stock_recon_snapshot(_args: argparse.Namespace) -> None:
+    """记一行当天的券商 vs 账本对账快照。只读券商，只往日志追一行。
+
+    单独做成一条命令而不是塞进 doctor：doctor 是「现在有没有毛病」，这个是
+    「差额是从哪天开始长出来的」。后者要的是一条不间断的逐日序列，必须每天
+    定时跑一次，跟人什么时候想起来体检没关系。
+    """
+    settings = load_settings()
+    epoch = load_stock_ledger_epoch()
+    projection = build_stock_fills_ledger(STOCK_FILLS_FILE, epoch_path=STOCK_LEDGER_EPOCH_FILE)
+    with FutuPaperTrader(settings) as trader:
+        acc_id = trader.resolve_trade_account()
+        positions = trader.get_positions(acc_id)
+        account = trader.get_account_info(acc_id)
+    reconciliation = reconcile_stock_ledger(projection, positions=positions, account=account, epoch=epoch)
+    account_dict = account.to_dict() if hasattr(account, "to_dict") else dict(account)
+    snapshot = build_snapshot(
+        account=account_dict,
+        projection=projection,
+        epoch=epoch,
+        reconciliation=reconciliation,
+    )
+    path = append_snapshot(snapshot)
+    rows = [[key, value] for key, value in snapshot.to_dict().items()]
+    _print_table(rows, ["recon_field", "value"])
+    print(f"\nwritten: {path}", flush=True)
+
+
+def cmd_stock_recon_history(args: argparse.Namespace) -> None:
+    rows = with_daily_delta(load_snapshots())
+    if not rows:
+        print(f"还没有对账快照。先跑 stock-recon-snapshot。日志位置：{RECON_LOG_FILE}", flush=True)
+        return
+    tail = rows[-max(1, int(getattr(args, "days", 30))):]
+    table = [
+        [
+            r["date"],
+            f"{_finite(r.get('broker_total_assets')):,.2f}",
+            f"{_finite(r.get('cash_gap')):,.2f}",
+            "-" if r.get("cash_gap_delta") is None else f"{_finite(r.get('cash_gap_delta')):+,.2f}",
+            "-" if r.get("trades_today") is None else str(r.get("trades_today")),
+            "跳变" if r.get("jump") else ("持仓不符" if int(r.get("position_break_count") or 0) else ""),
+        ]
+        for r in tail
+    ]
+    _print_table(table, ["date", "broker_assets", "cash_gap", "gap_delta", "trades", "flag"])
+    first, last = rows[0], rows[-1]
+    print(
+        f"\n{first['date']} → {last['date']}：现金差 {_finite(first.get('cash_gap')):,.2f}"
+        f" → {_finite(last.get('cash_gap')):,.2f}",
+        flush=True,
+    )
+
+
+def _finite(value: object) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) else 0.0
 
 
 def cmd_stock_status(_args: argparse.Namespace) -> None:
@@ -2167,6 +2240,8 @@ def main() -> None:
         "stock-ledger-reset": cmd_stock_ledger_reset,
         "stock-ledger-status": cmd_stock_ledger_status,
         "stock-ledger-audit": cmd_stock_ledger_audit,
+        "stock-recon-snapshot": cmd_stock_recon_snapshot,
+        "stock-recon-history": cmd_stock_recon_history,
         "stock-learning-build": cmd_stock_learning_build,
         "stock-learning-export": cmd_stock_learning_export,
         "stock-learning-status": cmd_stock_learning_status,
