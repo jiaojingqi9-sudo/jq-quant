@@ -98,6 +98,10 @@ $env:JQ_NEWS_ROOT = "$PWD\demo_data\news"
 
 每一页顶部都有演示模式横幅，防止截图流出去被误认成真实交易记录。
 
+**演示模式下侧边栏显示「Fusion 90% + Cash 10%」**，和下面[策略构成](#策略构成)里写的
+四条各 25% 不一样。原因：干净 clone 里没有 `.env`，走的是代码里的默认权重。想看四条
+并行的样子，先 `cp .env.example .env` 再启动。这是配置差异，不是程序出错。
+
 **Python 版本必须是 3.11 / 3.12 / 3.13**，两头都卡：
 
 - 低于 3.11：代码用了 `datetime.UTC`，import 阶段就报 `cannot import name 'UTC'`
@@ -331,7 +335,7 @@ trade/
 ├─ docs/screenshots/       本文档里的截图
 ├─ stock/launchers/        股票侧运维脚本
 ├─ crypto/launchers/       加密侧运维脚本
-└─ tests/                  471 个测试
+└─ tests/                  474 个测试
 ```
 
 架构细节见 [ARCHITECTURE.md](ARCHITECTURE.md)。
@@ -404,7 +408,7 @@ registry.register(Feature(
 .venv\Scripts\python -m pytest -q          # Windows
 ```
 
-471 个测试，约 27 分钟——股票页的端到端测试要真的把整个界面渲染一遍。
+474 个测试，约 27 分钟——股票页的端到端测试要真的把整个界面渲染一遍。
 
 只跑快的那部分：
 

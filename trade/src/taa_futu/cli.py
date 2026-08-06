@@ -105,6 +105,7 @@ from .stock_runtime import (
     load_stock_ledger_epoch,
     write_stock_ledger_epoch,
 )
+from .cli_hint import venv_command
 from .stock_doctor import run_stock_system_doctor
 from .stock_reconciliation_log import (
     RECON_LOG_FILE,
@@ -441,9 +442,9 @@ def cmd_reset_simulate(args: argparse.Namespace) -> None:
     print("  Trade → Simulate Trading → Settings (top-right) → Reset Account")
     print()
     print("After the manual reset, run:")
-    print("  .venv/bin/taa-futu reset-simulate --mark-epoch")
+    print(f"  {venv_command('reset-simulate --mark-epoch')}")
     print("or:")
-    print("  .venv/bin/taa-futu stock-ledger-reset")
+    print(f"  {venv_command('stock-ledger-reset')}")
     print()
 
     if not args.mark_epoch:

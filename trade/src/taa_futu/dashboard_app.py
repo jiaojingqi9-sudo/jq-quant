@@ -3639,7 +3639,8 @@ def render_live_monitor(settings) -> None:
         # 持仓分文不差、成交一笔没漏，差额却横跨 4 个月 5624 笔成交，定位不到
         # 是哪天长出来的。逐日记一行，差额哪天动了就看得见。
         from taa_futu.demo_gateway import demo_enabled as _demo_enabled
-        if not _demo_enabled():
+        is_demo = _demo_enabled()
+        if not is_demo:
             try:
                 from taa_futu.stock_reconciliation_log import maybe_record_daily_snapshot
                 maybe_record_daily_snapshot(
@@ -3657,8 +3658,7 @@ def render_live_monitor(settings) -> None:
         # 演示模式下体检必然失败：它查的是本机运行时文件（成交流水、账本 epoch、
         # 自动交易状态），干净 clone 里一个都没有。那不是故障，是「还没跑起来」，
         # 报红只会让第一次打开的人以为程序坏了。
-        from taa_futu.demo_gateway import demo_enabled
-        if demo_enabled():
+        if is_demo:
             # 演示模式下整块不渲染。横幅以前是跳过了，可下面那张 findings 表照样
             # 默认展开、照样一片红——第一次打开的人看到的还是「这程序坏了」。
             st.caption("股票系统 Doctor: 演示模式下不适用——它查的是本机运行时文件"
@@ -3849,7 +3849,11 @@ def render_live_monitor(settings) -> None:
             f"账户 reset 后净变化 / Account Since Reset: {_format_currency(account_reset_net)}；"
             f"差额 / Diff: {_format_currency(strategy_reconcile_diff)}。"
         )
-        if abs(strategy_reconcile_diff) > max(25.0, abs(account_reset_net) * 0.02):
+        # 演示模式下这里必然对不上：没有本机成交流水，「账户 reset 后净变化」
+        # 恒为 0，而演示持仓有浮盈。那是数据缺失，不是账算错了，不该报黄。
+        if is_demo:
+            st.caption(reconcile_text + "（演示模式：没有本机成交流水，这两个数对不上是正常的。）")
+        elif abs(strategy_reconcile_diff) > max(25.0, abs(account_reset_net) * 0.02):
             st.warning(
                 reconcile_text
                 + " 这表示还有未归因成交、reset 前持仓、经纪商历史不足或数据同步差异；不要把上表单独当成最终收益。"
@@ -3861,7 +3865,14 @@ def render_live_monitor(settings) -> None:
             st.dataframe(overlap_breakdown, use_container_width=True, hide_index=True)
 
         st.markdown("**股票事件账本 / Stock Event Ledger**")
-        if not ledger_has_epoch:
+        if is_demo:
+            # 干净安装里没有账本文件，这一段原文会让第一次打开的人以为程序坏了，
+            # 还把人往「账本诊断与危险操作」那个折叠框里引。
+            st.caption(
+                "股票事件账本：演示模式下为空——账本记的是这台机器上真实发生过的成交，"
+                "干净安装里一笔都没有。下面几个数字因此都是 0。"
+            )
+        elif not ledger_has_epoch:
             st.info(
                 "这块是本地股票审计账本，不会下单。当前还没有设置账本 Epoch，所以本地账本 expected=0，"
                 "券商实际持仓会被看成初始化差异。展开下面的“账本诊断与危险操作”，点击重开 Epoch 后，"
@@ -3874,8 +3885,9 @@ def render_live_monitor(settings) -> None:
                 f"Epoch 起点资产为 {_format_currency(epoch_start_value)}，两者是两套不同口径。"
             )
         ledger_cols = st.columns(4)
-        ledger_cols[0].metric("Epoch / 起点", str((stock_ledger_epoch or {}).get("ts", "未设置 / Not Set"))[:19])
-        ledger_cols[1].metric("起点资产 / Start Value", _format_currency(epoch_start_value) if ledger_has_epoch else "未设置 / Not Set")
+        _unset = "演示 / Demo" if is_demo else "未设置 / Not Set"
+        ledger_cols[0].metric("Epoch / 起点", str((stock_ledger_epoch or {}).get("ts", _unset))[:19])
+        ledger_cols[1].metric("起点资产 / Start Value", _format_currency(epoch_start_value) if ledger_has_epoch else _unset)
         ledger_cols[2].metric("净已实现 / Net Realized", _format_currency(ledger_realized))
         ledger_cols[3].metric("审计哈希 / Audit", str(getattr(stock_ledger_projection, "audit_hash", "")) or "-")
         ledger_cols_2 = st.columns(4)
@@ -3896,7 +3908,9 @@ def render_live_monitor(settings) -> None:
         audit_cols[1].metric("净已实现 / Net Realized", _format_currency(getattr(stock_ledger_v2, "net_realized_pnl", 0.0)))
         audit_cols[2].metric("分录数 / Entries", str(len(getattr(stock_ledger_v2, "entries", ()))))
         audit_cols[3].metric("Journal Hash", str(getattr(stock_ledger_v2, "journal_hash", ""))[:16] or "-")
-        if not ledger_has_epoch:
+        if is_demo:
+            st.caption("券商对账 / Broker Reconciliation: 演示模式下不适用——没有真实券商连接可对。")
+        elif not ledger_has_epoch:
             st.info("券商对账 / Broker Reconciliation: 尚未启用。请先设置股票账本 Epoch。")
         elif getattr(stock_ledger_reconciliation, "ok", False):
             st.success("券商对账 / Broker Reconciliation: OK")
@@ -4615,7 +4629,13 @@ def render_live_monitor(settings) -> None:
                     else:
                         st.dataframe(pd.DataFrame(outcomes), use_container_width=True, hide_index=True)
             else:
-                st.info("还没有学习报告。点击上方按钮，或运行 `.venv/bin/taa-futu stock-learning-build`。")
+                from taa_futu.cli_hint import venv_command
+                # 这一段在另一个函数里，上面那个 is_demo 够不着，就地取一次
+                from taa_futu.demo_gateway import demo_enabled as _demo_here
+                if _demo_here():
+                    st.caption("学习报告：演示模式下没有——它要从本机真实成交里学，干净安装里没有成交。")
+                else:
+                    st.info(f"还没有学习报告。点击上方按钮，或运行 `{venv_command('stock-learning-build')}`。")
 
         with ops_tab:
             st.markdown("**错误日志 / Error Log**")

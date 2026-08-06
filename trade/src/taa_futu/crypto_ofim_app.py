@@ -1193,7 +1193,8 @@ def _render_learning_lab(settings) -> None:
             st.caption(f"Markdown: {CRYPTO_LEARNING_REVIEW_PACKET_FILE}")
             st.caption(f"JSON: {CRYPTO_LEARNING_REVIEW_PACKET_JSON_FILE}")
     else:
-        st.info("还没有学习报告。点击上方按钮，或运行 `.venv/bin/taa-futu crypto-learning-build`。")
+        from taa_futu.cli_hint import venv_command
+        st.info(f"还没有学习报告。点击上方按钮，或运行 `{venv_command('crypto-learning-build')}`。")
 
     st.divider()
     st.subheader("Research Replay / 自动研究回测")
