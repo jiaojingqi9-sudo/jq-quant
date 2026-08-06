@@ -25,6 +25,10 @@ QUEUE = HOME / "All here" / "futu_queue"
 REPOS = {
     "news collector": HOME / "All here" / "news collector",
     "trade": HOME / "All here" / "trade",
+    # monorepo 暂存仓库自己也有文件（顶层 README），改了要能单独提交，
+    # 否则只能被 sync_monorepo 那句「同步邮差与技能脚本」顺手带走，
+    # 提交历史里看不出到底改了什么。
+    "monorepo": HOME / "All here" / ".jq_quant_repo",
 }
 MESSAGE_FILE = QUEUE / "commit_message.txt"
 REPO_FILE = QUEUE / "commit_repo.txt"
