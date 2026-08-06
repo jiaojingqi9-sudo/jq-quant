@@ -10,6 +10,7 @@
       trade/           ← 从本地 trade 仓库导入，保留提交历史
       news-collector/  ← 从本地 news collector 仓库导入，保留提交历史
       watcher/         ← 邮差脚本（原本无版本历史）
+      skills/          ← 技能脚本（原本无版本历史）
       README.md
 
 7/24 那两个旧仓库（quant-trading-workbench / market-news-collector）不动，
@@ -33,6 +34,7 @@ SUBTREES = [
 ]
 PLAIN_COPIES = [
     ("watcher", ALL / "futu_watcher"),
+    ("skills", ALL / "skills"),
 ]
 COPY_SKIP = {"__pycache__", ".pytest_cache", ".DS_Store", ".git"}
 
@@ -47,6 +49,7 @@ Jiao 的量化交易与市场新闻系统。
 | `trade/` | 交易主系统：股票（TAA/Fusion/OFIM/Cascade 四 sleeve）、加密（Binance 现货+永续）、选股器、Streamlit 控制终端 |
 | `news-collector/` | 市场新闻采集与分析：采集 → 去重 → 聚类 → 规则打分 → AI 筛选 → 标的映射 → 手机推送 |
 | `watcher/` | 后台文件队列服务（"邮差"）：读取任务文件、在本机执行只读诊断与运维脚本 |
+| `skills/` | 富途行情/异动分析脚本 |
 
 ## 模型后端
 
@@ -94,12 +97,9 @@ def main():
         out["steps"].append("复用已有暂存仓库")
 
     # README + .gitignore 先落地，保证有个初始提交（subtree add 需要 HEAD）
-    # 已有的 README/.gitignore 不覆盖：仓库首页是手写的英文版，覆盖会丢
-    if not (STAGE / "README.md").exists():
-        (STAGE / "README.md").write_text(README, encoding="utf-8")
-    if not (STAGE / ".gitignore").exists():
-        (STAGE / ".gitignore").write_text(
-            "__pycache__/\n*.py[cod]\n.DS_Store\n.venv/\n*.log\nskills/\n", encoding="utf-8")
+    (STAGE / "README.md").write_text(README, encoding="utf-8")
+    (STAGE / ".gitignore").write_text(
+        "__pycache__/\n*.py[cod]\n.DS_Store\n.venv/\n*.log\n", encoding="utf-8")
     run(["git", "add", "-A"], cwd=STAGE)
     rc, so, se = run(["git", "-c", "user.name=Jiao", "-c", "user.email=jiaojingqi9@gmail.com",
                       "commit", "-m", "JQ Quant: 初始化单一仓库"], cwd=STAGE)

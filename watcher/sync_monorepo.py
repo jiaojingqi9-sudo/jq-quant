@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """sync_monorepo - 把两个系统的最新提交同步进 jq-quant 并推送。
 
-首次用 subtree add 建立，之后用 subtree pull 增量同步。邮差目录没有自己的
-git 历史，直接覆盖复制。技能目录只留本地，不进仓库。
+首次用 subtree add 建立，之后用 subtree pull 增量同步。邮差与技能目录没有
+自己的 git 历史，直接覆盖复制。
 """
 import json, shutil, subprocess, sys
 from pathlib import Path
 
 HOME=Path.home(); ALL=HOME/"All here"; STAGE=ALL/".jq_quant_repo"
 SUBTREES=[("trade",ALL/"trade"),("news-collector",ALL/"news collector")]
-PLAIN=[("watcher",ALL/"futu_watcher")]
+PLAIN=[("watcher",ALL/"futu_watcher"),("skills",ALL/"skills")]
 SKIP={"__pycache__",".pytest_cache",".DS_Store",".git"}
 
 def run(cmd,cwd=None,timeout=900):
@@ -39,7 +39,7 @@ def main():
             copytree(src,STAGE/prefix)
     run(["git","add","-A"],cwd=STAGE)
     rc,so,se=run(["git","-c","user.name=Jiao","-c","user.email=jiaojingqi9@gmail.com",
-                  "commit","-m","同步邮差脚本"],cwd=STAGE)
+                  "commit","-m","同步邮差与技能脚本"],cwd=STAGE)
     out["steps"].append({"plain_commit_rc":rc,"detail":(so or se)[-120:]})
 
     rc,so,se=run(["git","push","origin","main"],cwd=STAGE,timeout=1800)

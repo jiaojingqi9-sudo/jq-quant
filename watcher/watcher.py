@@ -58,6 +58,9 @@ SKILL_REG = {
     "history":     (WATCHER_DIR / "account.py", False, ["history"]),
     "account_all": (WATCHER_DIR / "account.py", False, ["all"]),
     # 临时诊断
+    "nvda_volume":    (WATCHER_DIR / "nvda_volume_official.py", False, []),
+    "gitpush":        (WATCHER_DIR / "gitpush.py", False, []),
+    "gitfetch":       (WATCHER_DIR / "gitfetch.py", False, []),
     "intraday_check": (WATCHER_DIR / "intraday_check.py", False, []),
     "envcheck":       (WATCHER_DIR / "envcheck.py",       False, []),
     "desktop_scan":   (WATCHER_DIR / "desktop_scan.py",   False, []),
