@@ -7,7 +7,16 @@
 任务做什么：调用已验证过的 logclean --apply，历史文件各留最近 3000 条、
 日志各留最近 5MB。数据库、行情数据、交易记录一律不碰。
 
-时间：每周日凌晨 3 点。避开交易时段与采集高峰。
+时间：每天凌晨 3 点。避开交易时段与采集高峰。
+
+2026-08-06 从「每周日」改成「每天」：任务本身一直在正常执行（launchctl 里
+last_exit=0），但频率跟不上增速——健康检查历史每天新增约 3700 行，而保留上限
+是 3000 行，等于清完当天就又超了。一周攒下来 health_history.jsonl 长到 43MB，
+reports/live 加 runtime/logs 一共 125MB。改成每天之后，每个文件稳态就是保留量
+本身（jsonl 3000 条约 8MB，日志 5MB）。
+
+清理有效但周期过长，这类问题从「有没有装」是看不出来的——装了、也跑了、
+last_exit 还是 0。得看清完之后多久又涨回去。
 """
 import json
 import os
@@ -38,7 +47,6 @@ PLIST_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
   </dict>
   <key>StartCalendarInterval</key>
   <dict>
-    <key>Weekday</key><integer>0</integer>
     <key>Hour</key><integer>3</integer>
     <key>Minute</key><integer>0</integer>
   </dict>
@@ -71,7 +79,7 @@ def main():
 
     rc, so, _ = run(["launchctl", "list"])
     out["loaded"] = any(LABEL in l for l in so.splitlines())
-    out["schedule"] = "每周日 03:00"
+    out["schedule"] = "每天 03:00"
     out["action"] = "history/*.jsonl 各留最近 3000 条；runtime/logs/*.log 各留最近 5MB"
     out["untouched"] = "数据库、行情数据、交易记录不碰"
 
