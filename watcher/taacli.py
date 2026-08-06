@@ -31,6 +31,8 @@ ALLOWED = {
     "stock-system-epoch",
     "stock-ledger-status",
     "stock-ledger-audit",
+    "stock-recon-snapshot",   # 只往对账日志追一行，不改任何既有数字
+    "stock-recon-history",
     "stock-learning-status",
     "stock-learning-build",
     "stock-learning-export",
