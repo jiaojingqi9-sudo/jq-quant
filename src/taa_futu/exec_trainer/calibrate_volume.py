@@ -13,8 +13,13 @@
 
 第一版拿盘口的「挂撤单事件数」当日内活跃度的替身，结果算出来收盘前那半小时
 只有 0.77 倍——美股实际上收盘前是全天第二忙的时段。那个替身量到的其实是
-波动率和采集器的勤快程度，不是成交量。改用 K 线之后是标准的 U 形：
-开盘 2.2 倍、中午 0.5 倍、收盘前 1.9 倍。
+波动率和采集器的勤快程度，不是成交量。改用 K 线之后是标准的 U 形。
+
+**成交总量以官方日线为准，不用这里累加的数。** 实测 2026-08-04：
+本脚本从 1 分钟 K 线累加（不含 16:00）得 7083 万股，而富途官方日线和
+本地 snapshots.jsonl 都是 13492 万股——K 线口径漏了近一半。
+所以 daily_total_official 由 merge 时从官方日线接口取，这里累加出来的
+只用于**算日内曲线的形状**（形状是比例，漏的量若是均匀分布则不影响比例）。
 
 用法：
     python3 calibrate_volume.py 2026-08-04 US.NVDA
@@ -85,11 +90,16 @@ def collect(day: str, symbol: str) -> dict:
                 if px:
                     closes.append(px)
 
-    # 只留当天盘中。K 线的 time_key 是美东当地时间。
+    # 只留当天盘中，含 16:00 那一根。
+    # 16:00 是收盘集合竞价的一次性打印（NVDA 实测 2258 万股，占全天 17%）。
+    # **不扣掉**：正常的 VWAP 交易本来就是开盘和收盘量大、中间量少，
+    # 收盘竞价是那条曲线的一部分，扣掉反而不像真实的一天。
+    # 代价是本引擎只有连续竞价、没有集合竞价机制，那一格的量会被摊进
+    # 15:30–16:00 当成连续流量——这是已知的简化，v3 补集合竞价时再改。
     rth = [k for k in vol
-           if k.startswith(day) and RTH_START_MIN <= int(k[11:13]) * 60 + int(k[14:16]) < RTH_END_MIN]
+           if k.startswith(day) and RTH_START_MIN <= int(k[11:13]) * 60 + int(k[14:16]) <= RTH_END_MIN]
     # 三道体检，任何一道不过就整天作废——宁可少几天，不要脏数据进中位数
-    expected = RTH_END_MIN - RTH_START_MIN
+    expected = RTH_END_MIN - RTH_START_MIN + 1     # 含 16:00 那一根
     if not (expected * 0.95 <= len(rth) <= expected):
         raise SystemExit(
             f"{day} 盘中 K 线 {len(rth)} 根，应为 {expected} 根（允许缺 5%）——这天作废")
@@ -103,6 +113,7 @@ def collect(day: str, symbol: str) -> dict:
     buckets = collections.defaultdict(float)
     for k in rth:
         i = (int(k[11:13]) * 60 + int(k[14:16]) - RTH_START_MIN) // BUCKET_MIN
+        # 16:00 那一根（收盘竞价）归到最后一格
         buckets[min(max(i, 0), N_BUCKETS - 1)] += vol[k]
 
     mean = total / N_BUCKETS if total else 1.0
@@ -121,6 +132,7 @@ def collect(day: str, symbol: str) -> dict:
         "day": day,
         "symbol": symbol,
         "minutes": len(rth),
+        "closing_auction_shares": vol.get(f"{day} 16:00:00", 0),
         "minutes_expected": (RTH_END_MIN - RTH_START_MIN),
         "rth_volume": total,
         "rth_turnover": total_turn,
@@ -143,6 +155,17 @@ def merge(symbol: str) -> dict:
     rows = [r for r in rows if r.get("minutes", 0) >= expected * 0.95]
     if not rows:
         raise SystemExit("没有一天的成交量数据是齐全的")
+    # 成交总量以官方日线为准。1 分钟 K 线累加只有官方的约 70%，
+    # 但**形状**（各时段占比）仍然可用——漏掉的量若在时段间大致均匀分布，
+    # 比例就不受影响。总量和形状分开取，各用各的可信来源。
+    off_path = OUT_DIR.parent / f"{symbol.replace('.', '_')}_official_volume.json"
+    official = None
+    if off_path.exists():
+        try:
+            official = json.loads(off_path.read_text(encoding="utf-8"))
+        except Exception:
+            official = None
+
     prof = []
     for i in range(N_BUCKETS):
         vals = [r["intraday_volume"][i]["vs_flat"] for r in rows]
@@ -150,13 +173,26 @@ def merge(symbol: str) -> dict:
     # 归一化成「均值为 1」，方便直接当流量倍数用
     m = statistics.mean(prof)
     prof = [round(x / m, 4) for x in prof]
+    kline_vol = statistics.median([r["rth_volume"] for r in rows])
+    if official:
+        day_total = float(official["daily_volume_median"])
+        vps = float(official["volume_per_sec_rth"])
+        src = "官方日线"
+    else:
+        day_total = kline_vol
+        vps = statistics.median([r["volume_per_sec"] for r in rows])
+        src = "1分钟K线累加（缺官方日线文件，这个数会偏低约三成）"
+
     return {
         "symbol": symbol,
         "days": [r["day"] for r in rows],
         "n_days": len(rows),
         "days_dropped": dropped,
-        "rth_volume_median": statistics.median([r["rth_volume"] for r in rows]),
-        "volume_per_sec_median": statistics.median([r["volume_per_sec"] for r in rows]),
+        "volume_source": src,
+        "rth_volume_median": day_total,
+        "rth_volume_from_klines": kline_vol,
+        "klines_coverage": round(kline_vol / day_total, 4) if day_total else None,
+        "volume_per_sec_median": vps,
         "vwap_median": statistics.median([r["vwap"] for r in rows]),
         "minutes_covered": [r["minutes"] for r in rows],
         "intraday_volume_profile": prof,

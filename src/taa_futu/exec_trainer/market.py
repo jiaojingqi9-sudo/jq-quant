@@ -46,17 +46,48 @@ class Fundamental:
 
     price: float                 # 当前真实价值（真实价格，不是 tick）
     anchor: float                # 回归中枢
-    sigma_per_sec: float         # 每秒波动
+    sigma_per_sec: float         # 每秒波动（长期中枢）
     kappa: float                 # 回归速度，越大拉得越紧
     jump_rate_per_sec: float     # 每秒跳跃概率
     jump_size: float             # 跳跃幅度（相对值，如 0.0013 = 13bp）
     rng: random.Random
+    # ── 随机波动率 ───────────────────────────────────────────────────
+    # 波动率本身是随机的、而且有粘性：闹起来会闹一阵，静下来也静一阵。
+    # 不加这个，收益就是纯高斯的——峰度 3.0、绝对收益自相关 0，
+    # 而真实 NVDA 实测是峰度 21.1、绝对收益自相关 0.10–0.15 且衰减极慢。
+    # 这两项是 JP Morgan《Get Real》收益分布类里最要紧的两条（肥尾、波动率聚集），
+    # 高斯模型一条都过不了。
+    # 做法：让 log(σ) 走一个慢速均值回复过程。σ 时高时低 → 收益变成
+    # 高斯的混合 → 自然出肥尾；σ 有粘性 → 绝对收益自然出自相关。
+    vol_of_vol: float = 0.0          # log σ 的稳态标准差
+    vol_revert_sec: float = 600.0    # log σ 回到中枢的时间尺度
+    _log_sig: float = 0.0            # 当前 log σ 相对中枢的偏离
+
+    def current_sigma(self) -> float:
+        """这一刻的每秒波动。
+
+        归一化用的是 E[σ] 不变（减 ν²/2），不是 E[σ²] 不变（减 ν²）。
+        理由是实测出来的：保 E[σ²] 的话，σ 的中位数会被压得很低，而一段
+        几十分钟的窗口里量到的「已实现波动率」跟中位数走、不跟均值走
+        （均值靠罕见的高波动时段撑着，一个窗口里未必抽得到），
+        结果 vol_of_vol 一开大，跑出来的 5 分钟波动就系统性偏低三成。
+        改成保 E[σ] 之后，形状（肥尾、聚集）由 ν 控制，水平仍然对得上标定。
+        """
+        if self.vol_of_vol <= 0:
+            return self.sigma_per_sec
+        return self.sigma_per_sec * math.exp(self._log_sig - self.vol_of_vol ** 2 / 2)
 
     def step(self, dt: float) -> float:
         """推进 dt 秒，返回这一步的跳跃幅度（0 表示没跳）。"""
+        # 随机波动率先走一步（OU：稳态标准差正好等于 vol_of_vol）
+        if self.vol_of_vol > 0 and dt > 0:
+            th = min(dt / max(self.vol_revert_sec, 1e-6), 1.0)
+            self._log_sig += -th * self._log_sig + self.rng.gauss(
+                0.0, self.vol_of_vol * math.sqrt(2.0 * th))
+        sig = self.current_sigma()
         # 均值回复 + 随机游走
         drift = self.kappa * (self.anchor - self.price) * dt
-        shock = self.rng.gauss(0.0, self.sigma_per_sec * math.sqrt(max(dt, 0.0)) * self.price)
+        shock = self.rng.gauss(0.0, sig * math.sqrt(max(dt, 0.0)) * self.price)
         self.price += drift + shock
         # 跳跃
         jumped = 0.0
@@ -72,16 +103,26 @@ class Fundamental:
         self.price *= (1.0 + rel)
 
 
-def _mean_order_size(median: float, p90: float, p99: float, big_prob: float = 0.01) -> float:
-    """对数正态主体 + 百分之一大单，算出平均一张单多少股。
+def _pareto_xmin(median: float, alpha: float) -> float:
+    """由中位数和尾指数反解幂律的下界。Pareto 的中位数 = xm · 2^(1/α)。"""
+    return max(median, 1.0) / (2.0 ** (1.0 / max(alpha, 1.01)))
 
-    吃单流的频率要靠它从「每秒成交多少股」倒推出来。
+
+def _mean_order_size(median: float, alpha: float, cap: float) -> float:
+    """幂律订单大小的平均值（带上限截断）。
+
+    吃单流的频率要靠它从「每秒要成交多少股」倒推出来，所以必须算准。
+    α<2 时无截断的方差发散、α<1 时均值发散；这里有 cap，用截断 Pareto 的
+    均值公式，不会炸。
     """
-    mu = math.log(max(median, 1.0))
-    sigma = max((math.log(max(p90, 2.0)) - mu) / 1.2816, 0.05)
-    small = math.exp(mu + sigma * sigma / 2)
-    big = p99 * 1.1                      # 大单在 [0.6, 1.6] 倍 p99 上均匀取
-    return (1 - big_prob) * small + big_prob * big
+    a = max(alpha, 1.01)
+    xm = _pareto_xmin(median, a)
+    if cap <= xm:
+        return xm
+    # 截断 Pareto 在 [xm, cap] 上的均值
+    num = a * xm ** a * (xm ** (1 - a) - cap ** (1 - a)) / (a - 1)
+    den = 1 - (xm / cap) ** a
+    return num / den if den > 0 else xm
 
 
 # ── 参数 ─────────────────────────────────────────────────────────────────
@@ -93,8 +134,18 @@ class MarketConfig:
     # 盘口形状（单边各档目标股数），做市商照这个挂。
     # 这是 NVDA 2026-07-28 至 08-04 六个交易日、盘中时段的各档中位数。
     depth_profile: list[int] = field(default_factory=lambda: [
-        125, 356, 411, 408, 409, 414, 348, 314, 287, 294,
-        281, 276, 267, 247, 247, 272, 296, 300, 268, 232,
+        258, 388, 408, 406, 409, 390, 339, 306, 307, 306,
+        300, 296, 288, 290, 320, 340, 341, 341, 304, 266,
+    ])
+    # 各档深度的 Gamma 参数（shape, scale）。JP Morgan《Get Real》里盘口各档
+    # 深度服从 Gamma；第一版用对数正态 + 拍脑袋的 sigma，形状是错的。
+    # 实测 shape 只有 0.14–1.11，非常分散、右尾很长——深档偶尔冒出巨量挂单。
+    depth_gamma: list[tuple[float, float]] = field(default_factory=lambda: [
+        (0.6134, 658.8), (0.8916, 805.7), (0.9975, 1770.5), (1.1145, 1530.4),
+        (0.6902, 1685.4), (0.5196, 2399.2), (0.3609, 2863.1), (0.2744, 4196.9),
+        (0.2134, 4796.4), (0.1977, 3763.7), (0.2622, 4813.0), (0.2410, 3878.7),
+        (0.2691, 3636.8), (0.2209, 5082.0), (0.1948, 7428.9), (0.2028, 4108.8),
+        (0.2101, 6639.4), (0.2136, 3295.8), (0.1867, 4128.9), (0.1441, 4563.7),
     ])
     # 第 20 档以后再往外铺多少档，每档按第 20 档的量挂。
     # 标定只量到第 20 档，再往外是外推、不是实测。加这段纯粹是为了簿不会被
@@ -105,25 +156,30 @@ class MarketConfig:
     # 不影响标定过的前 20 档。
     mm_tail_stride: int = 4
     # 价差分布：几个 tick -> 概率（同样是那六天的实测）
+    # 价差分布：几个 tick -> 概率。**整手口径**。
+    # 含碎股的版本是 1:40% 2:45% 3:13%——那是第一版用的，被 11 股、88 股这种
+    # 碎单把价差压窄了一整档。整手口径中位数是 3 tick，不是 1。
     spread_dist: dict[int, float] = field(default_factory=lambda: {
-        1: 0.397, 2: 0.451, 3: 0.130, 4: 0.016, 5: 0.003,
+        1: 0.161, 2: 0.358, 3: 0.301, 4: 0.120, 5: 0.035, 6: 0.025,
     })
-    sigma_per_sec: float = 0.00016117
+    sigma_per_sec: float = 0.00015728
     # 均值回复速度。标定值是 0.0018（半衰期约 6.4 分钟），但那个值是从
     # 「已经含了均值回复的真实价格序列」上量出来的，sigma 也是从同一条序列上
     # 量的。把两个都原样喂进 OU 过程等于把回复算了两遍，5 分钟波动会被压掉
     # 三成。这里把回复放松到半衰期约 25 分钟：一天之内价格不会飘到离谱的地方，
     # 又不吃掉 5 分钟尺度上的波动。
     kappa: float = 0.00045
+    # 随机波动率：让收益出现肥尾和波动率聚集。
+    # **这两个数不是实测的，是调出来的**——目标是让合成市场的峰度和
+    # 绝对收益自相关对上实测值（峰度 11.5，|r| 自相关 0.228/0.188/0.166/0.134）。
+    # vol_of_vol 管肥尾厚度，vol_revert_sec 管波动率聚集持续多久。
+    # 实测的 |r| 自相关从 lag 1 到 lag 50 只从 0.228 降到 0.134，衰减很慢，
+    # 所以回归时间尺度取到 5 分钟量级。
+    vol_of_vol: float = 0.70
+    vol_revert_sec: float = 300.0
     jumps_per_day: float = 17.5
-    jump_abs_median_bp: float = 12.89
-    # 标定出来的「盘口每秒有几档的挂单量发生变化」。注意这个数不是
-    # 「每秒来几张新单」——40 个档位每秒各变一次就是 50，而做市商自己每秒
-    # 重挂一次梯子就能造出这么多变化。第一版误当成到达率用，结果簿被堆到
-    # 目标的两三倍。现在它只作为记录保留，实际的下单流由下面那个参数控制。
-    order_events_per_sec: float = 49.9
-    order_size_median: float = 47.5
-    order_size_p90: float = 207.5
+    jump_abs_median_bp: float = 11.94
+    order_size_median: float = 69.0
     # 下单流拆成两股，各自对着各自的实测目标标定。
     # v1 只有一个速率，一个旋钮要同时管「成交量」和「盘口厚度」两件事，
     # 调到深度对了成交量就只有真实的十一分之一，反过来也一样。
@@ -131,11 +187,21 @@ class MarketConfig:
     #   吃单流：主动成交的量。对着 K 线量出来的真实成交量标定
     #           （NVDA 每秒 3027 股）。
     #   挂单流：非做市商挂进簿里等着的单。对着盘口各档厚度标定。
-    taker_events_per_sec: float = 30.0
+    # 每秒要成交的股数（官方日线口径：NVDA 日均 1.345 亿股 ÷ 6.5 小时）。
+    # 吃单流的频率由它除以平均单量倒推，不再是一个拍出来的数。
+    target_volume_per_sec: float = 5749.0
     maker_events_per_sec: float = 3.5
-    order_size_p99: float = 738.0
-    # 抽到大单的概率。标定的 p99 就是「百分之一的单子有这么大」。
-    big_order_prob: float = 0.01
+    # 订单大小服从幂律（Pareto），尾指数由标定给出。
+    # JP Morgan《Get Real》里订单大小是幂律，参考指数 2–2.7；实测这份数据
+    # 是 1.85（注意：这里是拿「相邻快照的档位量变化」当订单大小的替身量的，
+    # 不是真正的逐笔订单，所以跟文献区间不能直接比）。
+    # 第一版用对数正态，尾巴太薄——玩家永远碰不到真正的大单，
+    # 而「被别人的大单顶走」恰恰是做大单最该练的一课。
+    order_size_alpha: float = 1.849
+    order_size_max: int = 50_000        # 防止幂律抽出荒唐的数
+    # 非做市商限价单的存活时间也是幂律。L2 快照没有订单号，这一项量不出来，
+    # 用文献值：指数 1.3–1.6，取中间。
+    order_life_alpha: float = 1.45
     # 机器人配比。做市商单独一个，其余三类按这个比例瓜分订单流。
     mix_noise: float = 0.55
     mix_value: float = 0.30
@@ -149,10 +215,6 @@ class MarketConfig:
     # 做市商挂的量占目标剖面的比例。其余深度由其他机器人的挂单自然堆出来。
     # 实测其他机器人在最优档能堆出三成多、深档一成左右，所以这里不到 1。
     mm_fill_ratio: float = 0.98
-    # 每档挂单量的离散度（对数正态的 sigma）。不加这个，每一档永远是同一个数，
-    # 盘口看起来像画上去的。由标定档案按 ln(p75/p25)/1.349 算出来，
-    # 下面这个默认值只在没有档案时兜底。
-    depth_dispersion: float = 0.684
     mm_requote_sec: float = 0.5
     # 做市商每次醒来有多大概率重抽一次价差。价差有粘性——真实市场的价差是
     # 成片的，不是每秒随机跳。这个概率只影响价差的持续时间，不影响它的分布。
@@ -187,8 +249,12 @@ class MarketConfig:
     # 量出来的：开盘 2.22 倍、午后最淡 0.51 倍、收盘前 1.77 倍。
     # 没有这条曲线，「在量大的时候多做」这一课既练不到也测不出来——
     # 那是做大单最核心的一课。
+    # 最后一格 3.65 倍是因为**含收盘集合竞价**（NVDA 那一笔占全天 28%）。
+    # 不扣掉是有意的：正常 VWAP 交易本来就是开盘收盘量大、中间量少，
+    # 收盘竞价是那条曲线的一部分。代价是本引擎只有连续竞价，
+    # 那一格的量被摊成连续流量——已知简化，v3 补集合竞价机制时再改。
     intraday_profile: list[float] = field(default_factory=lambda: [
-        2.22, 1.35, 1.08, 0.94, 0.75, 0.67, 0.64, 0.60, 0.51, 0.62, 0.72, 1.13, 1.77,
+        1.76, 1.16, 1.01, 0.76, 0.72, 0.54, 0.49, 0.44, 0.38, 0.56, 0.61, 0.91, 3.65,
     ])
     # 这一局从开盘后第几秒开始。默认 09:30 开盘后 1 小时 = 10:30。
     session_start_sec: float = 3600.0
@@ -207,9 +273,15 @@ class MarketConfig:
     # NVDA 日波动 2.47%、日成交 7080 万股，代进去 100 万股约 15bp。
     # 注意这两个数跟市场规模绑死：v1 的市场只有真实的十一分之一，当时标的是
     # 8e-9；现在成交量对上真实值了，同样的股数当然推不动那么多。
+    # 临时那块用 Bouchaud 传播子：每笔成交推一个线性的量，然后按**幂律**衰减。
+    # 为什么不是指数衰减：线性冲击 + 幂律衰减在数学上正好能复现
+    # 「元订单的总冲击 ∝ 参与率的平方根」这条经验规律，也就是 JP Morgan
+    # 《Get Real》里的 M ~ αP^β（β<1，凹的）。指数衰减做不出这个凹性，
+    # 会把慢慢做的成本算得跟一把打出去差不多。
     impact_perm_per_share: float = 1.5e-9    # 100 万股 → 约 15bp 永久推动
-    impact_temp_per_share: float = 5e-9      # 20 万股一把打 → 约 10bp 临时推开
-    impact_half_life_sec: float = 60.0       # 临时部分的半衰期
+    impact_temp_per_share: float = 5e-9
+    impact_decay_exponent: float = 0.5       # 传播子 G(t) ~ t^-0.5
+    impact_decay_scale_sec: float = 30.0     # 衰减的时间尺度
 
     # ── 信息泄露：把大单明晃晃挂在盘口上要付的代价 ──────────────────────
     # 没有这一条，第一版跑出来「全部挂在买一等着」几乎零成本、稳赢，
@@ -250,11 +322,10 @@ class MarketConfig:
             sigma_per_sec=float(prof.get("sigma_per_sec", 0.00016117)),
             jumps_per_day=float(prof.get("jumps_per_day", 17.5)),
             jump_abs_median_bp=float(prof.get("jump_abs_median_bp", 12.89)),
-            order_events_per_sec=float(prof.get("order_events_per_sec", 49.9)),
-            order_size_median=float(prof.get("order_size_median", 47.5)),
-            order_size_p90=float(prof.get("order_size_p90", 207.5)),
-            order_size_p99=float(prof.get("order_size_p99", 738.0)),
-            depth_dispersion=float(prof.get("depth_dispersion") or 0.684),
+            order_size_median=float(prof.get("order_size_median", 69.0)),
+            order_size_alpha=float(prof.get("order_size_tail_alpha") or 1.849),
+            depth_gamma=[(float(g["shape"]), float(g["scale"]))
+                         for g in (prof.get("depth_gamma") or [])] or None,
         )
         # kappa 故意不从档案里取，理由见上面 kappa 字段的注释。
         # 成交量档案是另一个脚本（calibrate_volume.py）从 1 分钟 K 线量的，
@@ -267,13 +338,8 @@ class MarketConfig:
                 kw["intraday_profile"] = [float(x) for x in prof]
             vps = vp.get("volume_per_sec_median")
             if vps:
-                # 吃单流对着真实成交量倒推：每秒要成交这么多股，
-                # 一张单平均这么大，那就需要每秒这么多张吃单。
-                avg = _mean_order_size(
-                    kw.get("order_size_median") or 47.5,
-                    kw.get("order_size_p90") or 207.5,
-                    kw.get("order_size_p99") or 738.0)
-                kw["taker_events_per_sec"] = float(vps) / max(avg, 1.0)
+                # 每秒要成交多少股，直接进配置；吃单流频率由引擎除以平均单量得出
+                kw["target_volume_per_sec"] = float(vps)
         kw = {k: v for k, v in kw.items() if v is not None}
         kw.update(overrides)
         return cls(**kw)
@@ -314,12 +380,16 @@ class SyntheticMarket:
             jump_rate_per_sec=cfg.jumps_per_day / (6.5 * 3600),
             jump_size=cfg.jump_abs_median_bp / 1e4,
             rng=random.Random(cfg.seed + 1),
+            vol_of_vol=cfg.vol_of_vol,
+            vol_revert_sec=cfg.vol_revert_sec,
         )
 
-        # 订单大小：对数正态，中位数和 p90 对上标定值
-        mu = math.log(max(cfg.order_size_median, 1.0))
-        sigma = (math.log(max(cfg.order_size_p90, 2.0)) - mu) / 1.2816
-        self._size_mu, self._size_sigma = mu, max(sigma, 0.05)
+        # 订单大小：幂律。中位数对上标定值，尾指数用标定的。
+        self._size_xmin = _pareto_xmin(cfg.order_size_median, cfg.order_size_alpha)
+        self._mean_size = _mean_order_size(cfg.order_size_median, cfg.order_size_alpha,
+                                           cfg.order_size_max)
+        # 吃单流频率 = 每秒要成交的股数 ÷ 平均单量。这个数不再是拍的。
+        self._taker_rate = max(cfg.target_volume_per_sec / max(self._mean_size, 1.0), 0.1)
 
         self.mm = MarketMaker(self, cfg)
         self._expiry: list[tuple[float, int]] = []      # (到期时间, 单号)
@@ -328,9 +398,20 @@ class SyntheticMarket:
         self._mom_prices: list[float] = []
         self._fund_t = 0.0
         self.inventory: dict[str, int] = {"player": 0}
-        # 玩家造成的临时冲击，会随时间衰减回 0
-        self._impact = 0.0
-        self._impact_decay = math.log(2) / max(cfg.impact_half_life_sec, 1e-6)
+        # 玩家造成的临时冲击。用 4 条不同时间尺度的指数叠加来近似
+        # G(t) ~ t^-0.5 的幂律衰减（Bouchaud 传播子）。
+        # 为什么要这么费劲：线性冲击 + 幂律衰减在数学上正好复现
+        # 「元订单总冲击 ∝ 参与率的平方根」这条经验规律，也就是 JP Morgan
+        # 《Get Real》里的 M ~ αP^β（β<1，凹的）。单条指数衰减做不出这个凹性，
+        # 会把「慢慢做」的成本算得跟「一把打出去」差不多，那就把最该练的
+        # 取舍抹平了。
+        taus = [5.0, 30.0, 180.0, 1080.0]
+        g = cfg.impact_decay_exponent
+        w = [t ** (-g) for t in taus]
+        tot = sum(w) or 1.0
+        self._imp_tau = taus
+        self._imp_w = [x / tot for x in w]
+        self._imp = [0.0] * len(taus)
 
         self._bootstrap()
 
@@ -365,28 +446,37 @@ class SyntheticMarket:
 
         三股流都按当前时段的活跃度缩放，所以开盘和收盘前市场真的更忙。
         """
-        base = {"taker": self.cfg.taker_events_per_sec,
+        base = {"taker": self._taker_rate,
                 "maker": self.cfg.maker_events_per_sec,
                 "inst": self.cfg.inst_events_per_sec}[kind]
         return self.rng.expovariate(max(base * self.flow_mult(), 1e-6))
 
     def _draw_size(self) -> int:
-        """大部分是对数正态的小单，百分之一是大单。
+        """订单大小服从幂律（截断 Pareto）。
 
-        两段式是有意的：只用对数正态的话，尾巴对不上标定的 p99，玩家永远
-        碰不到「一张大单把前几档扫掉」的场面——而那正是做大单的人最需要
-        练的一课（自己的单子被别人的大单顶走是什么感觉）。
+        用幂律不是为了好看：对数正态的尾巴太薄，玩家永远碰不到
+        「一张大单把前几档扫掉」的场面，而那正是做大单最该练的一课。
+        JP Morgan《Get Real》把订单大小的幂律列为订单流类的必查项。
         """
-        if self.rng.random() < self.cfg.big_order_prob:
-            return max(1, int(self.cfg.order_size_p99 * self.rng.uniform(0.6, 1.6)))
-        return max(1, int(round(self.rng.lognormvariate(self._size_mu, self._size_sigma))))
+        u = self.rng.random()
+        x = self._size_xmin * (1.0 - u) ** (-1.0 / self.cfg.order_size_alpha)
+        return max(1, min(int(x), self.cfg.order_size_max))
 
     def _rest(self, oid: int | None, mean_life: float | None = None) -> None:
-        """机器人的限价单挂进簿之后，登记一个到期时间，到点自动撤。"""
+        """机器人的限价单挂进簿之后，登记一个到期时间，到点自动撤。
+
+        寿命服从幂律，不是指数分布。指数分布没有长尾——所有单子都在均值附近
+        撤掉，簿的「记忆」是假的。真实市场里绝大多数单子几秒内就撤，
+        但少数会挂很久，正是那些长寿的单子构成了深档的稳定厚度。
+        L2 快照量不出这一项（没有订单号），指数用文献值 1.3–1.6。
+        """
         if oid is None:
             return
         m = self.cfg.order_life_sec if mean_life is None else mean_life
-        heapq.heappush(self._expiry, (self.t + self.rng.expovariate(1.0 / max(m, 0.1)), oid))
+        a = max(self.cfg.order_life_alpha, 1.05)
+        xm = max(m * (a - 1.0) / a, 0.05)          # 由均值反解下界
+        life = xm * (1.0 - self.rng.random()) ** (-1.0 / a)
+        heapq.heappush(self._expiry, (self.t + min(life, 3600.0), oid))
 
     def _expire(self, until: float) -> None:
         while self._expiry and self._expiry[0][0] <= until:
@@ -422,8 +512,9 @@ class SyntheticMarket:
         self._advance_fundamental(target)
         self.t = target
         self._expire(target)
-        # 临时冲击按半衰期衰减回去
-        self._impact *= math.exp(-self._impact_decay * dt)
+        # 临时冲击：每条时间尺度各自衰减，加起来就是幂律形状
+        for k, tau in enumerate(self._imp_tau):
+            self._imp[k] *= math.exp(-dt / tau)
         self._record_mid()
         new = self.book.trades[start_trades:]
         self._apply_fills(new)
@@ -448,11 +539,13 @@ class SyntheticMarket:
                 self.inventory["player"] += tr.qty * tr.taker_side
                 signed = tr.qty * tr.taker_side
                 self.fundamental.price *= (1.0 + self.cfg.impact_perm_per_share * signed)
-                self._impact += self.cfg.impact_temp_per_share * signed
+                add = self.cfg.impact_temp_per_share * signed
+                for k, wk in enumerate(self._imp_w):
+                    self._imp[k] += add * wk
 
     def fair_ticks(self) -> float:
         """做市商眼里的公允价：真实价值 + 玩家推开的那部分。"""
-        return self.fundamental.price * (1.0 + self._impact) / self.cfg.tick
+        return self.fundamental.price * (1.0 + sum(self._imp)) / self.cfg.tick
 
     def _reprice_bots(self, best_bid: int, best_ask: int) -> None:
         """把机器人挂在做市商报价里面的旧单撤掉。玩家的单子不碰。"""
@@ -612,6 +705,22 @@ class MarketMaker:
         # 梯子的每一级：(离最优价几个 tick, 买边挂多少, 卖边挂多少)
         self._rungs: list[tuple[int, int, int]] = []
         self._profile = list(cfg.depth_profile)
+        # 每档深度按 Gamma 抽（JP Morgan《Get Real》：盘口各档深度服从 Gamma）。
+        # 直接用实测的 (shape, scale) 抽出来的中位数不等于实测中位数，
+        # 所以先数值求一次 Gamma 的中位数，再乘一个系数把中位数拉到目标上——
+        # 这样「离散程度」用实测的，「中位数」也用实测的，两个都不将就。
+        self._gamma: list[tuple[float, float]] = []
+        rng0 = random.Random(cfg.seed + 77)
+        for i, target in enumerate(self._profile):
+            if i < len(cfg.depth_gamma):
+                shape, scale = cfg.depth_gamma[i]
+            else:
+                shape, scale = cfg.depth_gamma[-1] if cfg.depth_gamma else (1.0, target)
+            shape = max(float(shape), 0.05)
+            scale = max(float(scale), 1.0)
+            sample = sorted(rng0.gammavariate(shape, scale) for _ in range(1500))
+            gmed = sample[len(sample) // 2] or 1.0
+            self._gamma.append((shape, scale * target / gmed))
 
     def _draw_spread(self) -> int:
         """按标定的价差分布抽一个价差（单位：tick）。"""
@@ -671,17 +780,22 @@ class MarketMaker:
         隔几个 tick 才挂一笔、一笔顶几档的量：它存在的唯一目的是让簿不会被
         一张离谱的大单打空，形状对不对无所谓，而每档都挂会让整个模拟慢一倍。
         """
-        def q(target: float) -> int:
-            return max(1, int(target * math.exp(self.m.rng.gauss(0.0, self.cfg.depth_dispersion))))
+        f = self.cfg.mm_fill_ratio
+
+        def q(i: int) -> int:
+            shape, scale = self._gamma[i]
+            return max(1, int(self.m.rng.gammavariate(shape, scale * f)))
 
         rungs = []
-        for i, target in enumerate(self._profile):
-            base = target * self.cfg.mm_fill_ratio
-            rungs.append((i, q(base), q(base)))
-        deep = self._profile[-1] * self.cfg.mm_fill_ratio * self.cfg.mm_tail_stride
-        start = len(self._profile)
-        for off in range(start, start + self.cfg.mm_tail_levels, self.cfg.mm_tail_stride):
-            rungs.append((off, q(deep), q(deep)))
+        for i in range(len(self._profile)):
+            rungs.append((i, q(i), q(i)))
+        # 深水区：外推段，用最后一档的分布、一笔顶几档的量
+        last = len(self._profile) - 1
+        shape, scale = self._gamma[last]
+        for off in range(last + 1, last + 1 + self.cfg.mm_tail_levels, self.cfg.mm_tail_stride):
+            deep = lambda: max(1, int(self.m.rng.gammavariate(
+                shape, scale * f * self.cfg.mm_tail_stride)))
+            rungs.append((off, deep(), deep()))
         return rungs
 
     def requote(self) -> None:

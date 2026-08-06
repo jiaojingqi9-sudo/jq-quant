@@ -24,9 +24,10 @@ _START_TIMES = {
     "15:00 收盘前": 5.5 * 3600,
 }
 
-# NVDA 盘中每秒成交多少股（5 个交易日的 1 分钟 K 线中位数）。
+# NVDA 盘中每秒成交多少股。官方日线口径：日均 1.345 亿股 ÷ 6.5 小时。
 # 有成交量档案时用档案里的值，这里只是兜底。
-_BASE_VPS = 3027.0
+_BASE_VPS = 5749.0
+_DAILY_SHARES = 134_516_746
 
 
 def _base_vps() -> float:
@@ -68,7 +69,8 @@ def _pov_note(pov: float, shares: int) -> str:
     else:
         tag, why = "🔴 很难", "占市场成交超过 12%，怎么做都会推动价格"
     return (f"**预计参与率 {pov*100:.1f}%　{tag}**　—— {why}。\n\n"
-            f"参考：NVDA 一天成交约 7080 万股，这笔单是全天的 {shares/70_835_705*100:.2f}%。")
+            f"参考：NVDA 一天成交约 {_DAILY_SHARES/1e8:.2f} 亿股（官方日线中位数），"
+            f"这笔单是全天的 {shares/_DAILY_SHARES*100:.2f}%。")
 
 
 
@@ -348,10 +350,9 @@ def _render_report(sess: Session) -> None:
         st.warning(n)
 
     st.caption(
-        "分数线是拿几种基准打法各跑 6 个随机日量出来的（买 100 万股 / 1 小时 / 10:30 开始，"
-        "约 9% 参与率）：每回合等额打市价 9.9bp；等额挂单不追 7.2bp；"
-        "只露小块 + 补市价 9.9bp；挂单为主 + 落后补市价 2.4bp。"
-        "任务量小的时候这些数会全线下移——参与率才是难度的真正来源。")
+        "分数线是拿几种基准打法各跑多个随机日量出来的。注意 v3 把价差改成了"
+        "整手口径（中位 3 tick，不是被碎股压窄的 1 tick），同样的打法比 v2 要贵 5bp 左右——"
+        "那 5bp 原来是送的。任务量小的时候分数会全线下移，参与率才是难度的真正来源。")
 
     if st.button("再来一局", type="primary"):
         for k in (STATE, STATE + "_scored", "et_qty", "et_depth", "et_fast", "et_show"):
