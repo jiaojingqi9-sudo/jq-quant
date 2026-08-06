@@ -19,13 +19,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path.home() / "All here" / "trade"
-LOCKS = [
-    ".git/index.lock",
-    ".git/packed-refs.lock",
-    ".git/refs/remotes/origin/HEAD.lock",
-    ".git/refs/remotes/origin/main.lock",
-]
+ALL = Path.home() / "All here"
+REPO = ALL / "trade"
+# 三个都要扫：沙箱那个 Linux VM 只要跑过 git（哪怕只是 status），
+# 就会在 .git 里留一个删不掉的 index.lock，下一次真正的 git 写操作就被卡住。
+REPOS = [ALL / "trade", ALL / "news collector", ALL / ".jq_quant_repo"]
 
 
 def git(*args, timeout=180):
@@ -37,22 +35,17 @@ def git(*args, timeout=180):
 def main():
     out = {"kind": "gitclean", "removed": [], "kept": []}
 
-    # 1) 清锁。也扫一遍 .git 下所有 .lock，免得漏
-    for rel in LOCKS:
-        p = REPO / rel
-        if p.exists():
+    # 1) 三个仓库的 .git 下所有 .lock 全清
+    for repo in REPOS:
+        g = repo / ".git"
+        if not g.exists():
+            continue
+        for p in list(g.rglob("*.lock")):
             try:
                 p.unlink()
-                out["removed"].append(rel)
+                out["removed"].append(f"{repo.name}/{p.relative_to(g)}")
             except OSError as exc:
-                out["kept"].append(f"{rel}: {exc}")
-    for p in (REPO / ".git").rglob("*.lock"):
-        try:
-            rel = str(p.relative_to(REPO))
-            p.unlink()
-            out["removed"].append(rel)
-        except OSError as exc:
-            out["kept"].append(f"{p}: {exc}")
+                out["kept"].append(f"{repo.name}/{p.relative_to(g)}: {exc}")
 
     # 2) 去掉误加的 origin
     rc, so, _ = git("remote")
@@ -75,9 +68,19 @@ def main():
     rc, so, _ = git("branch", "-v")
     out["branches"] = so.splitlines()
     # fsck 只看有没有明显损坏，慢就跳过
-    rc, so, se = git("fsck", "--no-progress", "--connectivity-only", timeout=300)
-    out["fsck_rc"] = rc
-    out["fsck_out"] = ((so or "") + (se or ""))[-300:] or "(干净)"
+    # 各仓库工作区是否干净——subtree pull 要求全干净才肯动
+    out["repos"] = {}
+    for repo in REPOS:
+        if not (repo / ".git").exists():
+            continue
+        r = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+                           capture_output=True, text=True, timeout=120)
+        r2 = subprocess.run(["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
+                            capture_output=True, text=True, timeout=60)
+        out["repos"][repo.name] = {
+            "branch": (r2.stdout or "").strip(),
+            "dirty": len([x for x in (r.stdout or "").splitlines() if x.strip()]),
+        }
 
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0
