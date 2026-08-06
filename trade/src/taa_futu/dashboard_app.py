@@ -3632,6 +3632,26 @@ def render_live_monitor(settings) -> None:
             "cascade":  _cur_cw,
             "reserve":  _cur_rw,
         }
+        # 顺手记一行当日对账快照（当天记过就跳过）。放这儿是因为 account /
+        # projection / reconciliation 三样这里都已经在手，不用多连一次券商、
+        # 也不用为此养一个常驻定时任务。
+        # 它要防的是这种事：2026-08-06 查出账本推算现金比券商少 10,196.67，
+        # 持仓分文不差、成交一笔没漏，差额却横跨 4 个月 5624 笔成交，定位不到
+        # 是哪天长出来的。逐日记一行，差额哪天动了就看得见。
+        from taa_futu.demo_gateway import demo_enabled as _demo_enabled
+        if not _demo_enabled():
+            try:
+                from taa_futu.stock_reconciliation_log import maybe_record_daily_snapshot
+                maybe_record_daily_snapshot(
+                    account=account.to_dict() if hasattr(account, "to_dict") else dict(account),
+                    projection=stock_ledger_projection,
+                    epoch=stock_ledger_epoch,
+                    reconciliation=stock_ledger_reconciliation,
+                )
+            except Exception:
+                # 记账快照是旁路观测，坏了也绝不能挡住交易页
+                pass
+
         doctor_report = run_stock_system_doctor(current_settings, reconciliation=stock_ledger_reconciliation)
         doctor_findings = [item for item in doctor_report.findings if item.status in {"warn", "fail"}]
         # 演示模式下体检必然失败：它查的是本机运行时文件（成交流水、账本 epoch、
