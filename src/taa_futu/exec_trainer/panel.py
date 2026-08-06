@@ -83,15 +83,15 @@ def _fmt_secs(s: float) -> str:
 def _ladder_html(board: dict, levels: int) -> str:
     """价格阶梯。自己的挂单单独标出来，一眼看得到排在哪一档。"""
     rows = []
-    for px, qty, mine, others in reversed(board["ask"][:levels]):
-        rows.append(("ask", px, qty, mine, others))
-    rows.append(("spread", None, None, None, None))
-    for px, qty, mine, others in board["bid"][:levels]:
-        rows.append(("bid", px, qty, mine, others))
+    for px, qty, mine, others, tot in reversed(board["ask"][:levels]):
+        rows.append(("ask", px, qty, mine, others, tot))
+    rows.append(("spread", None, None, None, None, None))
+    for px, qty, mine, others, tot in board["bid"][:levels]:
+        rows.append(("bid", px, qty, mine, others, tot))
 
     maxq = max([r[2] for r in rows if r[2]] or [1])
     out = ['<table class="jq-ladder">']
-    for kind, px, qty, mine, others in rows:
+    for kind, px, qty, mine, others, tot in rows:
         if kind == "spread":
             sp = board["spread_ticks"]
             mid = board["mid"]
@@ -100,7 +100,13 @@ def _ladder_html(board: dict, levels: int) -> str:
                 if mid else '<tr class="mid"><td colspan="3">盘口空了</td></tr>')
             continue
         w = int(100 * others / maxq)
-        tag = f'<span class="mine">我 {mine:,}</span>' if mine else ""
+        # 藏起来的部分单独标出来：「我 200 ＋藏 24,800」
+        if mine and tot and tot > mine:
+            tag = f'<span class="mine">我 {mine:,}＋藏 {tot - mine:,}</span>'
+        elif mine:
+            tag = f'<span class="mine">我 {mine:,}</span>'
+        else:
+            tag = ""
         out.append(
             f'<tr class="{kind}">'
             f'<td class="px">{px:.2f}</td>'
@@ -124,7 +130,7 @@ _CSS = """
 .jq-ladder tr.bid .bar div{background:#2e9e5b}
 .jq-ladder tr.mid td{text-align:center;font-size:12px;opacity:.75;padding:6px 0;
   border-top:1px solid rgba(128,128,128,.45);border-bottom:1px solid rgba(128,128,128,.45)}
-.jq-ladder .me{width:88px;text-align:right}
+.jq-ladder .me{width:132px;text-align:right}
 .jq-ladder .mine{background:#f5b12e;color:#111;border-radius:3px;padding:1px 5px;font-size:11px;font-weight:700}
 .jq-ladder tr.hdr td{font-size:11px;opacity:.6;font-weight:600}
 .jq-ladder .q-bad{color:#e05252;font-weight:700}
@@ -350,9 +356,10 @@ def _render_report(sess: Session) -> None:
         st.warning(n)
 
     st.caption(
-        "分数线是拿几种基准打法各跑多个随机日量出来的。注意 v3 把价差改成了"
-        "整手口径（中位 3 tick，不是被碎股压窄的 1 tick），同样的打法比 v2 要贵 5bp 左右——"
-        "那 5bp 原来是送的。任务量小的时候分数会全线下移，参与率才是难度的真正来源。")
+        "分数线是拿几种基准打法各跑 6 个随机日量出来的（买 100 万股 / 1 小时 / 10:30 开始，"
+        "约 9% 参与率）：每回合等额打市价 9.9bp；等额挂单不追 7.2bp；"
+        "只露小块 + 补市价 9.9bp；挂单为主 + 落后补市价 2.4bp。"
+        "任务量小的时候这些数会全线下移——参与率才是难度的真正来源。")
 
     if st.button("再来一局", type="primary"):
         for k in (STATE, STATE + "_scored", "et_qty", "et_depth", "et_fast", "et_show"):

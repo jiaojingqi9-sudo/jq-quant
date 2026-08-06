@@ -162,16 +162,22 @@ class Session:
     def board(self, levels: int = 10) -> dict:
         """价格阶梯要显示的东西。自己挂在哪一档也标出来。"""
         tick = self.market.cfg.tick
-        mine: dict[int, int] = {}
+        # 阶梯上要分开两个数：我在这一档「露出多少」和「一共挂了多少」。
+        # 只报总量的话会出现「这一档显示 567 股，标签却写我 25,000」——
+        # 因为我用的是冰山单，露出去的只有 200。盘口那一列是市场看得见的量，
+        # 标签必须跟它同口径，否则自己都看不懂。
+        shown: dict[int, int] = {}
+        total: dict[int, int] = {}
         for oid, (px, _) in self.open_orders.items():
             o = self.market.book._index.get(oid)
             if o is not None:
-                mine[px] = mine.get(px, 0) + o.qty
-        b = [(self.market.book.to_price(p), q, mine.get(p, 0),
-              self.market.book.level_qty(BUY, p) - mine.get(p, 0))
+                shown[px] = shown.get(px, 0) + min(o.qty, o.display)
+                total[px] = total.get(px, 0) + o.qty
+        b = [(self.market.book.to_price(p), q, shown.get(p, 0),
+              q - shown.get(p, 0), total.get(p, 0))
              for p, q in self.market.book.depth(BUY, levels)]
-        a = [(self.market.book.to_price(p), q, mine.get(p, 0),
-              self.market.book.level_qty(SELL, p) - mine.get(p, 0))
+        a = [(self.market.book.to_price(p), q, shown.get(p, 0),
+              q - shown.get(p, 0), total.get(p, 0))
              for p, q in self.market.book.depth(SELL, levels)]
         return {
             "bid": b, "ask": a,
