@@ -9,7 +9,7 @@ instrument-mapped signals — wrapped in one desktop application.
 > switches. In demo mode every order path raises by design: it does not route to
 > a fake account, it refuses to be called at all.
 
-![python](https://img.shields.io/badge/python-3.11-blue)
+![python](https://img.shields.io/badge/python-3.11%20%E2%80%93%203.13-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![status](https://img.shields.io/badge/trading-simulation--first-orange)
 
@@ -26,7 +26,6 @@ instrument-mapped signals — wrapped in one desktop application.
 | [`trade/`](trade/) | **Start here.** The trading system: four equity sleeves, two crypto sleeves, a screener, and a Streamlit control terminal. Full write-up in [`trade/README.en.md`](trade/README.en.md); architecture in [`trade/ARCHITECTURE.md`](trade/ARCHITECTURE.md). |
 | [`news-collector/`](news-collector/) | Market-news pipeline: collect → normalize → deduplicate → cluster → impact-score → instrument-map → rank → persist → push. Every capability sits behind a stable port, so no single data source is baked into the core. |
 | [`watcher/`](watcher/) | Background file-queue service that runs read-only diagnostics and maintenance jobs on the host. Personal ops tooling. |
-| [`skills/`](skills/) | Futu OpenAPI helper scripts, alongside Futu's own API reference and disclaimer documents (third-party material, authored by the Futu team). |
 
 ## The trading system at a glance
 
@@ -52,33 +51,78 @@ proposes reversible candidate changes, gates promotion, and exports a SHA-256-st
 review packet. Live auto-promotion is deliberately disabled: the loop proposes, a
 human approves.
 
+**Execution trainer** — a synthetic limit-order-book market to practise working
+large orders in. Spread distribution, 20-level depth, traded volume, the intraday
+volume curve and volatility clustering are all calibrated from order-book data
+this repo's own logger collected, and checked against JP Morgan AI Research,
+*Get Real: Realism Metrics for Robust Limit Order Book Market Simulations*
+(arXiv 1912.04941). Scoring runs a **shadow market** — same seed, same window,
+player absent — so market drift cancels out and only the participant's own
+footprint (impact and information leakage) remains. Writeup:
+[`trade/src/taa_futu/exec_trainer/README.md`](trade/src/taa_futu/exec_trainer/README.md).
+
 ## Engineering highlights (for reviewers)
 
 - `src/` layout, `uv.lock`-pinned dependencies, frozen-dataclass configuration
   validated at load time.
-- 453 test functions across 38 files in `trade/tests/`, plus 86 across 20 files in
+- 461 test functions across 39 files in `trade/tests/`, plus 86 across 20 files in
   `news-collector/tests/` — all offline, no broker or network connection required.
 - Event sourcing, double-entry bookkeeping and a tamper-evident hash chain:
   institutional accounting ideas applied to a personal account.
 - Emergency cancellation is a standalone double-click script that does not depend on
   the app starting.
-- Six-screen desktop UI; screenshots in
+- Seven-screen desktop UI; screenshots in
   [`trade/docs/screenshots/`](trade/docs/screenshots/).
 
 ## Run it without a broker account
 
 Demo mode drives the whole interface from synthetic data — five public ETFs,
 fictional news events and obviously fake account numbers — so the entire app can be
-clicked through with no Futu install and no account. See the demo-mode section of
-[`trade/README.en.md`](trade/README.en.md).
+clicked through with no Futu install and no account. Every order path raises by
+design; it does not route to a fake account, it refuses to be called.
+
+**Python must be 3.11, 3.12 or 3.13** (`requires-python = ">=3.11,<3.14"`).
+
+macOS / Linux:
 
 ```bash
-cd trade
-uv venv --python 3.11 .venv
-uv pip install -p .venv/bin/python -e .[dev]
-cp .env.example .env          # SIMULATE by default
-.venv/bin/pytest tests/ -q    # offline
+git clone https://github.com/jiaojingqi9-sudo/jq-quant.git
+cd jq-quant/trade
+
+python3 -m venv .venv
+.venv/bin/pip install -e .
+
+JQ_DEMO=1 JQ_NEWS_ROOT="$PWD/demo_data/news" \
+  .venv/bin/python -m streamlit run src/taa_futu/dashboard_app.py
 ```
+
+Windows (cmd) — executables live in `.venv\Scripts\`, and environment variables
+cannot be prefixed to the command:
+
+```bat
+git clone https://github.com/jiaojingqi9-sudo/jq-quant.git
+cd jq-quant\trade
+
+python -m venv .venv
+.venv\Scripts\pip install -e .
+
+set JQ_DEMO=1
+set JQ_NEWS_ROOT=%CD%\demo_data\news
+.venv\Scripts\python -m streamlit run src\taa_futu\dashboard_app.py
+```
+
+Then open <http://localhost:8501>. Land directly on one screen with `?view=stock`,
+`?view=news`, `?view=exec_trainer`, and so on.
+
+Tests run fully offline, no broker and no network:
+
+```bash
+.venv/bin/python -m pytest -q      # 461 tests, ~27 min (the stock page renders end-to-end)
+```
+
+Longer setup notes, a synthetic-vs-real table and a troubleshooting section are in
+[`trade/README.md`](trade/README.md) (Chinese) and
+[`trade/README.en.md`](trade/README.en.md) (English).
 
 ## Safety boundaries
 

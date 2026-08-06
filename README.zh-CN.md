@@ -6,10 +6,9 @@ Jiao 的量化交易与市场新闻系统。
 
 | 目录 | 作用 |
 |------|------|
-| `trade/` | 交易主系统：股票（TAA/Fusion/OFIM/Cascade 四 sleeve）、加密（Binance 现货+永续）、选股器、Streamlit 控制终端 |
+| `trade/` | 交易主系统：股票（TAA/Fusion/OFIM/Cascade 四 sleeve）、加密（Binance 现货+永续）、选股器、下单练习台（合成盘口，练大单执行）、Streamlit 控制终端 |
 | `news-collector/` | 市场新闻采集与分析：采集 → 去重 → 聚类 → 规则打分 → AI 筛选 → 标的映射 → 手机推送 |
 | `watcher/` | 后台文件队列服务（"邮差"）：读取任务文件、在本机执行只读诊断与运维脚本 |
-| `skills/` | 富途行情/异动分析脚本 |
 
 ## 模型后端
 
