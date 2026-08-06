@@ -21,6 +21,10 @@ WATCHDOG_STATUS_FILE = RUNTIME_DIR / "watchdog_status.json"
 
 STATUS_RANK = {"ok": 0, "info": 1, "warn": 2, "fail": 3}
 
+# `taa-futu stock-system-reset` 写 Epoch 与分账起点时用的 reason。
+# 两份文件都带这个 reason，才说明它们本该是同一次设置的。
+RESET_REASON = "manual_stock_system_epoch"
+
 
 def _fix(subcommand: str, *, exe: str | None = None, on_windows: bool | None = None) -> str:
     """把修复命令写成当前这台机器能直接粘贴运行的样子。
@@ -196,18 +200,43 @@ def run_stock_system_doctor(
         split_dt = _parse_ts(split_ts)
         if epoch_dt and split_dt:
             drift_seconds = abs((epoch_dt - split_dt).total_seconds())
-            if drift_seconds > 120:
+            epoch_reason = str((epoch or {}).get("reason") or "")
+            split_reason = str((split_state or {}).get("reason") or "")
+            # 只有两份都出自 stock-system-reset 时，时间不一致才说明出了问题。
+            # 账本起点被有意回溯（reason=broker_history_rebuild 之类）是常见做法：
+            # 让账本覆盖账户真实开始以来的全部历史，而分账实验从另一天起算。
+            # 以前这里只比时间差，把这种刻意设置报成 warn，等于逼人跑
+            # stock-system-reset 去迎合检查——而那会把账本起点改成今天，
+            # 之前的期间归因起点就没了。拿真数据迁就规则，方向反了。
+            both_from_reset = (epoch_reason.startswith(RESET_REASON)
+                               and split_reason.startswith(RESET_REASON))
+            if drift_seconds <= 120:
+                findings.append(StockDoctorFinding("system_epoch", "ok", "股票事件账本和四策略分账起点已同步。"))
+            elif both_from_reset:
                 findings.append(
                     StockDoctorFinding(
                         "system_epoch",
                         "warn",
                         "股票事件账本和四策略分账起点不是同一次设置。",
-                        f"两个起点相差约 {int(drift_seconds)} 秒，容易出现账本各算各的。",
+                        f"两份都是 stock-system-reset 写的，却相差约 {int(drift_seconds)} 秒，"
+                        "说明其中一份后来被单独改过，容易出现账本各算各的。",
                         _fix("stock-system-reset"),
                     )
                 )
             else:
-                findings.append(StockDoctorFinding("system_epoch", "ok", "股票事件账本和四策略分账起点已同步。"))
+                findings.append(
+                    StockDoctorFinding(
+                        "system_epoch",
+                        "info",
+                        "账本起点与分账起点是分别设置的，时间不同属正常。",
+                        f"账本起点 {epoch_dt.date()}（reason={epoch_reason or '未写'}），"
+                        f"分账起点 {split_dt.date()}（reason={split_reason or '未写'}）。"
+                        "账本起点回溯到账户真实开始那天，账本才覆盖全部历史；"
+                        "分账实验从另一天起算。两者不必相同。"
+                        "真要统一，跑 stock-system-reset——代价是账本起点被改成今天，"
+                        "之前的期间归因起点丢失。",
+                    )
+                )
 
     if split_state:
         try:

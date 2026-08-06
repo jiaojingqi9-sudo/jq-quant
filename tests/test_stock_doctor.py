@@ -230,3 +230,82 @@ def test_fix_command_falls_back_per_platform(tmp_path) -> None:
     """解释器旁边没有 taa-futu 时按平台给默认值。"""
     assert stock_doctor._fix("x", exe=str(tmp_path / "python.exe"), on_windows=True) == ".venv\\Scripts\\taa-futu x"
     assert stock_doctor._fix("x", exe=str(tmp_path / "python"), on_windows=False) == ".venv/bin/taa-futu x"
+
+
+# ── 两个起点的时间差 ───────────────────────────────────────────────────────
+# 以前只比时间差：差超过 120 秒就报 warn 并让人跑 stock-system-reset。
+# 可账本起点被有意回溯是常见做法（reason=broker_history_rebuild：让账本覆盖
+# 账户真实开始以来的全部历史），分账实验从另一天起算。按旧规则，那份刻意
+# 设置会一直挂着黄牌，而「修复」它要把账本起点改成今天、丢掉之前的归因起点。
+
+
+def _write_pair(tmp_path, epoch_ts, epoch_reason, split_ts, split_reason):
+    epoch = tmp_path / "stock_ledger_epoch.json"
+    split = tmp_path / "strategy_split_state.json"
+    epoch.write_text(json.dumps({
+        "ts": epoch_ts.isoformat(),
+        "reason": epoch_reason,
+        "account_snapshot": {"total_assets": 1_000_000.0, "cash": 1_000_000.0,
+                             "market_val": 0.0, "position_count": 0, "positions": []},
+        "fills_count_at_reset": 0,
+    }), encoding="utf-8")
+    split.write_text(json.dumps({
+        "reset_at": split_ts.isoformat(),
+        "reason": split_reason,
+        "base_total_assets": 1_000_000.0,
+        "strategies": {name: {"weight": 0.25, "start_cash": 250_000.0}
+                       for name in ("baseline", "fusion", "ofim", "cascade")},
+    }), encoding="utf-8")
+    return epoch, split
+
+
+def _epoch_finding(tmp_path, **kwargs):
+    now = datetime(2026, 6, 2, 3, 22, tzinfo=UTC)
+    epoch, split = _write_pair(tmp_path, **kwargs)
+    report = run_stock_system_doctor(
+        _settings(),
+        now_utc=now,
+        epoch_path=epoch,
+        split_state_path=split,
+        review_packet_path=tmp_path / "packet.json",
+        auto_status_path=tmp_path / "auto.json",
+        watchdog_status_path=tmp_path / "watchdog.json",
+    )
+    return next(item for item in report.findings if item.area == "system_epoch")
+
+
+def test_backdated_epoch_is_not_reported_as_a_fault(tmp_path) -> None:
+    """账本起点回溯到 4/8、分账从 6/2 起——这是有意的，不该报 warn。"""
+    finding = _epoch_finding(
+        tmp_path,
+        epoch_ts=datetime(2026, 4, 8, tzinfo=UTC),
+        epoch_reason="broker_history_rebuild (opening cash inferred from current account)",
+        split_ts=datetime(2026, 6, 2, 3, 22, tzinfo=UTC),
+        split_reason="manual_stock_system_epoch",
+    )
+    assert finding.status == "info"
+    assert finding.fix_command == ""       # 不该怂恿人去跑不可逆的 reset
+    assert "2026-04-08" in finding.detail and "2026-06-02" in finding.detail
+
+
+def test_two_reset_written_starts_that_drifted_are_still_flagged(tmp_path) -> None:
+    """两份都出自 stock-system-reset 却对不上——那是真出了问题。"""
+    finding = _epoch_finding(
+        tmp_path,
+        epoch_ts=datetime(2026, 5, 1, tzinfo=UTC),
+        epoch_reason="manual_stock_system_epoch",
+        split_ts=datetime(2026, 6, 2, 3, 22, tzinfo=UTC),
+        split_reason="manual_stock_system_epoch",
+    )
+    assert finding.status == "warn"
+    assert finding.fix_command.endswith("taa-futu stock-system-reset")
+
+
+def test_same_moment_starts_are_ok(tmp_path) -> None:
+    moment = datetime(2026, 6, 2, 3, 22, tzinfo=UTC)
+    finding = _epoch_finding(
+        tmp_path,
+        epoch_ts=moment, epoch_reason="manual_stock_system_epoch",
+        split_ts=moment, split_reason="manual_stock_system_epoch",
+    )
+    assert finding.status == "ok"
