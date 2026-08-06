@@ -1,25 +1,94 @@
 # JQ Quant
 
-Jiao 的量化交易与市场新闻系统。
+A self-built quantitative trading and market-intelligence stack: strategy research
+and backtesting, live market monitoring, simulated order routing against a real
+broker API, and a news pipeline that turns raw headlines into ranked,
+instrument-mapped signals — wrapped in one desktop application.
 
-## 组成
+> **Simulation-first.** Real-money order paths sit behind several explicit
+> switches. In demo mode every order path raises by design: it does not route to
+> a fake account, it refuses to be called at all.
 
-| 目录 | 作用 |
-|------|------|
-| `trade/` | 交易主系统：股票（TAA/Fusion/OFIM/Cascade 四 sleeve）、加密（Binance 现货+永续）、选股器、Streamlit 控制终端 |
-| `news-collector/` | 市场新闻采集与分析：采集 → 去重 → 聚类 → 规则打分 → AI 筛选 → 标的映射 → 手机推送 |
-| `watcher/` | 后台文件队列服务（"邮差"）：读取任务文件、在本机执行只读诊断与运维脚本 |
-| `skills/` | 富途行情/异动分析脚本 |
+![python](https://img.shields.io/badge/python-3.11-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
+![status](https://img.shields.io/badge/trading-simulation--first-orange)
 
-## 模型后端
+*中文运维说明见 [`README.zh-CN.md`](README.zh-CN.md)。*
 
-AI 判定走本机 Claude Code CLI，链路为 OpenAI HTTP → Claude CLI → OpenClaw，
-第一个可用的接管。筛选用 haiku（快），选股与审阅用默认模型。
+![Home](trade/docs/screenshots/01-%E9%A6%96%E9%A1%B5.png)
 
-注意：launchd 任务的 PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，不含 Homebrew，
-所以配置里的 `claude_bin` 必须写绝对路径。
+---
 
-## 运行时数据不进版本库
+## Repo map
 
-行情数据、新闻数据库、日志、缓存都由 `.gitignore` 排除——它们跑一次就重新生成，
-且体积以 GB 计。仓库只存源码与配置。
+| Directory | What it is |
+|---|---|
+| [`trade/`](trade/) | **Start here.** The trading system: four equity sleeves, two crypto sleeves, a screener, and a Streamlit control terminal. Full write-up in [`trade/README.en.md`](trade/README.en.md); architecture in [`trade/ARCHITECTURE.md`](trade/ARCHITECTURE.md). |
+| [`news-collector/`](news-collector/) | Market-news pipeline: collect → normalize → deduplicate → cluster → impact-score → instrument-map → rank → persist → push. Every capability sits behind a stable port, so no single data source is baked into the core. |
+| [`watcher/`](watcher/) | Background file-queue service that runs read-only diagnostics and maintenance jobs on the host. Personal ops tooling. |
+| [`skills/`](skills/) | Futu OpenAPI helper scripts, alongside Futu's own API reference and disclaimer documents (third-party material, authored by the Futu team). |
+
+## The trading system at a glance
+
+**Four equity sleeves**, combined into one account-level portfolio:
+
+- *TAA Baseline* — Meb Faber 10-month moving-average tactical allocation
+- *Fusion Intraday* — regime filter + opening-range breakout + momentum + VWAP + order-book/tick imbalance
+- *OFIM Intraday* — order-flow-imbalance, L2-heavy; doubles as a top-N screener
+- *Cascade* — bridges into a second, independent engine (`claude-trade`)
+
+**Two crypto sleeves** — Binance spot OFIM and USD-M perpetual long/short, on paper
+and testnet, with a research backtest and a locked-test parameter search.
+
+**Accounting backbone** — event-sourced fills feed a double-entry journal secured by
+a SHA-256 hash chain, reconciled against the broker, with a read-only
+`stock-system-doctor` for integrity checks.
+
+**Risk controls** — gross-exposure, per-symbol, per-order and per-cycle caps, plus an
+epoch-loss brake.
+
+**Learning lab** — records each decision, labels FIFO outcomes, attributes P&L,
+proposes reversible candidate changes, gates promotion, and exports a SHA-256-stamped
+review packet. Live auto-promotion is deliberately disabled: the loop proposes, a
+human approves.
+
+## Engineering highlights (for reviewers)
+
+- `src/` layout, `uv.lock`-pinned dependencies, frozen-dataclass configuration
+  validated at load time.
+- 453 test functions across 38 files in `trade/tests/`, plus 86 across 20 files in
+  `news-collector/tests/` — all offline, no broker or network connection required.
+- Event sourcing, double-entry bookkeeping and a tamper-evident hash chain:
+  institutional accounting ideas applied to a personal account.
+- Emergency cancellation is a standalone double-click script that does not depend on
+  the app starting.
+- Six-screen desktop UI; screenshots in
+  [`trade/docs/screenshots/`](trade/docs/screenshots/).
+
+## Run it without a broker account
+
+Demo mode drives the whole interface from synthetic data — five public ETFs,
+fictional news events and obviously fake account numbers — so the entire app can be
+clicked through with no Futu install and no account. See the demo-mode section of
+[`trade/README.en.md`](trade/README.en.md).
+
+```bash
+cd trade
+uv venv --python 3.11 .venv
+uv pip install -p .venv/bin/python -e .[dev]
+cp .env.example .env          # SIMULATE by default
+.venv/bin/pytest tests/ -q    # offline
+```
+
+## Safety boundaries
+
+- Every order path raises in demo mode.
+- The pre-trade gate has three settings: block, log-only, off.
+- `.env`, `runtime/`, `*.db` and `*.log` are all git-ignored. No key, no real
+  position and no account identifier is committed anywhere in this repository.
+- Synthetic demo data is generated by a script that strips local machine paths.
+- The learning lab only ever emits proposals; it never edits a live strategy.
+
+---
+
+*Educational and research software. Not investment advice.*
