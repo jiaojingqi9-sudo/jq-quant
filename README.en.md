@@ -8,7 +8,7 @@
 > [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ![python](https://img.shields.io/badge/python-3.11%20%E2%80%93%203.13-blue)
-![tests](https://img.shields.io/badge/tests-471-brightgreen)
+![tests](https://img.shields.io/badge/tests-474-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![status](https://img.shields.io/badge/trading-simulation--first-orange)
 
@@ -111,7 +111,7 @@ the brackets otherwise).
 Tests are fully offline — no broker, no network:
 
 ```bash
-.venv/bin/python -m pytest -q               # 471 tests, ~27 min
+.venv/bin/python -m pytest -q               # 474 tests, ~27 min
 .venv/bin/python -m pytest tests/test_dashboard_extras.py -q   # fast subset
 ```
 
@@ -125,7 +125,7 @@ real-trading safety switches.
 ## Engineering highlights (for reviewers)
 
 - `src/` layout, `uv.lock`-pinned deps, frozen-dataclass config with load-time
-  validation, 471 offline tests across 40 files.
+  validation, 474 offline tests across 41 files.
 - Event sourcing + double-entry + tamper-evident hash chain — institutional
   accounting ideas applied to a hobby account.
 - Human-in-the-loop strategy evolution: the learning loop can *propose* but never

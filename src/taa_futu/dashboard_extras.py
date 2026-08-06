@@ -33,6 +33,8 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from .cli_hint import venv_command
+
 
 # Session-state keys for view routing.
 VIEW_KEY = "view"
@@ -336,7 +338,7 @@ def render_crypto_trading_full(settings) -> None:
                     st.error("重置失败")
                 st.code(res["stdout"] or res["stderr"] or "(空)", language="text")
             rcol2.caption(
-                "等价 CLI: `cd ~/All\\ here/trade && .venv/bin/taa-futu crypto-ofim-ledger-reset --reason testnet_balance_reset`"
+                f"等价 CLI: `{venv_command('crypto-ofim-ledger-reset --reason testnet_balance_reset')}`"
             )
 
         try:

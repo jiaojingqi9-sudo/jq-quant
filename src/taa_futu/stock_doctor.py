@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
+from .cli_hint import venv_command
 from .stock_learning import STOCK_LEARNING_REVIEW_PACKET_JSON_FILE, load_learning_review_packet
 from .stock_runtime import STOCK_LEDGER_EPOCH_FILE, epoch_is_set, load_stock_ledger_epoch
 from .strategy_experiment import SPLIT_STATE_FILE, load_strategy_split_state, split_state_matches_current, split_state_weight_map
@@ -27,34 +28,8 @@ RESET_REASON = "manual_stock_system_epoch"
 
 
 def _fix(subcommand: str, *, exe: str | None = None, on_windows: bool | None = None) -> str:
-    """把修复命令写成当前这台机器能直接粘贴运行的样子。
-
-    以前写死 ``.venv/bin/taa-futu``。Windows 上 venv 的可执行文件在
-    ``.venv\\Scripts\\`` 下，照着界面上的命令敲会报「系统找不到指定的路径」。
-    优先用正在跑这段代码的解释器所在目录（venv 不叫 .venv 也对），
-    找不到再按平台给默认值。
-
-    ``exe`` / ``on_windows`` 只给测试用——直接改全局 ``os.name`` 会把 pathlib
-    一起带偏（``Path()`` 按 ``os.name`` 选 WindowsPath/PosixPath）。
-    """
-    if on_windows is None:
-        on_windows = os.name == "nt"
-    name = "taa-futu.exe" if on_windows else "taa-futu"
-    exe_dir = Path(exe or sys.executable).parent
-    # venv 里 python 和 taa-futu 同目录；系统级安装时脚本在 Scripts/ 或 bin/ 下
-    base = ".venv\\Scripts\\taa-futu" if on_windows else ".venv/bin/taa-futu"
-    for folder in (exe_dir, exe_dir / ("Scripts" if on_windows else "bin")):
-        script = folder / name
-        if not script.exists():
-            continue
-        try:
-            base = str(script.relative_to(Path.cwd()))
-        except ValueError:
-            base = str(script)
-        if on_windows and base.lower().endswith(".exe"):
-            base = base[:-4]
-        break
-    return f"{base} {subcommand}"
+    """修复命令的展示写法。实现在 cli_hint，那里还被 dashboard 和 crypto 面板用。"""
+    return venv_command(subcommand, exe=exe, on_windows=on_windows)
 
 
 @dataclass(frozen=True)
