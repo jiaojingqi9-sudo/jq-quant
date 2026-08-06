@@ -65,7 +65,7 @@ footprint (impact and information leakage) remains. Writeup:
 
 - `src/` layout, `uv.lock`-pinned dependencies, frozen-dataclass configuration
   validated at load time.
-- 461 test functions across 39 files in `trade/tests/`, plus 86 across 20 files in
+- 464 test functions across 39 files in `trade/tests/`, plus 86 across 20 files in
   `news-collector/tests/` — all offline, no broker or network connection required.
 - Event sourcing, double-entry bookkeeping and a tamper-evident hash chain:
   institutional accounting ideas applied to a personal account.
@@ -117,7 +117,7 @@ Then open <http://localhost:8501>. Land directly on one screen with `?view=stock
 Tests run fully offline, no broker and no network:
 
 ```bash
-.venv/bin/python -m pytest -q      # 461 tests, ~27 min (the stock page renders end-to-end)
+.venv/bin/python -m pytest -q      # 464 tests, ~27 min (the stock page renders end-to-end)
 ```
 
 Longer setup notes, a synthetic-vs-real table and a troubleshooting section are in
