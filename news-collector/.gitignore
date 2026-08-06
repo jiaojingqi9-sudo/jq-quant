@@ -28,6 +28,13 @@ reports/*.json
 reports/*.html
 reports/news_learning/*.json
 reports/news_learning/*.jsonl
+# 这两份 md 由 newslearning 定时任务每轮重写（实测两分钟内就变了 10 行）。
+# 以前只 ignore 了同目录的 json/jsonl，漏了它们，于是仓库永远挂着两个未提交
+# 改动，`git status` 永远不干净——一眼看不出到底有没有真改动。
+# 同目录另外两份（codex_analysis / thread_review_last）不再自动重写，
+# 留在版本库里当样例。
+reports/news_learning/news_learning_codex_handoff.md
+reports/news_learning/news_learning_review_packet.md
 
 # 保留报告目录结构，方便新机器上直接跑
 !reports/live/.gitkeep
