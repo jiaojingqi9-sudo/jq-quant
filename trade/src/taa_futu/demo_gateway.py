@@ -45,7 +45,11 @@ DEMO_NAMES = {
 # 基准价，用来生成看起来合理的行情。数字取整，一看就是演示数据。
 DEMO_BASE_PRICE = {"US.SPY": 600.0, "US.EFA": 90.0, "US.IEF": 95.0,
                    "US.VNQ": 95.0, "US.DBC": 25.0}
-DEMO_QTY = {"US.SPY": 20, "US.EFA": 30, "US.IEF": 40, "US.VNQ": 25, "US.DBC": 50}
+# 持仓量按「Baseline sleeve 占账户 25%、五只等权」倒推，凑出总资产正好 100 万——
+# 也就是 config 里 initial_capital 的默认值。以前是 20/30/40/25/50 股，
+# 总资产 72,125，而页面拿 initial_capital(1,000,000) 当收益起点，
+# 首页第一眼就是「账户总盈亏 -927,875（-92.79%）」。演示数据看着像亏光了。
+DEMO_QTY = {"US.SPY": 83, "US.EFA": 555, "US.IEF": 526, "US.VNQ": 526, "US.DBC": 2000}
 
 DEMO_ACC_ID = 900000001          # 明显不是真实账户号
 
@@ -92,6 +96,22 @@ def _price(code: str, drift: float = 0.0) -> float:
     return round(DEMO_BASE_PRICE.get(code, 100.0) * (1 + drift), 2)
 
 
+DEMO_TOTAL_ASSETS = 1_000_000.0   # 与 config 里 initial_capital 的默认值对齐
+
+
+def _demo_holdings() -> list[tuple[str, int, float, float]]:
+    """(代码, 股数, 成本价, 现价)。
+
+    账户信息和持仓表必须读同一批价格。以前 get_account_info 用成本价算持仓市值、
+    get_positions 用漂移后的现价，两处的「持仓市值」对不上，浮盈还是写死的
+    1,234.56——演示数据自己跟自己打架，看的人第一反应是这系统算错了。
+    """
+    rng = _rng("positions")
+    return [(code, DEMO_QTY[code], DEMO_BASE_PRICE[code],
+             _price(code, rng.uniform(-0.04, 0.06)))
+            for code in DEMO_SYMBOLS]
+
+
 class DemoTrader:
     """鸭子类型兼容 FutuPaperTrader 的只读假网关。
 
@@ -133,8 +153,11 @@ class DemoTrader:
 
     def get_account_info(self, acc_id: int) -> pd.Series:
         fields = self._schema["account_info_fields"]
-        market_val = sum(DEMO_QTY[c] * DEMO_BASE_PRICE[c] for c in DEMO_SYMBOLS)
-        cash = 50_000.0
+        holdings = _demo_holdings()
+        market_val = round(sum(qty * last for _, qty, _, last in holdings), 2)
+        unrealized = round(sum(qty * (last - cost) for _, qty, cost, last in holdings), 2)
+        # 现金 = 100 万 - 持仓市值，让演示账户的总资产等于 initial_capital 默认值
+        cash = round(DEMO_TOTAL_ASSETS - market_val, 2)
         known = {
             "total_assets": round(cash + market_val, 2),
             "securities_assets": round(market_val, 2),
@@ -149,7 +172,7 @@ class DemoTrader:
             "avl_withdrawal_cash": cash,
             "max_withdrawal": cash,
             "frozen_cash": 0.0,
-            "unrealized_pl": 1_234.56,
+            "unrealized_pl": unrealized,
             "realized_pl": 567.89,
             "currency": "USD",
             "risk_level": "SAFE",
@@ -162,12 +185,8 @@ class DemoTrader:
 
     def get_positions(self, acc_id: int) -> pd.DataFrame:
         cols = self._schema["positions_columns"]
-        rng = _rng("positions")
         rows = []
-        for code in DEMO_SYMBOLS:
-            qty = DEMO_QTY[code]
-            cost = DEMO_BASE_PRICE[code]
-            last = _price(code, rng.uniform(-0.04, 0.06))
+        for code, qty, cost, last in _demo_holdings():
             mv = round(qty * last, 2)
             pl_val = round(qty * (last - cost), 2)
             known = {

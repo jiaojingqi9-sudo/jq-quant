@@ -3639,19 +3639,22 @@ def render_live_monitor(settings) -> None:
         # 报红只会让第一次打开的人以为程序坏了。
         from taa_futu.demo_gateway import demo_enabled
         if demo_enabled():
-            st.caption("股票系统 Doctor: 演示模式下跳过——它检查的是本机运行时文件，"
-                       "干净安装时本来就没有。")
-        elif doctor_report.status == "fail":
-            st.error("股票系统 Doctor: 有关键胶水断点，需要先处理。")
-        elif doctor_report.status == "warn":
-            st.warning("股票系统 Doctor: 有运行契约不一致，建议处理后再解读策略收益。")
+            # 演示模式下整块不渲染。横幅以前是跳过了，可下面那张 findings 表照样
+            # 默认展开、照样一片红——第一次打开的人看到的还是「这程序坏了」。
+            st.caption("股票系统 Doctor: 演示模式下不适用——它查的是本机运行时文件"
+                       "（账本 Epoch、分账起点、自动交易状态），干净安装里本来就没有。")
         else:
-            st.success("股票系统 Doctor: 核心运行契约一致。")
-        with st.expander("股票系统 Doctor / Stock System Doctor", expanded=doctor_report.status != "ok"):
-            st.dataframe(pd.DataFrame(doctor_report.to_dict()["findings"]), use_container_width=True, hide_index=True)
-            fix_commands = [item.fix_command for item in doctor_findings if item.fix_command]
-            if fix_commands:
-                st.code("\n".join(dict.fromkeys(fix_commands)), language="bash")
+            if doctor_report.status == "fail":
+                st.error("股票系统 Doctor: 有关键胶水断点，需要先处理。")
+            elif doctor_report.status == "warn":
+                st.warning("股票系统 Doctor: 有运行契约不一致，建议处理后再解读策略收益。")
+            else:
+                st.success("股票系统 Doctor: 核心运行契约一致。")
+            with st.expander("股票系统 Doctor / Stock System Doctor", expanded=doctor_report.status != "ok"):
+                st.dataframe(pd.DataFrame(doctor_report.to_dict()["findings"]), use_container_width=True, hide_index=True)
+                fix_commands = [item.fix_command for item in doctor_findings if item.fix_command]
+                if fix_commands:
+                    st.code("\n".join(dict.fromkeys(fix_commands)), language="bash")
         experiment_filled_cost_view = payload["experiment_filled_cost_view"]
         total_assets = _safe_float(account.get("total_assets"))
         base_assets_value = float(st.session_state.get("live_base_assets", base_assets))
