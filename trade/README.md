@@ -329,7 +329,7 @@ trade/
 ├─ docs/screenshots/       本文档里的截图
 ├─ stock/launchers/        股票侧运维脚本
 ├─ crypto/launchers/       加密侧运维脚本
-└─ tests/                  461 个测试
+└─ tests/                  464 个测试
 ```
 
 架构细节见 [ARCHITECTURE.md](ARCHITECTURE.md)。
@@ -402,7 +402,7 @@ registry.register(Feature(
 .venv\Scripts\python -m pytest -q          # Windows
 ```
 
-461 个测试，约 27 分钟——股票页的端到端测试要真的把整个界面渲染一遍。
+464 个测试，约 27 分钟——股票页的端到端测试要真的把整个界面渲染一遍。
 
 只跑快的那部分：
 
