@@ -136,6 +136,8 @@ SKILL_REG = {
     "tidy_verify":    (WATCHER_DIR / "tidy_verify.py",    False, []),
     "capture_schema": (WATCHER_DIR / "capture_schema.py", False, []),
     "ledger_verify":   (WATCHER_DIR / "ledger_verify.py", False, []),
+    # 跑 trade 的 taa-futu 子命令（脚本内有白名单，下单类一律不放行）
+    "taacli":          (WATCHER_DIR / "taacli.py",      False, []),
     "break_probe":     (WATCHER_DIR / "break_probe.py",   False, []),
     "fills_diff":      (WATCHER_DIR / "fills_diff.py",    False, []),
     "cookie_probe":    (WATCHER_DIR / "cookie_probe.py",  False, []),
