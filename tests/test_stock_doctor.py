@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+from taa_futu import stock_doctor
 from taa_futu.stock_doctor import run_stock_system_doctor
 from taa_futu.stock_ledger import StockLedgerBreak, StockLedgerReconciliation
 
@@ -31,7 +32,8 @@ def test_stock_doctor_flags_missing_unified_epoch(tmp_path) -> None:
     assert report.status == "fail"
     summaries = [finding.summary for finding in report.findings]
     assert any("股票事件账本还没有统一起点" in summary for summary in summaries)
-    assert any(finding.fix_command == ".venv/bin/taa-futu stock-system-reset" for finding in report.findings)
+    # 修复命令按当前系统生成（Windows 是 .venv\\Scripts\\），所以只断言子命令
+    assert any(finding.fix_command.endswith("taa-futu stock-system-reset") for finding in report.findings)
 
 
 def test_stock_doctor_accepts_coherent_runtime_contracts(tmp_path) -> None:
@@ -193,3 +195,38 @@ def test_stock_doctor_does_not_recommend_reset_for_post_epoch_reconciliation_bre
     finding = next(item for item in report.findings if item.area == "broker_reconciliation")
     assert finding.status == "warn"
     assert finding.fix_command == ""
+
+
+# ── 修复命令的路径 ─────────────────────────────────────────────────────────
+# 以前这里写死 ".venv/bin/taa-futu"。Windows 上 venv 的可执行文件在
+# .venv\Scripts\ 下，照着界面上的命令敲会报「系统找不到指定的路径」。
+
+
+def test_fix_command_points_at_the_running_venv(monkeypatch, tmp_path) -> None:
+    binv = tmp_path / ".venv" / "bin"
+    binv.mkdir(parents=True)
+    (binv / "taa-futu").write_text("")
+    monkeypatch.chdir(tmp_path)
+
+    command = stock_doctor._fix("stock-system-reset", exe=str(binv / "python"), on_windows=False)
+    assert command == ".venv/bin/taa-futu stock-system-reset"
+
+
+def test_fix_command_uses_scripts_dir_on_windows(monkeypatch, tmp_path) -> None:
+    scripts = tmp_path / ".venv" / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "taa-futu.exe").write_text("")
+    monkeypatch.chdir(tmp_path)
+
+    command = stock_doctor._fix("stock-system-reset", exe=str(scripts / "python.exe"), on_windows=True)
+    # 分隔符在 POSIX 上跑测试时仍是 /（Path 是 PosixPath），所以只断言实质：
+    # 找的是 Scripts 目录、去掉了 .exe、子命令没丢。
+    assert "Scripts" in command
+    assert ".exe" not in command
+    assert command.endswith("taa-futu stock-system-reset")
+
+
+def test_fix_command_falls_back_per_platform(tmp_path) -> None:
+    """解释器旁边没有 taa-futu 时按平台给默认值。"""
+    assert stock_doctor._fix("x", exe=str(tmp_path / "python.exe"), on_windows=True) == ".venv\\Scripts\\taa-futu x"
+    assert stock_doctor._fix("x", exe=str(tmp_path / "python"), on_windows=False) == ".venv/bin/taa-futu x"

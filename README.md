@@ -48,15 +48,42 @@ Dock 里是独立图标。
 
 **没有富途账号、没有行情数据，也能完整看一遍界面。**
 
+**macOS / Linux**
+
 ```bash
 git clone https://github.com/jiaojingqi9-sudo/jq-quant.git
 cd jq-quant/trade
 
-python3 -m venv .venv                      # 需要 Python 3.11 或更高
+python3 -m venv .venv                      # Python 要 3.11 / 3.12 / 3.13
 .venv/bin/pip install -e .
 
 JQ_DEMO=1 JQ_NEWS_ROOT="$PWD/demo_data/news" \
   .venv/bin/python -m streamlit run src/taa_futu/dashboard_app.py
+```
+
+**Windows（命令提示符 cmd）**
+
+三处和上面不一样：可执行文件在 `.venv\Scripts\` 而不是 `.venv/bin/`；
+环境变量不能写在命令前面，要先 `set`；`set` 那行等号两边不能有空格。
+
+```bat
+git clone https://github.com/jiaojingqi9-sudo/jq-quant.git
+cd jq-quant\trade
+
+python -m venv .venv
+.venv\Scripts\pip install -e .
+
+set JQ_DEMO=1
+set JQ_NEWS_ROOT=%CD%\demo_data\news
+.venv\Scripts\python -m streamlit run src\taa_futu\dashboard_app.py
+```
+
+**Windows（PowerShell）**——前三步同上，最后三行换成：
+
+```powershell
+$env:JQ_DEMO = "1"
+$env:JQ_NEWS_ROOT = "$PWD\demo_data\news"
+.venv\Scripts\python -m streamlit run src\taa_futu\dashboard_app.py
 ```
 
 浏览器打开 <http://localhost:8501>。
@@ -71,8 +98,15 @@ JQ_DEMO=1 JQ_NEWS_ROOT="$PWD/demo_data/news" \
 
 每一页顶部都有演示模式横幅，防止截图流出去被误认成真实交易记录。
 
-**Python 必须 3.11 以上**：代码用了 `datetime.UTC`，3.10 会在 import 阶段就报
-`cannot import name 'UTC'`。
+**Python 版本必须是 3.11 / 3.12 / 3.13**，两头都卡：
+
+- 低于 3.11：代码用了 `datetime.UTC`，import 阶段就报 `cannot import name 'UTC'`
+- 3.14 及以上：`pyproject.toml` 写的是 `requires-python = ">=3.11,<3.14"`，
+  `pip install -e .` 会直接被拒
+
+Windows 上从 <https://www.python.org/downloads/> 装，安装第一页勾上
+**Add python.exe to PATH**。命令行里敲 `python` 跳出微软商店，说明还没装或没进
+PATH——商店那个版本装不上本项目的依赖。
 
 直接落到某一页，用 `?view=` 参数：
 
@@ -84,6 +118,7 @@ JQ_DEMO=1 JQ_NEWS_ROOT="$PWD/demo_data/news" \
 | 实时建议 | `http://localhost:8501/?view=live_signal` |
 | 市场新闻 | `http://localhost:8501/?view=news` |
 | 历史模拟 | `http://localhost:8501/?view=stock_history` |
+| 下单练习 | `http://localhost:8501/?view=exec_trainer` |
 
 也可以只跑单个功能，不带导航：
 
@@ -294,7 +329,7 @@ trade/
 ├─ docs/screenshots/       本文档里的截图
 ├─ stock/launchers/        股票侧运维脚本
 ├─ crypto/launchers/       加密侧运维脚本
-└─ tests/                  455 个测试
+└─ tests/                  461 个测试
 ```
 
 架构细节见 [ARCHITECTURE.md](ARCHITECTURE.md)。
@@ -363,10 +398,11 @@ registry.register(Feature(
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest -q             # macOS / Linux
+.venv\Scripts\python -m pytest -q          # Windows
 ```
 
-455 个测试，约 26 分钟——股票页的端到端测试要真的把整个界面渲染一遍。
+461 个测试，约 27 分钟——股票页的端到端测试要真的把整个界面渲染一遍。
 
 只跑快的那部分：
 
@@ -380,6 +416,26 @@ registry.register(Feature(
 
 **`cannot import name 'UTC' from 'datetime'`**
 Python 版本低于 3.11。
+
+**Windows：敲 `python` 弹出微软商店**
+系统里没装 Python，或者装了但没进 PATH。从 python.org 装 3.11–3.13，安装第一页
+勾 **Add python.exe to PATH**。装完关掉终端重开一个，`python --version` 才会变。
+
+**Windows：`'#' 不是内部或外部命令` / `文件名、目录名或卷标语法不正确`**
+把 macOS 的写法照搬到 cmd 了。cmd 不认 `#` 注释，也不认 `VAR=1 命令` 这种前置
+环境变量；`$env:JQ_DEMO=1` 是 PowerShell 语法，在 cmd 里同样不认。按上面
+[演示模式](#演示模式)里的 cmd 段落敲。
+
+**Windows：`系统找不到指定的路径` 而路径看着没错**
+venv 的可执行文件在 `.venv\Scripts\` 下，不是 `.venv/bin/`。文档里凡是
+`.venv/bin/xxx` 的地方，Windows 上都换成 `.venv\Scripts\xxx`。
+
+**`ERROR: Package 'taa-futu' requires a different Python`**
+Python 3.14 或更高。本项目要求 `>=3.11,<3.14`，装一个 3.13 再建 venv。
+
+**Windows：`git clone` 报 `Filename too long`**
+Windows 默认路径上限 260 字符。执行 `git config --global core.longpaths true`
+之后重新 clone。
 
 **打开是空白页 / 一直转圈**
 Streamlit 的内容靠 websocket 推送。如果在无头环境或反向代理后面跑，确认 websocket

@@ -4,7 +4,9 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import json
 import math
+import os
 from pathlib import Path
+import sys
 from typing import Any
 
 from .stock_learning import STOCK_LEARNING_REVIEW_PACKET_JSON_FILE, load_learning_review_packet
@@ -18,6 +20,37 @@ AUTO_TRADER_STATUS_FILE = RUNTIME_DIR / "auto_trader_status.json"
 WATCHDOG_STATUS_FILE = RUNTIME_DIR / "watchdog_status.json"
 
 STATUS_RANK = {"ok": 0, "info": 1, "warn": 2, "fail": 3}
+
+
+def _fix(subcommand: str, *, exe: str | None = None, on_windows: bool | None = None) -> str:
+    """把修复命令写成当前这台机器能直接粘贴运行的样子。
+
+    以前写死 ``.venv/bin/taa-futu``。Windows 上 venv 的可执行文件在
+    ``.venv\\Scripts\\`` 下，照着界面上的命令敲会报「系统找不到指定的路径」。
+    优先用正在跑这段代码的解释器所在目录（venv 不叫 .venv 也对），
+    找不到再按平台给默认值。
+
+    ``exe`` / ``on_windows`` 只给测试用——直接改全局 ``os.name`` 会把 pathlib
+    一起带偏（``Path()`` 按 ``os.name`` 选 WindowsPath/PosixPath）。
+    """
+    if on_windows is None:
+        on_windows = os.name == "nt"
+    name = "taa-futu.exe" if on_windows else "taa-futu"
+    exe_dir = Path(exe or sys.executable).parent
+    # venv 里 python 和 taa-futu 同目录；系统级安装时脚本在 Scripts/ 或 bin/ 下
+    base = ".venv\\Scripts\\taa-futu" if on_windows else ".venv/bin/taa-futu"
+    for folder in (exe_dir, exe_dir / ("Scripts" if on_windows else "bin")):
+        script = folder / name
+        if not script.exists():
+            continue
+        try:
+            base = str(script.relative_to(Path.cwd()))
+        except ValueError:
+            base = str(script)
+        if on_windows and base.lower().endswith(".exe"):
+            base = base[:-4]
+        break
+    return f"{base} {subcommand}"
 
 
 @dataclass(frozen=True)
@@ -131,7 +164,7 @@ def run_stock_system_doctor(
                 "fail",
                 "股票事件账本还没有统一起点。",
                 "没有 Epoch 时，审计账本会把现有券商持仓看成初始化差异。",
-                ".venv/bin/taa-futu stock-system-reset",
+                _fix("stock-system-reset"),
             )
         )
     elif not epoch_is_set(epoch):
@@ -145,7 +178,7 @@ def run_stock_system_doctor(
                 "Epoch 有时间戳但缺起点资产，期间归因与券商对账都用不了。",
                 "account_snapshot 里没有 total_assets（也无法从空持仓的 cash 推出）。"
                 "多半是旧版 stock/tools/repair_ledger.py 手工拼 epoch 时漏写的。",
-                ".venv/bin/taa-futu stock-system-reset",
+                _fix("stock-system-reset"),
             )
         )
     if not split_ts:
@@ -155,7 +188,7 @@ def run_stock_system_doctor(
                 "fail",
                 "四策略分账还没有统一起点。",
                 "没有 split_state 时，单策略净表现没有可靠起始资金。",
-                ".venv/bin/taa-futu stock-system-reset",
+                _fix("stock-system-reset"),
             )
         )
     if epoch_ts and split_ts:
@@ -170,7 +203,7 @@ def run_stock_system_doctor(
                         "warn",
                         "股票事件账本和四策略分账起点不是同一次设置。",
                         f"两个起点相差约 {int(drift_seconds)} 秒，容易出现账本各算各的。",
-                        ".venv/bin/taa-futu stock-system-reset",
+                        _fix("stock-system-reset"),
                     )
                 )
             else:
@@ -188,7 +221,7 @@ def run_stock_system_doctor(
                         "warn",
                         "四策略分账权重和当前控制台配置不一致。",
                         f"分账起点权重：{_format_weights(reset_weights)}。当前权重已经变化，单策略净表现只能作历史参考。",
-                        ".venv/bin/taa-futu stock-system-reset",
+                        _fix("stock-system-reset"),
                     )
                 )
         except Exception as exc:
@@ -202,7 +235,7 @@ def run_stock_system_doctor(
                 "warn",
                 "股票学习审阅包不存在或不可读取。",
                 "自动分析和人工复核缺少证据包。",
-                ".venv/bin/taa-futu stock-learning-export",
+                _fix("stock-learning-export"),
             )
         )
     else:
@@ -215,7 +248,7 @@ def run_stock_system_doctor(
                     "warn",
                     "股票学习审阅包已经过期。",
                     f"packet_id={packet.get('packet_id', 'unknown')}，约 {age / 3600:.1f} 小时前生成。",
-                    ".venv/bin/taa-futu stock-learning-export",
+                    _fix("stock-learning-export"),
                 )
             )
         else:
@@ -276,7 +309,7 @@ def run_stock_system_doctor(
                     status,
                     f"审计账本和券商持仓有 {len(breaks)} 个差异。",
                     detail,
-                    ".venv/bin/taa-futu stock-system-reset" if not epoch_ts else "",
+                    _fix("stock-system-reset") if not epoch_ts else "",
                 )
             )
 

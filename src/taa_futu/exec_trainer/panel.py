@@ -177,9 +177,15 @@ def _render_setup() -> None:
     st.caption(f"限时 {mins} 分钟、一回合 {turn} 秒 → 一共 {int(mins*60//turn)} 个回合")
     st.markdown(_pov_note(pov, int(total)))
     if not profile_path().exists():
-        st.warning("没找到标定档案，用的是代码里写死的默认值（同一批数据的中位数）。"
-                   "要重新标定：先跑 calibrate.py 和 calibrate_volume.py，再跑各自的 merge。",
-                   icon="⚠️")
+        # 以前这里是 warning，正文让人「去跑 calibrate.py」——可标定要读
+        # runtime/market_data 下自己收的盘口，clone 下来的人根本没有那批数据，
+        # 等于给了一条做不到的指令，还顶着黄色警告。改成 info 并说清楚：
+        # 默认值本身就是标定出来的中位数，直接练没问题。
+        st.info("用的是代码里写死的默认参数——那也是 NVDA 真实盘口标定出来的中位数，"
+                "直接练就行。只有换标的、或想用自己收的盘口重标时，才需要跑 "
+                "`calibrate.py` 与 `calibrate_volume.py`（要 `runtime/market_data/` "
+                "下的逐笔盘口数据，本仓库不含）。",
+                icon="ℹ️")
     if st.button("开始", type="primary", use_container_width=True):
         task = TaskSpec(side=BUY if side == "买入" else SELL,
                         total_shares=int(total),
