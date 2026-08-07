@@ -204,12 +204,11 @@ def run_stock_system_doctor(
                         "system_epoch",
                         "info",
                         "账本起点与分账起点是分别设置的，时间不同属正常。",
-                        f"账本起点 {epoch_dt.date()}（reason={epoch_reason or '未写'}），"
-                        f"分账起点 {split_dt.date()}（reason={split_reason or '未写'}）。"
-                        "账本起点回溯到账户真实开始那天，账本才覆盖全部历史；"
-                        "分账实验从另一天起算。两者不必相同。"
-                        "真要统一，跑 stock-system-reset——代价是账本起点被改成今天，"
-                        "之前的期间归因起点丢失。",
+                        # detail 只留一句。原文有六行，解释「为什么两个日期不同是正常的」，
+                        # 每次打开页面都占半屏——一件正常的事不该反复解释这么多。
+                        # 完整来龙去脉见本函数上方注释与 docs/。
+                        f"账本起点 {epoch_dt.date()}，分账起点 {split_dt.date()}，"
+                        "各自设置，不需要一致。",
                     )
                 )
 
