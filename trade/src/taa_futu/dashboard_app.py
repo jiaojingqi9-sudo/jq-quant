@@ -3664,14 +3664,25 @@ def render_live_monitor(settings) -> None:
             st.caption("股票系统 Doctor: 演示模式下不适用——它查的是本机运行时文件"
                        "（账本 Epoch、分账起点、自动交易状态），干净安装里本来就没有。")
         else:
+            _all = doctor_report.to_dict()["findings"]
+            # 只列需要看的（warn/fail/info），正常项收成一句话。
+            # 以前五项逐条列表格，四项都是「××可读取」——体检报告不该把「一切正常」
+            # 也写满一页，人会开始忽略整张表，真出问题那天也一样被略过。
+            _notable = [f for f in _all if f.get("status") != "ok"]
+            _ok_count = len(_all) - len(_notable)
             if doctor_report.status == "fail":
                 st.error("股票系统 Doctor: 有关键胶水断点，需要先处理。")
             elif doctor_report.status == "warn":
                 st.warning("股票系统 Doctor: 有运行契约不一致，建议处理后再解读策略收益。")
             else:
-                st.success("股票系统 Doctor: 核心运行契约一致。")
+                st.success(f"股票系统 Doctor: {len(_all)} 项检查全部通过"
+                           + (f"（其中 {len(_notable)} 项附说明）" if _notable else ""))
             with st.expander("股票系统 Doctor / Stock System Doctor", expanded=doctor_report.status != "ok"):
-                st.dataframe(pd.DataFrame(doctor_report.to_dict()["findings"]), use_container_width=True, hide_index=True)
+                if _notable:
+                    st.dataframe(pd.DataFrame(_notable), use_container_width=True, hide_index=True)
+                if _ok_count:
+                    st.caption(f"另有 {_ok_count} 项正常，未列出："
+                               + "、".join(f["area"] for f in _all if f.get("status") == "ok"))
                 fix_commands = [item.fix_command for item in doctor_findings if item.fix_command]
                 if fix_commands:
                     st.code("\n".join(dict.fromkeys(fix_commands)), language="bash")
